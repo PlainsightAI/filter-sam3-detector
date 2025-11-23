@@ -1,0 +1,61 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["filter_sam3_detector"]
+
+[tool.setuptools.dynamic]
+version = { file = "VERSION" }
+
+[project]
+name = "filter_sam3_detector"
+readme = "README.md"
+requires-python = ">=3.10, <3.14"
+license = "Apache-2.0"
+
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+]
+
+dynamic = ["version"]
+
+dependencies = [
+  "openfilter[all]>=0.1.0,<0.2.0",
+  "torch>=2.0.0",
+  "torchvision>=0.15.0",
+  "numpy>=1.24.0",
+  "pillow>=10.0.0",
+  "transformers>=4.40.0",
+  "opencv-python>=4.8.0",
+  "sam3",
+  # SAM3 dependencies not in its pyproject.toml
+  "einops",
+  "decord",
+  "pycocotools",
+]
+
+[project.optional-dependencies]
+dev = [
+  "build==1.2.1",
+  "setuptools==72.2.0",
+  "twine>=6.1.0,<7",
+  "wheel==0.44.0",
+  "pytest==8.3.4",
+  "pytest-cov==6.0.0",
+]
+
+[tool.uv.sources]
+sam3 = { path = "sam3" }
+
+[[tool.uv.index]]
+name = "openfilter"
+url = "https://python.openfilter.io/simple"
+
+[[tool.uv.index]]
+name = "pypi"
+url = "https://pypi.org/simple"
