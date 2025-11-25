@@ -26,7 +26,7 @@ classifiers = [
 ]
 dependencies = [
     "timm>=1.0.17",
-    "numpy==1.26",
+    "numpy==1.26.4",
     "tqdm",
     "ftfy==6.1.1",
     "regex",
@@ -82,8 +82,12 @@ train = [
 "Homepage" = "https://github.com/facebookresearch/sam3"
 "Bug Tracker" = "https://github.com/facebookresearch/sam3/issues"
 
-[tool.setuptools]
-packages = ["sam3", "sam3.model"]
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["sam3*"]
+
+[tool.setuptools.package-data]
+"*" = ["assets/**/*"]
 
 [tool.setuptools.dynamic]
 version = {attr = "sam3.__version__"}

@@ -520,10 +520,10 @@ def _create_sam3_transformer(has_presence_token: bool = True) -> TransformerWrap
     return TransformerWrapper(encoder=encoder, decoder=decoder, d_model=256)
 
 
-def _load_checkpoint(model, checkpoint_path):
+def _load_checkpoint(model, checkpoint_path, device="cuda"):
     """Load model checkpoint from file."""
     with g_pathmgr.open(checkpoint_path, "rb") as f:
-        ckpt = torch.load(f, map_location="cpu", weights_only=True)
+        ckpt = torch.load(f, map_location=device, weights_only=True)
     if "model" in ckpt and isinstance(ckpt["model"], dict):
         ckpt = ckpt["model"]
     sam3_image_ckpt = {
@@ -581,7 +581,7 @@ def build_sam3_image_model(
     """
     if bpe_path is None:
         bpe_path = os.path.join(
-            os.path.dirname(__file__), "..", "assets", "bpe_simple_vocab_16e6.txt.gz"
+            os.path.dirname(__file__), "assets", "bpe_simple_vocab_16e6.txt.gz"
         )
     # Create visual components
     compile_mode = "default" if compile else None
@@ -629,7 +629,7 @@ def build_sam3_image_model(
         checkpoint_path = download_ckpt_from_hf()
     # Load checkpoint if provided
     if checkpoint_path is not None:
-        _load_checkpoint(model, checkpoint_path)
+        _load_checkpoint(model, checkpoint_path, device)
 
     # Setup device and mode
     model = _setup_device_and_mode(model, device, eval_mode)
@@ -669,7 +669,7 @@ def build_sam3_video_model(
     """
     if bpe_path is None:
         bpe_path = os.path.join(
-            os.path.dirname(__file__), "..", "assets", "bpe_simple_vocab_16e6.txt.gz"
+            os.path.dirname(__file__), "assets", "bpe_simple_vocab_16e6.txt.gz"
         )
 
     # Build Tracker module
