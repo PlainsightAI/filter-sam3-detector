@@ -60,12 +60,15 @@ video_in = VideoIn({
 })
 video_in.setup(video_in.config)
 
+# Output label for detections (used as key in frame.data['meta'])
+output_label = "dressing_cup"
+
 detector = FilterSAM3Detector({
     "text_prompt": prompt,
     "confidence_threshold": 0.2,
     "device": "cuda",
     "visualize": True,
-    "output_label": "dressing_cup",
+    "output_label": output_label,
 })
 detector.setup(detector.config)
 
@@ -111,7 +114,7 @@ try:
 
         # Check for detections
         for topic, frame in detected.items():
-            dets = frame.data.get('meta', {}).get('cups', [])
+            dets = frame.data.get('meta', {}).get(output_label, [])
 
             # Save frame if it has detections (or optionally save all frames)
             if dets:
