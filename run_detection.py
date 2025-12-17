@@ -24,6 +24,7 @@ else:
         # Save in current directory with video name and timestamp
         output_dir = Path.cwd() / f"{video_name}_detections_{timestamp}"
 prompt = sys.argv[3] if len(sys.argv) > 3 else "small transparent cup"
+skip_frames = int(sys.argv[4]) if len(sys.argv) > 4 else 0
 
 output_dir.mkdir(exist_ok=True, parents=True)
 frames_dir = output_dir / "frames"
@@ -32,6 +33,10 @@ frames_dir.mkdir(exist_ok=True)
 print(f"Video: {video_path}")
 print(f"Output: {output_dir}")
 print(f"Prompt: {prompt}")
+print(f"Skip frames: {skip_frames}")
+if skip_frames > 0:
+    processing_rate = 1.0 / (skip_frames + 1)
+    print(f"Processing rate: {processing_rate:.1%} of frames (1 every {skip_frames + 1} frames)")
 
 # Setup filters
 from openfilter.filter_runtime.filters.video_in import VideoIn
@@ -49,14 +54,15 @@ detector = FilterSAM3Detector({
     "confidence_threshold": 0.2,
     "device": "cuda",
     "visualize": True,
-    "output_label": "cups",
+    "output_label": "dressing_cup",
 })
 detector.setup(detector.config)
 
 # Process frames
 detections_filename = f"{video_name}_detections_{timestamp}.jsonl"
 detections_file = open(output_dir / detections_filename, "w")
-frame_count = 0
+frame_count = 0  # Total frames read from video
+processed_count = 0  # Frames actually processed (after skipping)
 saved_count = 0
 
 try:
@@ -73,6 +79,18 @@ try:
             break
 
         frame_count += 1
+
+        # Skip frames logic: if skip_frames > 0, only process every (skip_frames + 1) frames
+        # skip_frames = 2 means process frame 1, 4, 7, 10... (process 1, skip 2)
+        # skip_frames = 3 means process frame 1, 5, 9, 13... (process 1, skip 3)
+        # skip_frames = 19 means process frame 1, 21, 41, 61... (process 1, skip 19)
+        #   For a 20 fps video: skip_frames=19 processes 1 frame per second
+        #   For a 30 fps video: skip_frames=29 processes 1 frame per second
+        if skip_frames > 0:
+            if (frame_count - 1) % (skip_frames + 1) != 0:
+                continue
+
+        processed_count += 1
 
         # Detect
         detected = detector.process(frames_dict)
@@ -109,12 +127,12 @@ try:
             #     cv2.imwrite(str(img_path), frame.rw_bgr.image)
 
         if frame_count % 100 == 0:
-            print(f"Processed {frame_count} frames, saved {saved_count} with detections")
+            print(f"Read {frame_count} frames, processed {processed_count}, saved {saved_count} with detections")
 
 finally:
     detections_file.close()
     video_in.shutdown()
     detector.shutdown()
 
-print(f"\nDone! Processed {frame_count} frames, saved {saved_count} with detections")
+print(f"\nDone! Read {frame_count} frames, processed {processed_count}, saved {saved_count} with detections")
 print(f"Results in: {output_dir}")
