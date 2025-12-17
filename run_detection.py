@@ -1,12 +1,26 @@
 #!/usr/bin/python3
 """Run SAM3 detection on video."""
-import sys
+import argparse
 from pathlib import Path
 import json
 from datetime import datetime
 
+# Parse arguments
+parser = argparse.ArgumentParser(description="Run SAM3 detection on video")
+parser.add_argument("--video", "-v", type=str, 
+                    default=str(Path.home() / "Downloads/2025-11-21_processed.mp4"),
+                    help="Path to input video file")
+parser.add_argument("--output", "-o", type=str, default=None,
+                    help="Output directory (default: next to video file with timestamp)")
+parser.add_argument("--prompt", "-p", type=str, default="small transparent cup",
+                    help="Text prompt for detection")
+parser.add_argument("--skip-frames", "-s", type=int, default=0,
+                    help="Number of frames to skip between processing (0 = process all frames)")
+
+args = parser.parse_args()
+
 # Config
-video_path = Path(sys.argv[1]) if len(sys.argv) > 1 else Path.home() / "Downloads/2025-11-21_processed.mp4"
+video_path = Path(args.video)
 video_file = Path(video_path)
 video_name = video_file.stem
 
@@ -14,17 +28,14 @@ video_name = video_file.stem
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
 # Default output: next to video file or in current directory
-if len(sys.argv) > 2:
-    output_dir = Path(sys.argv[2])
+if args.output:
+    output_dir = Path(args.output)
 else:
-    if len(sys.argv) > 1:
-        # Save next to video file with timestamp
-        output_dir = video_file.parent / f"{video_name}_detections_{timestamp}"
-    else:
-        # Save in current directory with video name and timestamp
-        output_dir = Path.cwd() / f"{video_name}_detections_{timestamp}"
-prompt = sys.argv[3] if len(sys.argv) > 3 else "small transparent cup"
-skip_frames = int(sys.argv[4]) if len(sys.argv) > 4 else 0
+    # Save next to video file with timestamp
+    output_dir = video_file.parent / f"{video_name}_detections_{timestamp}"
+
+prompt = args.prompt
+skip_frames = args.skip_frames
 
 output_dir.mkdir(exist_ok=True, parents=True)
 frames_dir = output_dir / "frames"
