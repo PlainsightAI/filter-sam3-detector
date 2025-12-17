@@ -1,107 +1,38 @@
-# SAM 3: Segment Anything with Concepts
+---
+license: other
+extra_gated_fields:
+  First Name: text
+  Last Name: text
+  Date of birth: date_picker
+  Country: country
+  Affiliation: text
+  Job title:
+    type: select
+    options:
+    - Student
+    - Research Graduate
+    - AI researcher
+    - AI developer/engineer
+    - Reporter
+    - Other
+  geo: ip_location
+  By clicking Submit below I accept the terms of the license and acknowledge that the information I provide will be collected stored processed and shared in accordance with the Meta Privacy Policy: checkbox
+extra_gated_description: >-
+  The information you provide will be collected, stored, processed and shared in
+  accordance with the [Meta Privacy
+  Policy](https://www.facebook.com/privacy/policy/).
+extra_gated_button_content: Submit
+language:
+- en
+pipeline_tag: mask-generation
+library_name: transformers
+tags:
+- sam3
+---
 
-Meta Superintelligence Labs
+SAM 3 is a unified foundation model for promptable segmentation in images and videos. It can detect, segment, and track objects using text or visual prompts such as points, boxes, and masks. Compared to its predecessor [SAM 2](https://github.com/facebookresearch/sam2), SAM 3 introduces the ability to exhaustively segment all instances of an open-vocabulary concept specified by a short text phrase or exemplars. Unlike prior work, SAM 3 can handle a vastly larger set of open-vocabulary prompts. It achieves 75-80% of human performance on our new [SA-CO benchmark](https://github.com/facebookresearch/sam3/edit/main_readme/README.md#sa-co-dataset) which contains 270K unique concepts, over 50 times more than existing benchmarks.
 
-[Nicolas Carion](https://www.nicolascarion.com/)\*,
-[Laura Gustafson](https://scholar.google.com/citations?user=c8IpF9gAAAAJ&hl=en)\*,
-[Yuan-Ting Hu](https://scholar.google.com/citations?user=E8DVVYQAAAAJ&hl=en)\*,
-[Shoubhik Debnath](https://scholar.google.com/citations?user=fb6FOfsAAAAJ&hl=en)\*,
-[Ronghang Hu](https://ronghanghu.com/)\*,
-[Didac Suris](https://www.didacsuris.com/)\*,
-[Chaitanya Ryali](https://scholar.google.com/citations?user=4LWx24UAAAAJ&hl=en)\*,
-[Kalyan Vasudev Alwala](https://scholar.google.co.in/citations?user=m34oaWEAAAAJ&hl=en)\*,
-[Haitham Khedr](https://hkhedr.com/)\*, Andrew Huang,
-[Jie Lei](https://jayleicn.github.io/),
-[Tengyu Ma](https://scholar.google.com/citations?user=VeTSl0wAAAAJ&hl=en),
-[Baishan Guo](https://scholar.google.com/citations?user=BC5wDu8AAAAJ&hl=en),
-Arpit Kalla, [Markus Marks](https://damaggu.github.io/),
-[Joseph Greer](https://scholar.google.com/citations?user=guL96CkAAAAJ&hl=en),
-Meng Wang, [Peize Sun](https://peizesun.github.io/),
-[Roman Rädle](https://scholar.google.com/citations?user=Tpt57v0AAAAJ&hl=en),
-[Triantafyllos Afouras](https://www.robots.ox.ac.uk/~afourast/),
-[Effrosyni Mavroudi](https://scholar.google.com/citations?user=vYRzGGEAAAAJ&hl=en),
-[Katherine Xu](https://k8xu.github.io/)°,
-[Tsung-Han Wu](https://patrickthwu.com/)°,
-[Yu Zhou](https://yu-bryan-zhou.github.io/)°,
-[Liliane Momeni](https://scholar.google.com/citations?user=Lb-KgVYAAAAJ&hl=en)°,
-[Rishi Hazra](https://rishihazra.github.io/)°,
-[Shuangrui Ding](https://mark12ding.github.io/)°,
-[Sagar Vaze](https://sgvaze.github.io/)°,
-[Francois Porcher](https://scholar.google.com/citations?user=LgHZ8hUAAAAJ&hl=en)°,
-[Feng Li](https://fengli-ust.github.io/)°,
-[Siyuan Li](https://siyuanliii.github.io/)°,
-[Aishwarya Kamath](https://ashkamath.github.io/)°,
-[Ho Kei Cheng](https://hkchengrex.com/)°,
-[Piotr Dollar](https://pdollar.github.io/)†,
-[Nikhila Ravi](https://nikhilaravi.com/)†,
-[Kate Saenko](https://ai.bu.edu/ksaenko.html)†,
-[Pengchuan Zhang](https://pzzhang.github.io/pzzhang/)†,
-[Christoph Feichtenhofer](https://feichtenhofer.github.io/)†
-
-\* core contributor, ° intern, † project lead, order is random within groups
-
-[[`Paper`](https://ai.meta.com/research/publications/sam-3-segment-anything-with-concepts/)]
-[[`Project`](https://ai.meta.com/sam3)]
-[[`Demo`](https://segment-anything.com/)]
-[[`Blog`](https://ai.meta.com/blog/segment-anything-model-3/)]
-<!-- [[`BibTeX`](#citing-sam-3)] -->
-
-![SAM 3 architecture](assets/model_diagram.png?raw=true) SAM 3 is a unified foundation model for promptable segmentation in images and videos. It can detect, segment, and track objects using text or visual prompts such as points, boxes, and masks. Compared to its predecessor [SAM 2](https://github.com/facebookresearch/sam2), SAM 3 introduces the ability to exhaustively segment all instances of an open-vocabulary concept specified by a short text phrase or exemplars. Unlike prior work, SAM 3 can handle a vastly larger set of open-vocabulary prompts. It achieves 75-80% of human performance on our new [SA-CO benchmark](https://github.com/facebookresearch/sam3?tab=readme-ov-file#sa-co-dataset) which contains 270K unique concepts, over 50 times more than existing benchmarks.
-
-This breakthrough is driven by an innovative data engine that has automatically annotated over 4 million unique concepts, creating the largest high-quality open-vocabulary segmentation dataset to date. In addition, SAM 3 introduces a new model architecture featuring a presence token that improves discrimination between closely related text prompts (e.g., “a player in white” vs. “a player in red”), as well as a decoupled detector–tracker design that minimizes task interference and scales efficiently with data.
-
-<p align="center">
-  <img src="assets/dog.gif" width=380 />
-  <img src="assets/player.gif" width=380 />
-</p>
-
-## Installation
-
-### Prerequisites
-
-- Python 3.12 or higher
-- PyTorch 2.7 or higher
-- CUDA-compatible GPU with CUDA 12.6 or higher
-
-1. **Create a new Conda environment:**
-
-```bash
-conda create -n sam3 python=3.12
-conda deactivate
-conda activate sam3
-```
-
-2. **Install PyTorch with CUDA support:**
-
-```bash
-pip install torch==2.7.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
-```
-
-3. **Clone the repository and install the package:**
-
-```bash
-git clone https://github.com/facebookresearch/sam3.git
-cd sam3
-pip install -e .
-```
-
-4. **Install additional dependencies for example notebooks or development:**
-
-```bash
-# For running example notebooks
-pip install -e ".[notebooks]"
-
-# For development
-pip install -e ".[train,dev]"
-```
-
-## Getting Started
-
-⚠️ Before using SAM 3, please request access to the checkpoints on the SAM 3
-Hugging Face [repo](https://huggingface.co/facebook/sam3). Once accepted, you
-need to be authenticated to download the checkpoints. You can do this by running
-the following [steps](https://huggingface.co/docs/huggingface_hub/en/quick-start#authentication)
-(e.g. `hf auth login` after generating an access token.)
+[Hugging Face 🤗  app](https://huggingface.co/spaces/akhaliq/sam3)
 
 ### Basic Usage
 
@@ -147,241 +78,639 @@ response = video_predictor.handle_request(
 output = response["outputs"]
 ```
 
-## Examples
+The official code is publicly released in the [sam3 repo](https://github.com/facebookresearch/sam3).
 
-The `examples` directory contains notebooks demonstrating how to use SAM3 with
-various types of prompts:
 
-- [`sam3_image_predictor_example.ipynb`](examples/sam3_image_predictor_example.ipynb)
-  : Demonstrates how to prompt SAM 3 with text and visual box prompts on images.
-- [`sam3_video_predictor_example.ipynb`](examples/sam3_video_predictor_example.ipynb)
-  : Demonstrates how to prompt SAM 3 with text prompts on videos, and doing
-  further interactive refinements with points.
-- [`sam3_image_batched_inference.ipynb`](examples/sam3_image_batched_inference.ipynb)
-  : Demonstrates how to run batched inference with SAM 3 on images.
-- [`sam3_agent.ipynb`](examples/sam3_agent.ipynb): Demonsterates the use of SAM
-  3 Agent to segment complex text prompt on images.
-- [`saco_gold_silver_vis_example.ipynb`](examples/saco_gold_silver_vis_example.ipynb)
-  : Shows a few examples from SA-Co image evaluation set.
-- [`saco_veval_vis_example.ipynb`](examples/saco_veval_vis_example.ipynb) :
-  Shows a few examples from SA-Co video evaluation set.
+## Usage with 🤗 Transformers
 
-There are additional notebooks in the examples directory that demonstrate how to
-use SAM 3 for interactive instance segmentation in images and videos (SAM 1/2
-tasks), or as a tool for an MLLM, and how to run evaluations on the SA-Co
-dataset.
+### SAM3 - Promptable Concept Segmentation (PCS) for Images
 
-To run the Jupyter notebook examples:
+SAM3 performs Promptable Concept Segmentation (PCS) on images, taking text and/or image exemplars as prompts and returning segmentation masks for **all matching object instances** in the image.
 
-```bash
-# Make sure you have the notebooks dependencies installed
-pip install -e ".[notebooks]"
+#### Text-Only Prompts
 
-# Start Jupyter notebook
-jupyter notebook examples/sam3_image_predictor_example.ipynb
+```python
+>>> from transformers import Sam3Processor, Sam3Model
+>>> import torch
+>>> from PIL import Image
+>>> import requests
+
+>>> device = "cuda" if torch.cuda.is_available() else "cpu"
+
+>>> model = Sam3Model.from_pretrained("facebook/sam3").to(device)
+>>> processor = Sam3Processor.from_pretrained("facebook/sam3")
+
+>>> # Load image
+>>> image_url = "http://images.cocodataset.org/val2017/000000077595.jpg"
+>>> image = Image.open(requests.get(image_url, stream=True).raw).convert("RGB")
+
+>>> # Segment using text prompt
+>>> inputs = processor(images=image, text="ear", return_tensors="pt").to(device)
+
+>>> with torch.no_grad():
+...     outputs = model(**inputs)
+
+>>> # Post-process results
+>>> results = processor.post_process_instance_segmentation(
+...     outputs,
+...     threshold=0.5,
+...     mask_threshold=0.5,
+...     target_sizes=inputs.get("original_sizes").tolist()
+... )[0]
+
+>>> print(f"Found {len(results['masks'])} objects")
+>>> # Results contain:
+>>> # - masks: Binary masks resized to original image size
+>>> # - boxes: Bounding boxes in absolute pixel coordinates (xyxy format)
+>>> # - scores: Confidence scores
 ```
 
-## Model
+You can display masks using a simple helper like the following:
 
-SAM 3 consists of a detector and a tracker that share a vision encoder. It has 848M parameters. The
-detector is a DETR-based model conditioned on text, geometry, and image
-exemplars. The tracker inherits the SAM 2 transformer encoder-decoder
-architecture, supporting video segmentation and interactive refinement.
+```python
+import numpy as np
+import matplotlib
 
-## Image Results
+def overlay_masks(image, masks):
+    image = image.convert("RGBA")
+    masks = 255 * masks.cpu().numpy().astype(np.uint8)
+    
+    n_masks = masks.shape[0]
+    cmap = matplotlib.colormaps.get_cmap("rainbow").resampled(n_masks)
+    colors = [
+        tuple(int(c * 255) for c in cmap(i)[:3])
+        for i in range(n_masks)
+    ]
 
-<div align="center">
-<table style="min-width: 80%; border: 2px solid #ddd; border-collapse: collapse">
-  <thead>
-    <tr>
-      <th rowspan="3" style="border-right: 2px solid #ddd; padding: 12px 20px">Model</th>
-      <th colspan="3" style="text-align: center; border-right: 2px solid #ddd; padding: 12px 20px">Instance Segmentation</th>
-      <th colspan="5" style="text-align: center; padding: 12px 20px">Box Detection</th>
-    </tr>
-    <tr>
-      <th colspan="2" style="text-align: center; border-right: 1px solid #eee; padding: 12px 20px">LVIS</th>
-      <th style="text-align: center; border-right: 2px solid #ddd; padding: 12px 20px">SA-Co/Gold</th>
-      <th colspan="2" style="text-align: center; border-right: 1px solid #eee; padding: 12px 20px">LVIS</th>
-      <th colspan="2" style="text-align: center; border-right: 1px solid #eee; padding: 12px 20px">COCO</th>
-      <th style="text-align: center; padding: 12px 20px">SA-Co/Gold</th>
-    </tr>
-    <tr>
-      <th style="text-align: center; padding: 12px 20px">cgF1</th>
-      <th style="text-align: center; border-right: 1px solid #eee; padding: 12px 20px">AP</th>
-      <th style="text-align: center; border-right: 2px solid #ddd; padding: 12px 20px">cgF1</th>
-      <th style="text-align: center; padding: 12px 20px">cgF1</th>
-      <th style="text-align: center; border-right: 1px solid #eee; padding: 12px 20px">AP</th>
-      <th style="text-align: center; padding: 12px 20px">AP</th>
-      <th style="text-align: center; border-right: 1px solid #eee; padding: 12px 20px">AP<sub>o</sub>
-</th>
-      <th style="text-align: center; padding: 12px 20px">cgF1</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td style="border-right: 2px solid #ddd; padding: 10px 20px">Human</td>
-      <td style="text-align: center; padding: 10px 20px">-</td>
-      <td style="text-align: center; border-right: 1px solid #eee; padding: 10px 20px">-</td>
-      <td style="text-align: center; border-right: 2px solid #ddd; padding: 10px 20px">72.8</td>
-      <td style="text-align: center; padding: 10px 20px">-</td>
-      <td style="text-align: center; border-right: 1px solid #eee; padding: 10px 20px">-</td>
-      <td style="text-align: center; padding: 10px 20px">-</td>
-      <td style="text-align: center; border-right: 1px solid #eee; padding: 10px 20px">-</td>
-      <td style="text-align: center; padding: 10px 20px">74.0</td>
-    </tr>
-    <tr>
-      <td style="border-right: 2px solid #ddd; padding: 10px 20px">OWLv2*</td>
-      <td style="text-align: center; padding: 10px 20px; color: #999">29.3</td>
-      <td style="text-align: center; border-right: 1px solid #eee; padding: 10px 20px; color: #999">43.4</td>
-      <td style="text-align: center; border-right: 2px solid #ddd; padding: 10px 20px">24.6</td>
-      <td style="text-align: center; padding: 10px 20px; color: #999">30.2</td>
-      <td style="text-align: center; border-right: 1px solid #eee; padding: 10px 20px; color: #999">45.5</td>
-      <td style="text-align: center; padding: 10px 20px">46.1</td>
-      <td style="text-align: center; border-right: 1px solid #eee; padding: 10px 20px">23.9</td>
-      <td style="text-align: center; padding: 10px 20px">24.5</td>
-    </tr>
-    <tr>
-      <td style="border-right: 2px solid #ddd; padding: 10px 20px">DINO-X</td>
-      <td style="text-align: center; padding: 10px 20px">-</td>
-      <td style="text-align: center; border-right: 1px solid #eee; padding: 10px 20px">38.5</td>
-      <td style="text-align: center; border-right: 2px solid #ddd; padding: 10px 20px">21.3</td>
-      <td style="text-align: center; padding: 10px 20px">-</td>
-      <td style="text-align: center; border-right: 1px solid #eee; padding: 10px 20px">52.4</td>
-      <td style="text-align: center; padding: 10px 20px">56.0</td>
-      <td style="text-align: center; border-right: 1px solid #eee; padding: 10px 20px">-</td>
-      <td style="text-align: center; padding: 10px 20px">22.5</td>
-    </tr>
-    <tr>
-      <td style="border-right: 2px solid #ddd; padding: 10px 20px">Gemini 2.5</td>
-      <td style="text-align: center; padding: 10px 20px">13.4</td>
-      <td style="text-align: center; border-right: 1px solid #eee; padding: 10px 20px">-</td>
-      <td style="text-align: center; border-right: 2px solid #ddd; padding: 10px 20px">13.0</td>
-      <td style="text-align: center; padding: 10px 20px">16.1</td>
-      <td style="text-align: center; border-right: 1px solid #eee; padding: 10px 20px">-</td>
-      <td style="text-align: center; padding: 10px 20px">-</td>
-      <td style="text-align: center; border-right: 1px solid #eee; padding: 10px 20px">-</td>
-      <td style="text-align: center; padding: 10px 20px">14.4</td>
-    </tr>
-    <tr style="border-top: 2px solid #b19c9cff">
-      <td style="border-right: 2px solid #ddd; padding: 10px 20px">SAM 3</td>
-      <td style="text-align: center; padding: 10px 20px">37.2</td>
-      <td style="text-align: center; border-right: 1px solid #eee; padding: 10px 20px">48.5</td>
-      <td style="text-align: center; border-right: 2px solid #ddd; padding: 10px 20px">54.1</td>
-      <td style="text-align: center; padding: 10px 20px">40.6</td>
-      <td style="text-align: center; border-right: 1px solid #eee; padding: 10px 20px">53.6</td>
-      <td style="text-align: center; padding: 10px 20px">56.4</td>
-      <td style="text-align: center; border-right: 1px solid #eee; padding: 10px 20px">55.7</td>
-      <td style="text-align: center; padding: 10px 20px">55.7</td>
-    </tr>
-  </tbody>
-</table>
+    for mask, color in zip(masks, colors):
+        mask = Image.fromarray(mask)
+        overlay = Image.new("RGBA", image.size, color + (0,))
+        alpha = mask.point(lambda v: int(v * 0.5))
+        overlay.putalpha(alpha)
+        image = Image.alpha_composite(image, overlay)
+    return image
+```
 
-<p style="text-align: center; margin-top: 10px; font-size: 0.9em; color: #ddd;">* Partially trained on LVIS, AP<sub>o</sub> refers to COCO-O accuracy</p>
+Then you can save the resulting composite image or display it in a notebook:
 
+```python
+>>> overlay_masks(image, results["masks"])
+```
+
+#### Single Bounding Box Prompt
+
+Segment objects using a bounding box:
+
+```python
+>>> # Box in xyxy format: [x1, y1, x2, y2] in pixel coordinates
+>>> # Example: laptop region
+>>> box_xyxy = [100, 150, 500, 450]
+>>> input_boxes = [[box_xyxy]]  # [batch, num_boxes, 4]
+>>> input_boxes_labels = [[1]]  # 1 = positive box
+
+>>> inputs = processor(
+...     images=image,
+...     input_boxes=input_boxes,
+...     input_boxes_labels=input_boxes_labels,
+...     return_tensors="pt"
+... ).to(device)
+
+>>> with torch.no_grad():
+...     outputs = model(**inputs)
+
+>>> # Post-process results
+>>> results = processor.post_process_instance_segmentation(
+...     outputs,
+...     threshold=0.5,
+...     mask_threshold=0.5,
+...     target_sizes=inputs.get("original_sizes").tolist()
+... )[0]
+```
+
+#### Multiple Box Prompts (Positive and Negative)
+
+Use multiple boxes with positive and negative labels to refine the concept:
+
+```python
+>>> # Load kitchen image
+>>> kitchen_url = "http://images.cocodataset.org/val2017/000000136466.jpg"
+>>> kitchen_image = Image.open(requests.get(kitchen_url, stream=True).raw).convert("RGB")
+
+>>> # Define two positive boxes (e.g., dial and button on oven)
+>>> # Boxes are in xyxy format [x1, y1, x2, y2] in pixel coordinates
+>>> box1_xyxy = [59, 144, 76, 163]  # Dial box
+>>> box2_xyxy = [87, 148, 104, 159]  # Button box
+>>> input_boxes = [[box1_xyxy, box2_xyxy]]
+>>> input_boxes_labels = [[1, 1]]  # Both positive
+
+>>> inputs = processor(
+...     images=kitchen_image,
+...     input_boxes=input_boxes,
+...     input_boxes_labels=input_boxes_labels,
+...     return_tensors="pt"
+... ).to(device)
+
+>>> with torch.no_grad():
+...     outputs = model(**inputs)
+
+>>> # Post-process results
+>>> results = processor.post_process_instance_segmentation(
+...     outputs,
+...     threshold=0.5,
+...     mask_threshold=0.5,
+...     target_sizes=inputs.get("original_sizes").tolist()
+... )[0]
+>>> overlay_masks(kitchen_image, results["masks"])
+```
+
+#### Combined Prompts (Text + Negative Box)
+
+Use text prompts with negative visual prompts to refine the concept:
+
+```python
+>>> # Segment "handle" but exclude the oven handle using a negative box
+>>> text = "handle"
+>>> # Negative box covering oven handle area (xyxy): [40, 183, 318, 204]
+>>> oven_handle_box = [40, 183, 318, 204]
+>>> input_boxes = [[oven_handle_box]]
+
+>>> inputs = processor(
+...     images=kitchen_image,
+...     text=text,
+...     input_boxes=input_boxes,
+...     input_boxes_labels=[[0]],  # 0 = negative (exclude this region)
+...     return_tensors="pt"
+... ).to(device)
+
+>>> with torch.no_grad():
+...     outputs = model(**inputs)
+
+>>> # Post-process results
+>>> results = processor.post_process_instance_segmentation(
+...     outputs,
+...     threshold=0.5,
+...     mask_threshold=0.5,
+...     target_sizes=inputs.get("original_sizes").tolist()
+... )[0]
+>>> # This will segment pot handles but exclude the oven handle
+```
+
+#### Batched Inference with Text Prompts
+
+Process multiple images with different text prompts by batch:
+
+```python
+>>> cat_url = "http://images.cocodataset.org/val2017/000000077595.jpg"
+>>> kitchen_url = "http://images.cocodataset.org/val2017/000000136466.jpg"
+>>> images = [
+...     Image.open(requests.get(cat_url, stream=True).raw).convert("RGB"),
+...     Image.open(requests.get(kitchen_url, stream=True).raw).convert("RGB")
+... ]
+
+>>> text_prompts = ["ear", "dial"]
+
+>>> inputs = processor(images=images, text=text_prompts, return_tensors="pt").to(device)
+
+>>> with torch.no_grad():
+...     outputs = model(**inputs)
+
+>>> # Post-process results for both images
+>>> results = processor.post_process_instance_segmentation(
+...     outputs,
+...     threshold=0.5,
+...     mask_threshold=0.5,
+...     target_sizes=inputs.get("original_sizes").tolist()
+... )
+
+>>> print(f"Image 1: {len(results[0]['masks'])} objects found")
+>>> print(f"Image 2: {len(results[1]['masks'])} objects found")
+```
+
+#### Batched Mixed Prompts
+
+Use different prompt types for different images in the same batch:
+
+```python
+>>> # Image 1: text prompt "laptop"
+>>> # Image 2: visual prompt (dial box)
+>>> box2_xyxy = [59, 144, 76, 163]
+
+>>> inputs = processor(
+...     images=images,
+...     text=["laptop", None],  # Only first image has text
+...     input_boxes=[None, [box2_xyxy]],  # Only second image has box
+...     input_boxes_labels=[None, [1]],  # Positive box for second image
+...     return_tensors="pt"
+... ).to(device)
+
+>>> with torch.no_grad():
+...     outputs = model(**inputs)
+
+>>> # Post-process results for both images
+>>> results = processor.post_process_instance_segmentation(
+...     outputs,
+...     threshold=0.5,
+...     mask_threshold=0.5,
+...     target_sizes=inputs.get("original_sizes").tolist()
+... )
+>>> # Both images processed in single forward pass
+```
+
+#### Semantic Segmentation Output
+
+SAM3 also provides semantic segmentation alongside instance masks:
+
+```python
+>>> inputs = processor(images=image, text="ear", return_tensors="pt").to(device)
+
+>>> with torch.no_grad():
+...     outputs = model(**inputs)
+
+>>> # Instance segmentation masks
+>>> instance_masks = torch.sigmoid(outputs.pred_masks)  # [batch, num_queries, H, W]
+
+>>> # Semantic segmentation (single channel)
+>>> semantic_seg = outputs.semantic_seg  # [batch, 1, H, W]
+
+>>> print(f"Instance masks: {instance_masks.shape}")
+>>> print(f"Semantic segmentation: {semantic_seg.shape}")
+```
+
+### SAM3 Video - Promptable Concept Segmentation (PCS) for Videos
+
+SAM3 Video performs Promptable Concept Segmentation (PCS) on videos, taking text as prompts and detecting and tracking **all matching object instances** across video frames.
+
+#### Pre-loaded Video Inference
+
+Process a video with all frames already available using text prompts:
+
+```python
+>>> from transformers import Sam3VideoModel, Sam3VideoProcessor
+>>> from accelerate import Accelerator
+>>> import torch
+
+>>> device = Accelerator().device
+>>> model = Sam3VideoModel.from_pretrained("facebook/sam3").to(device, dtype=torch.bfloat16)
+>>> processor = Sam3VideoProcessor.from_pretrained("facebook/sam3")
+
+>>> # Load video frames
+>>> from transformers.video_utils import load_video
+>>> video_url = "https://huggingface.co/datasets/hf-internal-testing/sam2-fixtures/resolve/main/bedroom.mp4"
+>>> video_frames, _ = load_video(video_url)
+
+>>> # Initialize video inference session
+>>> inference_session = processor.init_video_session(
+...     video=video_frames,
+...     inference_device=device,
+...     processing_device="cpu",
+...     video_storage_device="cpu",
+...     dtype=torch.bfloat16,
+... )
+
+>>> # Add text prompt to detect and track objects
+>>> text = "person"
+>>> inference_session = processor.add_text_prompt(
+...     inference_session=inference_session,
+...     text=text,
+... )
+
+>>> # Process all frames in the video
+>>> outputs_per_frame = {}
+>>> for model_outputs in model.propagate_in_video_iterator(
+...     inference_session=inference_session, max_frame_num_to_track=50
+... ):
+...     processed_outputs = processor.postprocess_outputs(inference_session, model_outputs)
+...     outputs_per_frame[model_outputs.frame_idx] = processed_outputs
+
+>>> print(f"Processed {len(outputs_per_frame)} frames")
+Processed 51 frames
+
+>>> # Access results for a specific frame
+>>> frame_0_outputs = outputs_per_frame[0]
+>>> print(f"Detected {len(frame_0_outputs['object_ids'])} objects")
+>>> print(f"Object IDs: {frame_0_outputs['object_ids'].tolist()}")
+>>> print(f"Scores: {frame_0_outputs['scores'].tolist()}")
+>>> print(f"Boxes shape (XYXY format, absolute coordinates): {frame_0_outputs['boxes'].shape}")
+>>> print(f"Masks shape: {frame_0_outputs['masks'].shape}")
+```
+
+#### Streaming Video Inference
+
+For real-time applications, the Transformers implementation of SAM3 Video supports processing video frames as they arrive:
+
+```python
+>>> # Initialize session for streaming
+>>> streaming_inference_session = processor.init_video_session(
+...     inference_device=device,
+...     processing_device="cpu",
+...     video_storage_device="cpu",
+...     dtype=torch.bfloat16,
+... )
+
+>>> # Add text prompt
+>>> text = "person"
+>>> streaming_inference_session = processor.add_text_prompt(
+...     inference_session=streaming_inference_session,
+...     text=text,
+... )
+
+>>> # Process frames one by one (streaming mode)
+>>> streaming_outputs_per_frame = {}
+>>> for frame_idx, frame in enumerate(video_frames[:50]):  # Process first 50 frames
+...     # First, process the frame using the processor
+...     inputs = processor(images=frame, device=device, return_tensors="pt")
+...
+...     # Process frame using streaming inference - pass the processed pixel_values
+...     model_outputs = model(
+...         inference_session=streaming_inference_session,
+...         frame=inputs.pixel_values[0],  # Provide processed frame - this enables streaming mode
+...         reverse=False,
+...     )
+...
+...     # Post-process outputs with original_sizes for proper resolution handling
+...     processed_outputs = processor.postprocess_outputs(
+...         streaming_inference_session,
+...         model_outputs,
+...         original_sizes=inputs.original_sizes,  # Required for streaming inference
+...     )
+...     streaming_outputs_per_frame[frame_idx] = processed_outputs
+...
+...     if (frame_idx + 1) % 10 == 0:
+...         print(f"Processed {frame_idx + 1} frames...")
+
+>>> print(f"✓ Streaming inference complete! Processed {len(streaming_outputs_per_frame)} frames")
+✓ Streaming inference complete! Processed 50 frames
+
+>>> # Access results
+>>> frame_0_outputs = streaming_outputs_per_frame[0]
+>>> print(f"Detected {len(frame_0_outputs['object_ids'])} objects in first frame")
+>>> print(f"Boxes are in XYXY format (absolute pixel coordinates): {frame_0_outputs['boxes'].shape}")
+>>> print(f"Masks are at original video resolution: {frame_0_outputs['masks'].shape}")
+```
+
+<div class="warning">
+⚠️ **Note on Streaming Inference Quality**: Streaming inference disables hotstart heuristics that remove unmatched and duplicate objects, as these require access to future frames to make informed decisions. This may result in more false positive detections and duplicate object tracks compared to pre-loaded video inference. For best results, use pre-loaded video inference when all frames are available.
 </div>
 
-## Video Results
+### SAM3 Tracker - Promptable Visual Segmentation (PVS) for Images
 
-<div align="center">
-<table style="min-width: 80%; border: 2px solid #ddd; border-collapse: collapse">
-  <thead>
-    <tr>
-      <th rowspan="2" style="border-right: 2px solid #ddd; padding: 12px 20px">Model</th>
-      <th colspan="2" style="text-align: center; border-right: 1px solid #eee; padding: 12px 20px">SA-V test</th>
-      <th colspan="2" style="text-align: center; border-right: 1px solid #eee; padding: 12px 20px">YT-Temporal-1B test</th>
-      <th colspan="2" style="text-align: center; border-right: 1px solid #eee; padding: 12px 20px">SmartGlasses test</th>
-      <th style="text-align: center; border-right: 1px solid #eee; padding: 12px 20px">LVVIS test</th>
-      <th style="text-align: center; padding: 12px 20px">BURST test</th>
-    </tr>
-    <tr>
-      <th style="text-align: center; padding: 12px 20px">cgF1</th>
-      <th style="text-align: center; border-right: 1px solid #eee; padding: 12px 20px">pHOTA</th>
-      <th style="text-align: center; padding: 12px 20px">cgF1</th>
-      <th style="text-align: center; border-right: 1px solid #eee; padding: 12px 20px">pHOTA</th>
-      <th style="text-align: center; padding: 12px 20px">cgF1</th>
-      <th style="text-align: center; border-right: 1px solid #eee; padding: 12px 20px">pHOTA</th>
-      <th style="text-align: center; border-right: 1px solid #eee; padding: 12px 20px">mAP</th>
-      <th style="text-align: center; padding: 12px 20px">HOTA</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td style="border-right: 2px solid #ddd; padding: 10px 20px">Human</td>
-      <td style="text-align: center; padding: 10px 20px">53.1</td>
-      <td style="text-align: center; border-right: 1px solid #eee; padding: 10px 20px">70.5</td>
-      <td style="text-align: center; padding: 10px 20px">71.2</td>
-      <td style="text-align: center; border-right: 1px solid #eee; padding: 10px 20px">78.4</td>
-      <td style="text-align: center; padding: 10px 20px">58.5</td>
-      <td style="text-align: center; border-right: 1px solid #eee; padding: 10px 20px">72.3</td>
-      <td style="text-align: center; border-right: 1px solid #eee; padding: 10px 20px">-</td>
-      <td style="text-align: center; padding: 10px 20px">-</td>
-    </tr>
-    <tr style="border-top: 2px solid #b19c9cff">
-      <td style="border-right: 2px solid #ddd; padding: 10px 20px">SAM 3</td>
-      <td style="text-align: center; padding: 10px 20px">30.3</td>
-      <td style="text-align: center; border-right: 1px solid #eee; padding: 10px 20px">58.0</td>
-      <td style="text-align: center; padding: 10px 20px">50.8</td>
-      <td style="text-align: center; border-right: 1px solid #eee; padding: 10px 20px">69.9</td>
-      <td style="text-align: center; padding: 10px 20px">36.4</td>
-      <td style="text-align: center; border-right: 1px solid #eee; padding: 10px 20px">63.6</td>
-      <td style="text-align: center; border-right: 1px solid #eee; padding: 10px 20px">36.3</td>
-      <td style="text-align: center; padding: 10px 20px">44.5</td>
-    </tr>
-  </tbody>
-</table>
-</div>
+Sam3Tracker performs Promptable Visual Segmentation (PVS) on images, taking interactive visual prompts (points, boxes, masks) to segment a **specific object instance** per prompt. It is an updated version of SAM2 that maintains the same API while providing improved performance, making it a drop-in replacement for SAM2 workflows.
 
-## SA-Co Dataset
+#### Automatic Mask Generation with Pipeline
 
-We release 2 image benchmarks, [SA-Co/Gold](scripts/eval/gold/README.md) and
-[SA-Co/Silver](scripts/eval/silver/README.md), and a video benchmark
-[SA-Co/VEval](scripts/eval/veval/README.md). The datasets contain images (or videos) with annotated noun phrases. Each image/video and noun phrase pair is annotated with instance masks and unique IDs of each object matching the phrase. Phrases that have no matching objects (negative prompts) have no masks, shown in red font in the figure. See the linked READMEs for more details on how to download and run evaluations on the datasets.
+```python
+>>> from transformers import pipeline
 
-* HuggingFace host: [SA-Co/Gold](https://huggingface.co/datasets/facebook/SACo-Gold), [SA-Co/Silver](https://huggingface.co/datasets/facebook/SACo-Silver) and [SA-Co/VEval](https://huggingface.co/datasets/facebook/SACo-VEval)
-* Roboflow host: [SA-Co/Gold](https://universe.roboflow.com/sa-co-gold), [SA-Co/Silver](https://universe.roboflow.com/sa-co-silver) and [SA-Co/VEval](https://universe.roboflow.com/sa-co-veval)
+>>> generator = pipeline("mask-generation", model="facebook/sam3", device=0)
+>>> image_url = "https://huggingface.co/datasets/hf-internal-testing/sam2-fixtures/resolve/main/truck.jpg"
+>>> outputs = generator(image_url, points_per_batch=64)
 
-![SA-Co dataset](assets/sa_co_dataset.jpg?raw=true)
-
-## Development
-
-To set up the development environment:
-
-```bash
-pip install -e ".[dev,train]"
+>>> len(outputs["masks"])  # Number of masks generated
 ```
 
-To format the code:
+#### Basic Image Segmentation
 
-```bash
-ufmt format .
+##### Single Point Click
+
+```python
+>>> from transformers import Sam3TrackerProcessor, Sam3TrackerModel
+>>> from accelerate import Accelerator
+>>> import torch
+>>> from PIL import Image
+>>> import requests
+
+>>> device = Accelerator().device
+
+>>> model = Sam3TrackerModel.from_pretrained("facebook/sam3").to(device)
+>>> processor = Sam3TrackerProcessor.from_pretrained("facebook/sam3")
+
+>>> image_url = "https://huggingface.co/datasets/hf-internal-testing/sam2-fixtures/resolve/main/truck.jpg"
+>>> raw_image = Image.open(requests.get(image_url, stream=True).raw).convert("RGB")
+
+>>> input_points = [[[[500, 375]]]]  # Single point click, 4 dimensions (image_dim, object_dim, point_per_object_dim, coordinates)
+>>> input_labels = [[[1]]]  # 1 for positive click, 0 for negative click, 3 dimensions (image_dim, object_dim, point_label)
+
+>>> inputs = processor(images=raw_image, input_points=input_points, input_labels=input_labels, return_tensors="pt").to(model.device)
+
+>>> with torch.no_grad():
+...     outputs = model(**inputs)
+
+>>> masks = processor.post_process_masks(outputs.pred_masks.cpu(), inputs["original_sizes"])[0]
+
+>>> # The model outputs multiple mask predictions ranked by quality score
+>>> print(f"Generated {masks.shape[1]} masks with shape {masks.shape}")
 ```
 
-## Contributing
+##### Multiple Points for Refinement
 
-See [contributing](CONTRIBUTING.md) and the
-[code of conduct](CODE_OF_CONDUCT.md).
+```python
+>>> # Add both positive and negative points to refine the mask
+>>> input_points = [[[[500, 375], [1125, 625]]]]  # Multiple points for refinement
+>>> input_labels = [[[1, 1]]]  # Both positive clicks
 
-## License
+>>> inputs = processor(images=raw_image, input_points=input_points, input_labels=input_labels, return_tensors="pt").to(device)
 
-This project is licensed under the SAM License - see the [LICENSE](LICENSE) file
-for details.
+>>> with torch.no_grad():
+...     outputs = model(**inputs)
 
-## Acknowledgements
+>>> masks = processor.post_process_masks(outputs.pred_masks.cpu(), inputs["original_sizes"])[0]
+```
 
-We would like to thank the following people for their contributions to the SAM 3 project: Alex He, Alexander Kirillov,
-Alyssa Newcomb, Ana Paula Kirschner Mofarrej, Andrea Madotto, Andrew Westbury, Ashley Gabriel, Azita Shokpour,
-Ben Samples, Bernie Huang, Carleigh Wood, Ching-Feng Yeh, Christian Puhrsch, Claudette Ward, Daniel Bolya,
-Daniel Li, Facundo Figueroa, Fazila Vhora, George Orlin, Hanzi Mao, Helen Klein, Hu Xu, Ida Cheng, Jake Kinney,
-Jiale Zhi, Jo Sampaio, Joel Schlosser, Justin Johnson, Kai Brown, Karen Bergan, Karla Martucci, Kenny Lehmann,
-Maddie Mintz, Mallika Malhotra, Matt Ward, Michelle Chan, Michelle Restrepo, Miranda Hartley, Muhammad Maaz,
-Nisha Deo, Peter Park, Phillip Thomas, Raghu Nayani, Rene Martinez Doehner, Robbie Adkins, Ross Girshik, Sasha
-Mitts, Shashank Jain, Spencer Whitehead, Ty Toledano, Valentin Gabeur, Vincent Cho, Vivian Lee, William Ngan,
-Xuehai He, Yael Yungster, Ziqi Pang, Ziyi Dou, Zoe Quake.
+##### Bounding Box Input
 
-<!-- ## Citing SAM 3
+```python
+>>> # Define bounding box as [x_min, y_min, x_max, y_max]
+>>> input_boxes = [[[75, 275, 1725, 850]]]
 
-If you use SAM 3 or the SA-Co dataset in your research, please use the following BibTeX entry.
+>>> inputs = processor(images=raw_image, input_boxes=input_boxes, return_tensors="pt").to(device)
 
-```bibtex
-TODO
-``` -->
+>>> with torch.no_grad():
+...     outputs = model(**inputs)
+
+>>> masks = processor.post_process_masks(outputs.pred_masks.cpu(), inputs["original_sizes"])[0]
+```
+
+##### Multiple Objects Segmentation
+
+```python
+>>> # Define points for two different objects
+>>> input_points = [[[[500, 375]], [[650, 750]]]]  # Points for two objects in same image
+>>> input_labels = [[[1], [1]]]  # Positive clicks for both objects
+
+>>> inputs = processor(images=raw_image, input_points=input_points, input_labels=input_labels, return_tensors="pt").to(model.device)
+
+>>> with torch.no_grad():
+...     outputs = model(**inputs, multimask_output=False)
+
+>>> # Each object gets its own mask
+>>> masks = processor.post_process_masks(outputs.pred_masks.cpu(), inputs["original_sizes"])[0]
+>>> print(f"Generated masks for {masks.shape[0]} objects")
+Generated masks for 2 objects
+```
+
+#### Batch Inference
+
+
+```python
+>>> # Load multiple images
+>>> image_urls = [
+...     "https://huggingface.co/datasets/hf-internal-testing/sam2-fixtures/resolve/main/truck.jpg",
+...     "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/transformers/model_doc/dog-sam.png"
+... ]
+>>> raw_images = [Image.open(requests.get(url, stream=True).raw).convert("RGB") for url in image_urls]
+
+>>> # Single point per image
+>>> input_points = [[[[500, 375]]], [[[770, 200]]]]  # One point for each image
+>>> input_labels = [[[1]], [[1]]]  # Positive clicks for both images
+
+>>> inputs = processor(images=raw_images, input_points=input_points, input_labels=input_labels, return_tensors="pt").to(model.device)
+
+>>> with torch.no_grad():
+...     outputs = model(**inputs, multimask_output=False)
+
+>>> # Post-process masks for each image
+>>> all_masks = processor.post_process_masks(outputs.pred_masks.cpu(), inputs["original_sizes"])
+>>> print(f"Processed {len(all_masks)} images, each with {all_masks[0].shape[0]} objects")
+```
+
+### SAM3 Tracker Video - Promptable Visual Segmentation (PVS) for Videos
+
+Sam3TrackerVideo performs Promptable Visual Segmentation (PVS) on videos, taking interactive visual prompts (points, boxes, masks) to track a **specific object instance** per prompt across video frames. It is an updated version of SAM2 Video that maintains the same API while providing improved performance, making it a drop-in replacement for SAM2 Video workflows.
+
+#### Basic Video Tracking
+
+```python
+>>> from transformers import Sam3TrackerVideoModel, Sam3TrackerVideoProcessor
+>>> from accelerate import Accelerator
+>>> import torch
+
+>>> device = Accelerator().device
+>>> model = Sam3TrackerVideoModel.from_pretrained("facebook/sam3").to(device, dtype=torch.bfloat16)
+>>> processor = Sam3TrackerVideoProcessor.from_pretrained("facebook/sam3")
+
+>>> # Load video frames
+>>> from transformers.video_utils import load_video
+>>> video_url = "https://huggingface.co/datasets/hf-internal-testing/sam2-fixtures/resolve/main/bedroom.mp4"
+>>> video_frames, _ = load_video(video_url)
+
+>>> # Initialize video inference session
+>>> inference_session = processor.init_video_session(
+...     video=video_frames,
+...     inference_device=device,
+...     dtype=torch.bfloat16,
+... )
+
+>>> # Add click on first frame to select object
+>>> ann_frame_idx = 0
+>>> ann_obj_id = 1
+>>> points = [[[[210, 350]]]]
+>>> labels = [[[1]]]
+
+>>> processor.add_inputs_to_inference_session(
+...     inference_session=inference_session,
+...     frame_idx=ann_frame_idx,
+...     obj_ids=ann_obj_id,
+...     input_points=points,
+...     input_labels=labels,
+... )
+
+>>> # Segment the object on the first frame (optional, you can also propagate the masks through the video directly)
+>>> outputs = model(
+...     inference_session=inference_session,
+...     frame_idx=ann_frame_idx,
+... )
+>>> video_res_masks = processor.post_process_masks(
+...     [outputs.pred_masks], original_sizes=[[inference_session.video_height, inference_session.video_width]], binarize=False
+... )[0]
+>>> print(f"Segmentation shape: {video_res_masks.shape}")
+Segmentation shape: torch.Size([1, 1, 480, 854])
+
+>>> # Propagate through the entire video
+>>> video_segments = {}
+>>> for sam3_tracker_video_output in model.propagate_in_video_iterator(inference_session):
+...     video_res_masks = processor.post_process_masks(
+...         [sam3_tracker_video_output.pred_masks], original_sizes=[[inference_session.video_height, inference_session.video_width]], binarize=False
+...     )[0]
+...     video_segments[sam3_tracker_video_output.frame_idx] = video_res_masks
+
+>>> print(f"Tracked object through {len(video_segments)} frames")
+Tracked object through 180 frames
+```
+
+#### Multi-Object Video Tracking
+
+Track multiple objects simultaneously across video frames:
+
+```python
+>>> # Reset for new tracking session
+>>> inference_session.reset_inference_session()
+
+>>> # Add multiple objects on the first frame
+>>> ann_frame_idx = 0
+>>> obj_ids = [2, 3]
+>>> input_points = [[[[200, 300]], [[400, 150]]]]  # Points for two objects (batched)
+>>> input_labels = [[[1], [1]]]
+
+>>> processor.add_inputs_to_inference_session(
+...     inference_session=inference_session,
+...     frame_idx=ann_frame_idx,
+...     obj_ids=obj_ids,
+...     input_points=input_points,
+...     input_labels=input_labels,
+... )
+
+>>> # Get masks for both objects on first frame (optional, you can also propagate the masks through the video directly)
+>>> outputs = model(
+...     inference_session=inference_session,
+...     frame_idx=ann_frame_idx,
+... )
+
+>>> # Propagate both objects through video
+>>> video_segments = {}
+>>> for sam3_tracker_video_output in model.propagate_in_video_iterator(inference_session):
+...     video_res_masks = processor.post_process_masks(
+...         [sam3_tracker_video_output.pred_masks], original_sizes=[[inference_session.video_height, inference_session.video_width]], binarize=False
+...     )[0]
+...     video_segments[sam3_tracker_video_output.frame_idx] = {
+...         obj_id: video_res_masks[i]
+...         for i, obj_id in enumerate(inference_session.obj_ids)
+...     }
+
+>>> print(f"Tracked {len(inference_session.obj_ids)} objects through {len(video_segments)} frames")
+Tracked 2 objects through 180 frames
+```
+
+#### Streaming Video Inference
+
+For real-time applications, Sam3TrackerVideo supports processing video frames as they arrive:
+
+```python
+>>> # Initialize session for streaming
+>>> inference_session = processor.init_video_session(
+...     inference_device=device,
+...     dtype=torch.bfloat16,
+... )
+
+>>> # Process frames one by one
+>>> for frame_idx, frame in enumerate(video_frames[:10]):  # Process first 10 frames
+...     inputs = processor(images=frame, device=device, return_tensors="pt")
+...
+...     if frame_idx == 0:
+...         # Add point input on first frame
+...         processor.add_inputs_to_inference_session(
+...             inference_session=inference_session,
+...             frame_idx=0,
+...             obj_ids=1,
+...             input_points=[[[[210, 350], [250, 220]]]],
+...             input_labels=[[[1, 1]]],
+...             original_size=inputs.original_sizes[0], # need to be provided when using streaming video inference
+...         )
+...
+...     # Process current frame
+...     sam3_tracker_video_output = model(inference_session=inference_session, frame=inputs.pixel_values[0])
+...
+...     video_res_masks = processor.post_process_masks(
+...         [sam3_tracker_video_output.pred_masks], original_sizes=inputs.original_sizes, binarize=False
+...     )[0]
+...     print(f"Frame {frame_idx}: mask shape {video_res_masks.shape}")
+```

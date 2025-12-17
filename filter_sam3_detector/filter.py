@@ -238,7 +238,7 @@ class FilterSAM3Detector(Filter):
 
             # Check if model is loaded
             if self.model is None or self.processor is None:
-                logger.warning("SAM3 model not loaded, forwarding frame unchanged")
+                logger.warning(f"SAM3 model not loaded (model={self.model is not None}, processor={self.processor is not None}), forwarding frame unchanged")
                 output_frames[topic] = frame
                 continue
 
@@ -349,8 +349,24 @@ class FilterSAM3Detector(Filter):
         try:
             logger.info(f"Loading SAM3 model on device: {self.device}")
 
+            # Find BPE path - try multiple locations
+            bpe_path = None
+            possible_paths = [
+                Path(__file__).parent.parent / "sam3" / "assets" / "bpe_simple_vocab_16e6.txt.gz",
+                Path(__file__).parent.parent.parent / "sam3" / "assets" / "bpe_simple_vocab_16e6.txt.gz",
+            ]
+            for path in possible_paths:
+                if path.exists():
+                    bpe_path = str(path)
+                    logger.info(f"Found BPE file at: {bpe_path}")
+                    break
+            
+            if bpe_path is None:
+                logger.warning("BPE file not found in expected locations, using default path")
+
             # Build SAM3 model
             self.model = build_sam3_image_model(
+                bpe_path=bpe_path,
                 device=str(self.device),
                 eval_mode=True,
                 load_from_HF=True,
