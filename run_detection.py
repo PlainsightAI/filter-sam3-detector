@@ -76,8 +76,10 @@ detector.setup(detector.config)
 detections_filename = f"{video_name}_detections_{timestamp}.jsonl"
 detections_file = open(output_dir / detections_filename, "w")
 frame_count = 0  # Total frames read from video
+valid_frames_seen = 0  # Valid frames seen (used for skip logic)
 processed_count = 0  # Frames actually processed (after skipping)
 saved_count = 0
+invalid_frames = 0  # Frames skipped due to corruption/invalid data
 
 try:
     while True:
@@ -94,14 +96,36 @@ try:
 
         frame_count += 1
 
-        # Skip frames logic: if skip_frames > 0, only process every (skip_frames + 1) frames
-        # skip_frames = 2 means process frame 1, 4, 7, 10... (process 1, skip 2)
-        # skip_frames = 3 means process frame 1, 5, 9, 13... (process 1, skip 3)
-        # skip_frames = 19 means process frame 1, 21, 41, 61... (process 1, skip 19)
-        #   For a 20 fps video: skip_frames=19 processes 1 frame per second
-        #   For a 30 fps video: skip_frames=29 processes 1 frame per second
+        # Validate frame before processing (check for corrupted frames from HEVC errors)
+        frame_valid = False
+        for topic, frame in frames_dict.items():
+            if frame and hasattr(frame, 'rw_bgr') and frame.rw_bgr and hasattr(frame.rw_bgr, 'image'):
+                img = frame.rw_bgr.image
+                if img is not None and len(img.shape) == 3 and img.shape[0] > 0 and img.shape[1] > 0:
+                    # Check if image has valid pixel values (not all zeros or corrupted)
+                    if img.size > 0 and img.max() > 0:
+                        frame_valid = True
+                        break
+        
+        if not frame_valid:
+            # Skip corrupted/invalid frames (common with HEVC decoding errors)
+            # These don't count towards skip logic - we'll process the next valid frame
+            invalid_frames += 1
+            continue
+
+        # Count this as a valid frame seen
+        valid_frames_seen += 1
+
+        # Skip frames logic: if skip_frames > 0, only process every (skip_frames + 1) VALID frames
+        # This ensures invalid frames don't affect the skip count
+        # skip_frames = 2 means process valid frame 1, 4, 7, 10... (process 1, skip 2)
+        # skip_frames = 3 means process valid frame 1, 5, 9, 13... (process 1, skip 3)
+        # skip_frames = 19 means process valid frame 1, 21, 41, 61... (process 1, skip 19)
+        #   For a 20 fps video: skip_frames=19 processes 1 valid frame per second
+        #   For a 30 fps video: skip_frames=29 processes 1 valid frame per second
         if skip_frames > 0:
-            if (frame_count - 1) % (skip_frames + 1) != 0:
+            # Use valid_frames_seen for skip logic (only valid frames count)
+            if (valid_frames_seen - 1) % (skip_frames + 1) != 0:
                 continue
 
         processed_count += 1
@@ -141,7 +165,8 @@ try:
             #     cv2.imwrite(str(img_path), frame.rw_bgr.image)
 
         if frame_count % 100 == 0:
-            print(f"Read {frame_count} frames, processed {processed_count}, saved {saved_count} with detections")
+            print(f"Read {frame_count} frames, processed {processed_count}, saved {saved_count} with detections" + 
+                  (f", skipped {invalid_frames} invalid" if invalid_frames > 0 else ""))
 
 finally:
     detections_file.close()
@@ -149,4 +174,34 @@ finally:
     detector.shutdown()
 
 print(f"\nDone! Read {frame_count} frames, processed {processed_count}, saved {saved_count} with detections")
+if invalid_frames > 0:
+    print(f"Warning: Skipped {invalid_frames} invalid/corrupted frames (likely due to HEVC decoding errors)")
 print(f"Results in: {output_dir}")
+
+# Convert to COCO format
+if saved_count > 0:
+    print(f"\nConverting detections to COCO format...")
+    try:
+        # Import the conversion function
+        import sys
+        script_dir = Path(__file__).parent
+        sys.path.insert(0, str(script_dir))
+        
+        from jsonl_to_coco import detections_jsonl_to_coco
+        
+        jsonl_path = output_dir / detections_filename
+        coco_output = output_dir / f"{video_name}_detections_{timestamp}_coco.json"
+        
+        detections_jsonl_to_coco(
+            str(jsonl_path),
+            str(coco_output),
+            category_name=output_label,
+            min_score=0.0
+        )
+        print(f"COCO format saved to: {coco_output}")
+    except Exception as e:
+        print(f"Warning: Failed to convert to COCO format: {e}")
+        import traceback
+        traceback.print_exc()
+else:
+    print("No detections found, skipping COCO conversion")

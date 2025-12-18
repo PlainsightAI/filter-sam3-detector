@@ -1,5 +1,20 @@
 #!/usr/bin/python3
-"""Run SAM3 detection on all images in a folder."""
+"""
+Run SAM3 detection on all images in a folder.
+
+Examples:
+    # Basic usage - process all images in a folder
+    python3 run_detection_images.py /path/to/images
+    
+    # Specify output directory
+    python3 run_detection_images.py /path/to/images /path/to/output
+    
+    # Custom prompt for detection
+    python3 run_detection_images.py /path/to/images /path/to/output "avocado and tomato"
+    
+    # Detect multiple objects
+    python3 run_detection_images.py imgs_demo/ output/ "small transparent cup, avocado, tomato"
+"""
 import sys
 from pathlib import Path
 import json
@@ -8,7 +23,19 @@ import cv2
 # Config
 if len(sys.argv) < 2:
     print("Usage: python3 run_detection_images.py <image_folder> [output_dir] [prompt]")
-    print("Example: python3 run_detection_images.py /path/to/images")
+    print()
+    print("Examples:")
+    print("  # Basic usage")
+    print("  python3 run_detection_images.py /path/to/images")
+    print()
+    print("  # With output directory")
+    print("  python3 run_detection_images.py /path/to/images /path/to/output")
+    print()
+    print("  # Custom prompt")
+    print("  python3 run_detection_images.py /path/to/images /path/to/output \"avocado and tomato\"")
+    print()
+    print("  # Multiple objects")
+    print("  python3 run_detection_images.py imgs_demo/ output/ \"cup, avocado, tomato\"")
     sys.exit(1)
 
 image_folder = Path(sys.argv[1])
@@ -51,12 +78,16 @@ print()
 from openfilter.filter_runtime.filter import Frame
 from filter_sam3_detector.filter import FilterSAM3Detector
 
+# Output label for detections (used as key in frame.data['meta'])
+# Default based on prompt or use a generic name
+output_label = "detections"  # Generic label that works for any prompt
+
 detector = FilterSAM3Detector({
     "text_prompt": prompt,
     "confidence_threshold": 0.2,
     "device": "cuda",
     "visualize": False,  # Disabled to avoid read-only image attribute warnings
-    "output_label": "cups",
+    "output_label": output_label,
 })
 detector.setup(detector.config)
 
@@ -92,7 +123,7 @@ try:
             has_detections = False
             if detected:
                 for topic, frame in detected.items():
-                    dets = frame.data.get('meta', {}).get('cups', [])
+                    dets = frame.data.get('meta', {}).get(output_label, [])
                     
                     if dets:
                         has_detections = True
