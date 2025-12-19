@@ -6,7 +6,7 @@ Each object is processed separately to get labeled bounding boxes.
 Frames with detections are saved with bounding boxes drawn.
 
 Usage:
-    python run_detection_multi_objects.py --video video.mp4 --objects avocado tomato --confidence 0.2 --min-score 0.3
+    python run_detection_multi_objects.py --video video.mp4 --objects avocado tomato --confidence 0.2 --min-score 0.3 [--show-score]
 """
 import argparse
 from pathlib import Path
@@ -29,6 +29,9 @@ Examples:
     
     # With skip frames
     python run_detection_multi_objects.py -v video.mp4 -o avocado tomato -c 0.2 -m 0.3 -s 19
+    
+    # Show confidence scores in labels
+    python run_detection_multi_objects.py -v video.mp4 -o avocado tomato -c 0.2 -m 0.3 --show-score
     """
 )
 parser.add_argument("--video", "-v", type=str, required=True,
@@ -43,6 +46,8 @@ parser.add_argument("--min-score", "-m", type=float, default=0.7,
                     help="Minimum score to keep in final results (default: 0.7)")
 parser.add_argument("--skip-frames", "-s", type=int, default=0,
                     help="Number of frames to skip between processing (0 = process all frames)")
+parser.add_argument("--show-score", action="store_true", default=False,
+                    help="Show confidence score in bounding box labels (default: False)")
 
 args = parser.parse_args()
 
@@ -69,6 +74,7 @@ objects_to_detect = args.objects
 confidence_threshold = args.confidence
 min_score_filter = args.min_score
 skip_frames = args.skip_frames
+show_score = args.show_score
 
 output_dir.mkdir(exist_ok=True, parents=True)
 frames_dir = output_dir / "frames"
@@ -80,6 +86,7 @@ print(f"Objects to detect: {objects_to_detect}")
 print(f"Confidence threshold: {confidence_threshold}")
 print(f"Min score filter: {min_score_filter}")
 print(f"Skip frames: {skip_frames}")
+print(f"Show score in labels: {show_score}")
 
 # Try to get video info for time estimation
 try:
@@ -271,8 +278,11 @@ try:
                     # Draw rectangle (thicker line for visibility)
                     cv2.rectangle(img_with_boxes, (x1, y1), (x2, y2), color, 3)
                     
-                    # Add label with object type and score (black text, white background)
-                    label_text = f"{label}: {score:.2f}"
+                    # Add label with object type and optionally score (black text, white background)
+                    if show_score:
+                        label_text = f"{label}: {score:.2f}"
+                    else:
+                        label_text = f"{label}"
                     
                     # Get text size for background rectangle
                     (text_width, text_height), baseline = cv2.getTextSize(
