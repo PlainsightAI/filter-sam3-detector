@@ -255,6 +255,75 @@ try:
             # Draw bounding boxes directly on original frame (preserves quality)
             img_with_boxes = frame_img.copy()
             
+            # Get unique labels from detections (only show ingredients that were detected)
+            detected_labels = set(det.get('label', 'unknown') for det in all_detections)
+            detected_ingredients = [obj for obj in objects_to_detect if obj in detected_labels]
+            
+            # Draw ingredients list in top right corner (only when there are detections)
+            h, w = img_with_boxes.shape[:2]
+            ingredients_text = "Ingredients:"
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            font_scale = 0.7
+            thickness = 2
+            line_spacing = 25
+            
+            # Calculate text dimensions for ingredients list (only detected ingredients)
+            # Each ingredient on a separate line
+            ingredients_lines = [ingredients_text] + detected_ingredients
+            max_text_width = 0
+            text_height = 0
+            baseline = 0
+            
+            # Get text dimensions for all lines
+            for line in ingredients_lines:
+                (text_width, line_height), line_baseline = cv2.getTextSize(
+                    line, font, font_scale, thickness
+                )
+                max_text_width = max(max_text_width, text_width)
+                text_height = line_height
+                baseline = line_baseline
+            
+            # Calculate total height: header + spacing + (ingredients * line_spacing)
+            num_ingredients = len(detected_ingredients)
+            total_text_height = text_height + baseline + (num_ingredients * line_spacing)
+            
+            # Position in top right with padding
+            padding = 10
+            box_x = w - max_text_width - padding * 2
+            box_y = padding
+            box_width = max_text_width + padding * 2
+            box_height = total_text_height + padding * 2
+            
+            # Draw semi-transparent background rectangle
+            overlay = img_with_boxes.copy()
+            cv2.rectangle(overlay, 
+                         (box_x, box_y), 
+                         (box_x + box_width, box_y + box_height),
+                         (255, 255, 255), -1)
+            cv2.addWeighted(overlay, 0.8, img_with_boxes, 0.2, 0, img_with_boxes)
+            
+            # Draw border around the box
+            cv2.rectangle(img_with_boxes,
+                         (box_x, box_y),
+                         (box_x + box_width, box_y + box_height),
+                         (0, 0, 0), 2)
+            
+            # Draw ingredients text - one per line
+            y_offset = box_y + padding + text_height + baseline
+            for i, line in enumerate(ingredients_lines):
+                if i == 0:
+                    # Header in bold
+                    cv2.putText(img_with_boxes, line,
+                               (box_x + padding, y_offset),
+                               font, font_scale, (0, 0, 0), thickness)
+                    y_offset += line_spacing
+                else:
+                    # Each ingredient on a separate line
+                    cv2.putText(img_with_boxes, line,
+                               (box_x + padding, y_offset),
+                               font, font_scale, (50, 50, 50), thickness - 1)
+                    y_offset += line_spacing
+            
             # Color map for bounding boxes (BGR for OpenCV)
             label_colors_bgr = {
                 "avocado": (0, 255, 0),      # Green
