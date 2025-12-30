@@ -46,6 +46,7 @@ from openfilter.filter_runtime.filter import Filter
 from filter_sam3_detector.filter import FilterSAM3Detector, FilterSAM3DetectorConfig
 from openfilter.filter_runtime.filters.video_in import VideoIn
 from openfilter.filter_runtime.filters.webvis import Webvis
+from openfilter.filter_runtime.filters.recorder import Recorder
 
 
 if __name__ == '__main__':
@@ -106,6 +107,15 @@ if __name__ == '__main__':
             frames_output_dir=str(output_path / "frames"),  # Save frames with detections
         )),
         
+        # Record filter output to confirm detections
+        # (Recorder, dict(
+        #     id="rec",
+        #     sources="tcp://localhost:5552",
+        #     outputs=f"file://{output_path / 'detection_out_dev.json'}",
+        #     rules="+",
+        #     flush=True,
+        # )),
+        
         # Add Webvis for visualization
         (Webvis, dict(
             sources="tcp://localhost:5552",
@@ -116,7 +126,8 @@ if __name__ == '__main__':
     
     print(f"\nStarting pipeline...")
     print(f"Results will be saved to: {output_path}")
-    print(f"  - detections.jsonl: Frame-by-frame detections")
+    print(f"  - detections.jsonl: Frame-by-frame detections (from FilterSAM3Detector)")
+    print(f"  - detection_out_dev.json: Filter output confirmation (from Recorder)")
     print(f"  - frames/: Frames with detections (saved automatically)")
     print("\nNote: Filter configuration is read from FILTER_* environment variables")
     print("      (FILTER_TEXT_PROMPT, FILTER_DEVICE, FILTER_CONFIDENCE_THRESHOLD, etc.)")

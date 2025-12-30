@@ -376,6 +376,7 @@ class FilterSAM3Detector(Filter):
 
                 # Extract detections from state
                 detections = []
+                scores = None  # Initialize scores variable
 
                 if "boxes" in state and "scores" in state:
                     boxes = state["boxes"]
@@ -452,10 +453,49 @@ class FilterSAM3Detector(Filter):
 
                         if detection:
                             detection['id'] = detection_id
+                            
+                            # Add class name from text_prompt if available
+                            if self.text_prompt:
+                                detection['class'] = self.text_prompt
+                                detection['class_name'] = self.text_prompt
+                                detection['category_name'] = self.text_prompt
+                            
+                            # Add normalized rois [x1, y1, x2, y2] (values between 0 and 1)
+                            if 'box' in detection and img_width > 0 and img_height > 0:
+                                x1, y1, x2, y2 = detection['box']
+                                # Normalize coordinates to [0, 1]
+                                roi_normalized = [
+                                    float(x1) / img_width,
+                                    float(y1) / img_height,
+                                    float(x2) / img_width,
+                                    float(y2) / img_height
+                                ]
+                                detection['rois'] = [roi_normalized]
+                            
+                            # Add category_id if not already set (for COCO compatibility)
+                            if 'category_id' not in detection:
+                                detection['category_id'] = 1
+                            
                             detections.append(detection)
 
+                # Calculate detection_confidence (average or max score)
+                detection_confidence = None
+                if detections and scores is not None and len(scores) > 0:
+                    # Use the maximum confidence score
+                    max_score = max(float(s.item() if hasattr(s, 'item') else s) for s in scores[:len(detections)])
+                    detection_confidence = float(max_score)
+                elif detections and any('score' in d for d in detections):
+                    # Fallback: use max score from detections
+                    max_score = max(d.get('score', 0.0) for d in detections if 'score' in d)
+                    detection_confidence = float(max_score)
+
                 # Store results in frame metadata
-                frame.data.setdefault('meta', {})[self.output_label] = detections
+                frame_meta = frame.data.setdefault('meta', {})
+                frame_meta[self.output_label] = detections
+                
+                # Add detection_confidence to meta
+                if detection_confidence is not None:
+                    frame_meta['detection_confidence'] = detection_confidence
 
                 # Get frame metadata for JSONL and filename
                 frame_meta = frame.data.get('meta', {})
