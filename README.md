@@ -280,73 +280,35 @@ Filter.Runner(filters).join()
 
 ## Output Format
 
-Detections are stored in `frame.data['meta'][output_label]` and saved to JSONL when `output_path` is configured:
+Detections are stored in `frame.data['meta'][output_label]`:
 
-### JSONL Format (from FilterSAM3Detector)
+```python
+[
+  {
+    "box": [x1, y1, x2, y2],  # Bounding box coordinates
+    "score": 0.95,            # Confidence score (0.0-1.0)
+    "mask": [[...]]           # Binary mask as 2D array (if output_masks=True)
+  },
+  ...
+]
+```
+
+When using the Recorder filter, detections are saved in JSONL format:
 
 ```json
 {
-  "filename": "frame_000001_ts1767057416_677_count000001.jpg",
-  "num_detections": 2,
+  "frame_id": 0,
   "meta": {
-    "detections": [
+    "sam3_detections": [
       {
-        "id": 1,
-        "class": "person",
-        "rois": [[0.1, 0.2, 0.5, 0.8]],
-        "bbox": [100.0, 150.0, 200.0, 300.0],
-        "box": [100, 150, 300, 450],
+        "box": [100, 150, 200, 250],
         "score": 0.95,
-        "segmentation": [[...]],
-        "area": 60000,
-        "category_id": 1,
-        "iscrowd": 0
+        "mask": [[0, 0, 1, 1, ...]]
       }
     ]
   }
 }
 ```
-
-### Recorder Output Format
-
-When using the Recorder filter, the output format includes frame metadata:
-
-```json
-{
-  "main": {
-    "meta": {
-      "id": 0,
-      "ts": 1767126697.8538108,
-      "src": "file:///path/to/video.mp4",
-      "src_fps": 19.996322290984892,
-      "detections": [
-        {
-          "id": 1,
-          "class": "person",
-          "rois": [[0.0005208333333333333, 0.0, 0.29244791666666664, 0.4152777777777778]],
-          "bbox": [2.84, 0.0, 1120.67, 897.20],
-          "box": [2, 0, 1123, 897],
-          "score": 0.9753850698471069,
-          "category_id": 1
-        }
-      ],
-      "detection_confidence": 0.9753850698471069
-    }
-  }
-}
-```
-
-### Field Descriptions
-
-- **`class`**: Class name from text prompt (e.g., "person", "car")
-- **`rois`**: Normalized bounding box coordinates `[[x1, y1, x2, y2]]` (values between 0 and 1)
-- **`bbox`**: COCO format `[x, y, width, height]` in pixels
-- **`box`**: Absolute coordinates `[x1, y1, x2, y2]` in pixels
-- **`score`**: Confidence score (0.0-1.0)
-- **`segmentation`**: COCO polygon format (if `output_masks=true`)
-- **`area`**: Mask area in pixels (if masks are enabled)
-- **`category_id`**: Category ID (default: 1)
-- **`detection_confidence`**: Maximum confidence score across all detections (in meta)
 
 ## Performance Tips
 

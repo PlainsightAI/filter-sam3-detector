@@ -108,13 +108,13 @@ if __name__ == '__main__':
         )),
         
         # Record filter output to confirm detections
-        # (Recorder, dict(
-        #     id="rec",
-        #     sources="tcp://localhost:5552",
-        #     outputs=f"file://{output_path / 'detection_out_dev.json'}",
-        #     rules="+",
-        #     flush=True,
-        # )),
+        (Recorder, dict(
+            id="rec",
+            sources="tcp://localhost:5552",
+            outputs=f"file://{output_path / 'detection_out_dev.json'}",
+            rules="+",
+            flush=True,
+        )),
         
         # Add Webvis for visualization
         (Webvis, dict(
