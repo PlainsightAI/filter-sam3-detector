@@ -1,9 +1,9 @@
 [build-system]
-requires = ["setuptools>=69", "wheel"]
+requires = ["setuptools", "setuptools-scm"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["filter_sam3_detector"]
+packages = ["filter_sam3_detector"]  # Specify the package directory
 
 [tool.setuptools.dynamic]
 version = { file = "VERSION" }
@@ -11,7 +11,7 @@ version = { file = "VERSION" }
 [project]
 name = "filter_sam3_detector"
 readme = "README.md"
-requires-python = ">=3.10, <3.14"
+requires-python = ">=3.10, <3.13"
 license = "Apache-2.0"
 
 classifiers = [
@@ -19,7 +19,6 @@ classifiers = [
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
-  "Programming Language :: Python :: 3.13",
 ]
 
 dynamic = ["version"]
@@ -32,6 +31,8 @@ dependencies = [
   "pillow>=10.0.0",
   "transformers>=4.40.0",
   "opencv-python>=4.8.0",
+  "python-dotenv>=1.0.0",
+  "tomli>=2.0.0; python_version < '3.11'",  # Required for Python < 3.11 (OpenFilter uses tomllib in 3.11+)
   "sam3",
   # SAM3 dependencies not in its pyproject.toml
   "einops",
@@ -49,6 +50,9 @@ dev = [
   "pytest-cov==6.0.0",
 ]
 
+[project.scripts]
+filter-sam3-detector = "filter_sam3_detector.filter:FilterSAM3Detector.run"
+
 [tool.uv.sources]
 sam3 = { path = "sam3" }
 
@@ -59,3 +63,7 @@ url = "https://python.openfilter.io/simple"
 [[tool.uv.index]]
 name = "pypi"
 url = "https://pypi.org/simple"
+
+[tool.distutils.bdist_wheel]
+python-tag = "py3"
+

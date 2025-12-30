@@ -1,12 +1,21 @@
 import logging
 import os
 import json
+import multiprocessing
 from typing import Optional
 from pathlib import Path
+from datetime import datetime
 
 import torch
 import numpy as np
 from PIL import Image
+
+# Fix CUDA multiprocessing issue - set spawn method before any CUDA operations
+try:
+    multiprocessing.set_start_method('spawn', force=True)  # CUDA doesn't like fork()
+except RuntimeError:
+    # Method already set, ignore
+    pass
 
 from openfilter.filter_runtime.filter import FilterConfig, Filter, Frame
 
@@ -27,32 +36,9 @@ except ImportError:
 
 class FilterSAM3DetectorConfig(FilterConfig):
     """Configuration for SAM3 object detection filter."""
-
-    # Model configuration
-    model_id: str = "facebook/sam2-hiera-large"  # HuggingFace model ID or local path
-    device: str = "cuda"  # Device to run inference on: "cuda", "cpu"
-
-    # Prompt configuration
-    text_prompt: Optional[str] = None  # Text prompt for segmentation (e.g., "person", "car")
-
-    # Exemplar configuration - directory of cropped images showing what to detect
-    exemplars_path: Optional[str] = None  # Path to directory with exemplar images (jpg/png)
-    exemplar_embeddings_cache: Optional[str] = None  # Path to cache exemplar embeddings
-
-    # Detection parameters
-    confidence_threshold: float = 0.5  # Minimum confidence for detections
-    mask_threshold: float = 0.5  # Threshold for mask binarization
-    max_detections: int = 100  # Maximum number of detections per frame
-
-    # Output configuration
-    output_masks: bool = True  # Whether to output segmentation masks
-    output_boxes: bool = True  # Whether to output bounding boxes
-    output_scores: bool = True  # Whether to output confidence scores
-    output_label: str = "sam3_detections"  # Key for storing results in frame.data['meta']
-
-    # Debug/development
-    debug: bool = False  # Enable debug logging
-    visualize: bool = False  # Visualize detections on output frames
+    
+    # FilterConfig is a dict-like class, so we define defaults in normalize_config
+    pass
 
 
 class FilterSAM3Detector(Filter):
@@ -77,16 +63,47 @@ class FilterSAM3Detector(Filter):
     """
 
     @classmethod
-    def normalize_config(cls, config: FilterSAM3DetectorConfig):
-        """Normalize and validate configuration parameters."""
-        config = FilterSAM3DetectorConfig(super().normalize_config(config))
-
-        # Load from environment variables
+    def normalize_config(cls, config: FilterConfig) -> FilterConfig:
+        """
+        Normalize and validate configuration parameters.
+        
+        This method MUST BE IDEMPOTENT - calling it multiple times should produce the same result.
+        """
+        # First, call parent normalize_config to handle sources, outputs, etc.
+        config = super().normalize_config(config)
+        config = FilterSAM3DetectorConfig(config)
+        
+        # Set defaults if not present
+        defaults = {
+            "model_id": "facebook/sam2-hiera-large",
+            "device": "cuda",
+            "text_prompt": None,
+            "exemplars_path": None,
+            "exemplar_embeddings_cache": None,
+            "confidence_threshold": 0.5,
+            "mask_threshold": 0.5,
+            "max_detections": 100,
+            "output_masks": True,
+            "output_boxes": True,
+            "output_scores": True,
+            "output_label": "sam3_detections",
+            "output_path": None,  # Path to save JSONL annotations
+            "frames_output_dir": None,  # Directory to save frames with detections
+            "debug": False,
+            "visualize": False,
+        }
+        
+        for key, default_value in defaults.items():
+            if key not in config:
+                config[key] = default_value
+        
+        # Load from environment variables (override config values)
         env_mapping = {
             "model_id": str,
             "device": str,
             "text_prompt": str,
             "exemplars_path": str,
+            "exemplar_embeddings_cache": str,
             "confidence_threshold": float,
             "mask_threshold": float,
             "max_detections": int,
@@ -94,6 +111,8 @@ class FilterSAM3Detector(Filter):
             "output_boxes": bool,
             "output_scores": bool,
             "output_label": str,
+            "output_path": str,
+            "frames_output_dir": str,
             "debug": bool,
             "visualize": bool,
         }
@@ -103,34 +122,39 @@ class FilterSAM3Detector(Filter):
             env_val = os.getenv(env_key)
             if env_val is not None:
                 if expected_type is bool:
-                    setattr(config, key, env_val.strip().lower() in ("true", "1", "yes"))
+                    config[key] = env_val.strip().lower() in ("true", "1", "yes")
                 elif expected_type is float:
-                    setattr(config, key, float(env_val.strip()))
+                    config[key] = float(env_val.strip())
                 elif expected_type is int:
-                    setattr(config, key, int(env_val.strip()))
+                    config[key] = int(env_val.strip())
                 else:
-                    setattr(config, key, env_val.strip())
+                    config[key] = env_val.strip()
 
         # Validate device
         valid_devices = ['cuda', 'cpu', 'mps']
-        if isinstance(config.device, str):
-            config.device = config.device.lower().strip()
-            if config.device not in valid_devices:
-                raise ValueError(f"Invalid device: {config.device}. Must be one of {valid_devices}")
+        device = config.get("device", "cuda")
+        if isinstance(device, str):
+            device = device.lower().strip()
+            if device not in valid_devices:
+                raise ValueError(f"Invalid device: {device}. Must be one of {valid_devices}")
+            config["device"] = device
 
         # Validate numeric ranges
-        if not (0.0 <= config.confidence_threshold <= 1.0):
-            raise ValueError(f"confidence_threshold must be between 0 and 1, got {config.confidence_threshold}")
-
-        if not (0.0 <= config.mask_threshold <= 1.0):
-            raise ValueError(f"mask_threshold must be between 0 and 1, got {config.mask_threshold}")
-
-        if config.max_detections < 1:
-            raise ValueError(f"max_detections must be >= 1, got {config.max_detections}")
+        confidence_threshold = config.get("confidence_threshold", 0.5)
+        if not (0.0 <= confidence_threshold <= 1.0):
+            raise ValueError(f"confidence_threshold must be between 0 and 1, got {confidence_threshold}")
+        
+        mask_threshold = config.get("mask_threshold", 0.5)
+        if not (0.0 <= mask_threshold <= 1.0):
+            raise ValueError(f"mask_threshold must be between 0 and 1, got {mask_threshold}")
+        
+        max_detections = config.get("max_detections", 100)
+        if max_detections < 1:
+            raise ValueError(f"max_detections must be >= 1, got {max_detections}")
 
         return config
 
-    def setup(self, config: FilterSAM3DetectorConfig):
+    def setup(self, config: FilterConfig):
         """
         Initialize the filter with the given configuration.
 
@@ -145,28 +169,52 @@ class FilterSAM3Detector(Filter):
         logger.info("==========================================")
 
         self.cfg = config
-        self.debug = config.debug
+        self.debug = config.get("debug", False)
+        
+        # Initialize jsonl_file to None (will be set if output_path is provided)
+        self.jsonl_file = None
 
         if self.debug:
             logging.getLogger().setLevel(logging.DEBUG)
 
-        # Store configuration
-        self.model_id = config.model_id
-        self.text_prompt = config.text_prompt
-        self.exemplars_path = config.exemplars_path
-        self.confidence_threshold = config.confidence_threshold
-        self.mask_threshold = config.mask_threshold
-        self.max_detections = config.max_detections
-        self.output_masks = config.output_masks
-        self.output_boxes = config.output_boxes
-        self.output_scores = config.output_scores
-        self.output_label = config.output_label
-        self.visualize = config.visualize
+        # Store configuration (access as dict since FilterConfig is dict-like)
+        self.model_id = config.get("model_id", "facebook/sam2-hiera-large")
+        self.text_prompt = config.get("text_prompt")
+        self.exemplars_path = config.get("exemplars_path")
+        self.confidence_threshold = config.get("confidence_threshold", 0.5)
+        self.mask_threshold = config.get("mask_threshold", 0.5)
+        self.max_detections = config.get("max_detections", 100)
+        self.output_masks = config.get("output_masks", True)
+        self.output_boxes = config.get("output_boxes", True)
+        self.output_scores = config.get("output_scores", True)
+        self.output_label = config.get("output_label", "sam3_detections")
+        self.output_path = config.get("output_path", None)
+        self.frames_output_dir = config.get("frames_output_dir", None)
+        self.visualize = config.get("visualize", False)
+        
+        # Initialize JSONL output file if path is provided
+        self.jsonl_file = None
+        if self.output_path:
+            output_path = Path(self.output_path)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            self.jsonl_file = open(output_path, 'w')
+            logger.info(f"Saving annotations to: {output_path}")
+        
+        # Initialize frames output directory if provided
+        self.frames_dir = None
+        if self.frames_output_dir:
+            self.frames_dir = Path(self.frames_output_dir)
+            self.frames_dir.mkdir(parents=True, exist_ok=True)
+            if self.debug:
+                logger.info(f"Saving frames with detections (annotated) to: {self.frames_dir}")
+            else:
+                logger.info(f"Saving original frames to: {self.frames_dir}")
 
         # Determine device
-        if config.device == "cuda" and torch.cuda.is_available():
+        device_str = config.get("device", "cuda")
+        if device_str == "cuda" and torch.cuda.is_available():
             self.device = torch.device("cuda")
-        elif config.device == "mps" and hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+        elif device_str == "mps" and hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
             self.device = torch.device("mps")
         else:
             self.device = torch.device("cpu")
@@ -196,6 +244,16 @@ class FilterSAM3Detector(Filter):
         - Cached data
         """
         logger.info("FilterSAM3Detector shutdown")
+
+        # Close JSONL file if open
+        if hasattr(self, 'jsonl_file') and self.jsonl_file is not None:
+            try:
+                self.jsonl_file.close()
+                if hasattr(self, 'output_path') and self.output_path:
+                    logger.info(f"Closed annotation file: {self.output_path}")
+            except Exception as e:
+                logger.warning(f"Error closing annotation file: {e}")
+            self.jsonl_file = None
 
         # Release model resources
         if self.model is not None:
@@ -321,10 +379,64 @@ class FilterSAM3Detector(Filter):
                 # Store results in frame metadata
                 frame.data.setdefault('meta', {})[self.output_label] = detections
 
+                # Get frame metadata for JSONL and filename
+                frame_meta = frame.data.get('meta', {})
+                frame_id = frame_meta.get('frame_id', len(output_frames))
+                # Get timestamp from frame (OpenFilter provides this)
+                timestamp = getattr(frame, 'timestamp', None) or frame_meta.get('timestamp', None) or frame.data.get('timestamp', None)
+                if timestamp:
+                    timestamp_str = datetime.fromtimestamp(timestamp).strftime('%Y%m%d_%H%M%S_%f')[:-3]  # milliseconds precision
+                else:
+                    # Fallback: use frame_id if timestamp not available
+                    timestamp_str = f"frame{frame_id:06d}"
+                
+                # Generate unique filename using timestamp and frame_id
+                frame_filename = None
+                if self.frames_dir is not None:
+                    frame_filename = f"{timestamp_str}_frame{frame_id:06d}.jpg"
+                    frame_filename = self.frames_dir / frame_filename
+
+                # Save to JSONL file if output_path is configured
+                if hasattr(self, 'jsonl_file') and self.jsonl_file is not None:
+                    try:
+                        annotation = {
+                            "frame_id": frame_id,
+                            "timestamp": timestamp,
+                            "timestamp_str": timestamp_str,
+                            "filename": frame_filename.name if frame_filename else None,
+                            "num_detections": len(detections),
+                            "meta": {
+                                self.output_label: detections
+                            }
+                        }
+                        self.jsonl_file.write(json.dumps(annotation) + '\n')
+                        self.jsonl_file.flush()  # Ensure immediate write
+                    except Exception as e:
+                        logger.warning(f"Failed to save annotation to JSONL: {e}")
+
                 if self.debug:
                     logger.debug(f"[{topic}] Found {len(detections)} detections")
 
-                # Optional visualization
+                # Save frame if detections found and frames_output_dir is configured
+                if detections and self.frames_dir is not None and frame_filename:
+                    try:
+                        import cv2
+                        # Get image from frame
+                        image_bgr = frame.rw_bgr.image.copy()
+                        
+                        # Only visualize detections if debug mode is enabled
+                        if self.debug:
+                            image_bgr = self._visualize_detections_on_image(image_bgr, detections)
+                        
+                        # Save frame
+                        cv2.imwrite(str(frame_filename), image_bgr)
+                        
+                        if self.debug:
+                            logger.debug(f"Saved frame {'with annotations' if self.debug else ''} to: {frame_filename}")
+                    except Exception as e:
+                        logger.warning(f"Failed to save frame: {e}")
+
+                # Optional visualization (for output frame)
                 if self.visualize and detections:
                     frame = self._visualize_detections(frame, detections)
 
@@ -349,8 +461,37 @@ class FilterSAM3Detector(Filter):
         try:
             logger.info(f"Loading SAM3 model on device: {self.device}")
 
+            # Find BPE path - check vendorized sam3 first, then installed package
+            bpe_path = None
+            # Try vendorized sam3 (in project root/sam3/assets/)
+            vendorized_bpe = Path(__file__).parent.parent / "sam3" / "assets" / "bpe_simple_vocab_16e6.txt.gz"
+            if vendorized_bpe.exists():
+                bpe_path = str(vendorized_bpe)
+                logger.info(f"Using vendorized BPE file: {bpe_path}")
+            else:
+                # Try vendorized sam3/sam3/assets/ (alternative location)
+                vendorized_bpe2 = Path(__file__).parent.parent / "sam3" / "sam3" / "assets" / "bpe_simple_vocab_16e6.txt.gz"
+                if vendorized_bpe2.exists():
+                    bpe_path = str(vendorized_bpe2)
+                    logger.info(f"Using vendorized BPE file: {bpe_path}")
+                else:
+                    # Try to find in installed package
+                    try:
+                        import sam3
+                        sam3_path = Path(sam3.__file__).parent
+                        installed_bpe = sam3_path / "assets" / "bpe_simple_vocab_16e6.txt.gz"
+                        if installed_bpe.exists():
+                            bpe_path = str(installed_bpe)
+                            logger.info(f"Using installed BPE file: {bpe_path}")
+                    except Exception as e:
+                        logger.debug(f"Could not find BPE in installed package: {e}")
+            
+            if bpe_path is None:
+                logger.warning("BPE file not found, SAM3 will try to use default path")
+
             # Build SAM3 model
             self.model = build_sam3_image_model(
+                bpe_path=bpe_path,
                 device=str(self.device),
                 eval_mode=True,
                 load_from_HF=True,
@@ -571,6 +712,48 @@ class FilterSAM3Detector(Filter):
             logger.warning(f"Failed to visualize detections: {e}")
 
         return frame
+
+    def _visualize_detections_on_image(self, image: np.ndarray, detections: list) -> np.ndarray:
+        """
+        Draw detection results on an image array (not Frame).
+        
+        Args:
+            image: BGR image array
+            detections: List of detection dictionaries
+            
+        Returns:
+            Image array with visualizations drawn
+        """
+        try:
+            import cv2
+            image = image.copy()
+            
+            for i, det in enumerate(detections):
+                # Draw bounding box
+                if 'box' in det:
+                    x1, y1, x2, y2 = det['box']
+                    color = (0, 255, 0)  # Green
+                    cv2.rectangle(image, (x1, y1), (x2, y2), color, 2)
+                    
+                    # Draw score
+                    if 'score' in det:
+                        score = det['score']
+                        label = f"{score:.2f}"
+                        cv2.putText(image, label, (x1, y1 - 10),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+                
+                # Draw mask overlay (semi-transparent)
+                if 'mask' in det:
+                    mask = np.array(det['mask'], dtype=np.uint8)
+                    if mask.shape == image.shape[:2]:
+                        color_mask = np.zeros_like(image)
+                        color_mask[mask > 0] = [0, 255, 0]  # Green mask
+                        image = cv2.addWeighted(image, 1.0, color_mask, 0.3, 0)
+            
+        except Exception as e:
+            logger.warning(f"Failed to visualize detections on image: {e}")
+        
+        return image
 
 
 if __name__ == "__main__":

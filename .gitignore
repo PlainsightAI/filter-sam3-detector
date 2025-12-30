@@ -37,3 +37,6 @@ Thumbs.db
 *.mkv
 *.mp4
 uv.lock
+
+
+results/*
