@@ -2,6 +2,7 @@ import logging
 import os
 import json
 import multiprocessing
+import time
 from typing import Optional
 from pathlib import Path
 from datetime import datetime
@@ -83,7 +84,7 @@ class FilterSAM3Detector(Filter):
             "confidence_threshold": 0.5,
             "mask_threshold": 0.5,
             "max_detections": 100,
-            "output_masks": True,
+            "output_masks": False,  # Don't save masks by default (can be large)
             "output_boxes": True,
             "output_scores": True,
             "output_label": "sam3_detections",
@@ -116,6 +117,16 @@ class FilterSAM3Detector(Filter):
             "debug": bool,
             "visualize": bool,
         }
+        
+        # Special handling for FILTER_OUTPUT_PATH (maps to output_path)
+        env_output_path = os.getenv("FILTER_OUTPUT_PATH")
+        if env_output_path is not None:
+            config["output_path"] = env_output_path.strip()
+        
+        # Special handling for FILTER_FRAMES_OUTPUT_DIR (maps to frames_output_dir)
+        env_frames_output_dir = os.getenv("FILTER_FRAMES_OUTPUT_DIR")
+        if env_frames_output_dir is not None:
+            config["frames_output_dir"] = env_frames_output_dir.strip()
 
         for key, expected_type in env_mapping.items():
             env_key = f"FILTER_{key.upper()}"
@@ -202,6 +213,7 @@ class FilterSAM3Detector(Filter):
         
         # Initialize frames output directory if provided
         self.frames_dir = None
+        self.frame_counter = 0  # Counter for unique frame numbering
         if self.frames_output_dir:
             self.frames_dir = Path(self.frames_output_dir)
             self.frames_dir.mkdir(parents=True, exist_ok=True)
@@ -311,6 +323,9 @@ class FilterSAM3Detector(Filter):
                 image_bgr = frame.rw_bgr.image
                 image_rgb = image_bgr[:, :, ::-1]  # BGR to RGB
                 pil_image = Image.fromarray(image_rgb)
+                
+                # Get image dimensions for clipping boxes
+                img_height, img_width = image_bgr.shape[:2]
 
                 # Set image in processor
                 state = self.processor.set_image(pil_image)
@@ -351,12 +366,33 @@ class FilterSAM3Detector(Filter):
 
                     for i in range(num_detections):
                         detection = {}
+                        detection_id = i + 1  # COCO annotation ID (1-indexed)
 
                         if self.output_boxes:
                             box = boxes[i]
                             if hasattr(box, 'tolist'):
                                 box = box.tolist()
-                            detection['box'] = [int(x) for x in box]
+                            box = [float(x) for x in box]
+                            
+                            # Clip box coordinates to image boundaries
+                            x1, y1, x2, y2 = box
+                            x1 = max(0.0, min(x1, img_width))
+                            y1 = max(0.0, min(y1, img_height))
+                            x2 = max(0.0, min(x2, img_width))
+                            y2 = max(0.0, min(y2, img_height))
+                            
+                            # Ensure x2 > x1 and y2 > y1
+                            if x2 <= x1:
+                                x2 = min(x1 + 1.0, img_width)
+                            if y2 <= y1:
+                                y2 = min(y1 + 1.0, img_height)
+                            
+                            # Keep original format [x1, y1, x2, y2] for compatibility (clipped)
+                            detection['box'] = [int(x1), int(y1), int(x2), int(y2)]
+                            
+                            # Convert to COCO bbox format [x, y, width, height]
+                            coco_bbox = [float(x1), float(y1), float(x2 - x1), float(y2 - y1)]
+                            detection['bbox'] = coco_bbox  # COCO format
 
                         if self.output_scores:
                             score = scores[i]
@@ -370,10 +406,32 @@ class FilterSAM3Detector(Filter):
                                 mask = mask.cpu().numpy()
                             if hasattr(mask, 'squeeze'):
                                 mask = mask.squeeze()
-                            # Store mask as binary array
-                            detection['mask'] = (mask > 0).astype(np.uint8).tolist()
+                            
+                            # Convert to binary mask
+                            binary_mask = (mask > 0.5).astype(np.uint8)
+                            
+                            # Convert mask to COCO format (polygons)
+                            segmentation = self._mask_to_coco_polygons(binary_mask)
+                            
+                            if segmentation:
+                                detection['segmentation'] = segmentation
+                                
+                                # Calculate area (number of pixels in mask)
+                                area = int(np.sum(binary_mask))
+                                detection['area'] = area
+                                
+                                # Category ID (1 = object, since we don't have specific categories)
+                                detection['category_id'] = 1
+                                
+                                # iscrowd (0 = single object, 1 = crowd)
+                                detection['iscrowd'] = 0
+                            
+                            # Note: We don't save the raw mask array by default (can be very large)
+                            # The segmentation polygons are sufficient for COCO format
+                            # If you need the full mask array, you can reconstruct it from segmentation
 
                         if detection:
+                            detection['id'] = detection_id
                             detections.append(detection)
 
                 # Store results in frame metadata
@@ -381,60 +439,93 @@ class FilterSAM3Detector(Filter):
 
                 # Get frame metadata for JSONL and filename
                 frame_meta = frame.data.get('meta', {})
-                frame_id = frame_meta.get('frame_id', len(output_frames))
-                # Get timestamp from frame (OpenFilter provides this)
-                timestamp = getattr(frame, 'timestamp', None) or frame_meta.get('timestamp', None) or frame.data.get('timestamp', None)
-                if timestamp:
-                    timestamp_str = datetime.fromtimestamp(timestamp).strftime('%Y%m%d_%H%M%S_%f')[:-3]  # milliseconds precision
-                else:
-                    # Fallback: use frame_id if timestamp not available
-                    timestamp_str = f"frame{frame_id:06d}"
                 
-                # Generate unique filename using timestamp and frame_id
+                # Get timestamp from frame (OpenFilter provides this)
+                # Try multiple sources: frame.timestamp, meta.ts, meta.timestamp, data.timestamp
+                frame_ts = (
+                    getattr(frame, 'timestamp', None) 
+                    or frame_meta.get('ts', None)
+                    or frame_meta.get('timestamp', None) 
+                    or frame.data.get('timestamp', None)
+                )
+                
+                # Get frame ID from metadata
+                frame_id_num = frame_meta.get('id', None) or frame_meta.get('frame_id', None)
+                
+                # Use frame counter for unique numbering (increments for each frame processed)
+                frame_counter = self.frame_counter
+                self.frame_counter += 1
+                
+                # Generate unique filename using timestamp and frame counter
+                # Format similar to filter-frame-selector: frame_{id}_ts{timestamp}_count{counter}
+                if frame_ts is not None:
+                    # Format timestamp: replace dot with underscore to avoid dots in filename
+                    timestamp_str = f"{float(frame_ts):.3f}".replace(".", "_")
+                else:
+                    # Fallback: use current time
+                    current_time = time.time()
+                    timestamp_str = f"{current_time:.3f}".replace(".", "_")
+                
+                # Handle frame_id_num - convert to int if possible, otherwise use counter
+                if isinstance(frame_id_num, (int, float)):
+                    frame_id_str = f"{int(frame_id_num):06d}"
+                else:
+                    # Use counter if no frame_id available
+                    frame_id_str = f"{frame_counter:06d}"
+                
+                # Create filename: frame_{id}_ts{timestamp}_count{counter}.jpg
+                filename_base = f"frame_{frame_id_str}_ts{timestamp_str}_count{frame_counter:06d}"
+                frame_filename_str = f"{filename_base}.jpg"
+                
+                # Generate full path
                 frame_filename = None
                 if self.frames_dir is not None:
-                    frame_filename = f"{timestamp_str}_frame{frame_id:06d}.jpg"
-                    frame_filename = self.frames_dir / frame_filename
+                    frame_filename = self.frames_dir / frame_filename_str
 
-                # Save to JSONL file if output_path is configured
+                if self.debug:
+                    logger.debug(f"[{topic}] Found {len(detections)} detections")
+
+                # Save frame if frames_output_dir is configured (save ALL frames, even without detections)
+                # Save frame BEFORE writing to JSONL so image_path is available
+                image_path = None
+                if self.frames_dir is not None and frame_filename:
+                    try:
+                        import cv2
+                        # Get image from frame
+                        image_bgr = frame.rw_bgr.image.copy()
+                        
+                        # Only visualize detections if debug mode is enabled and there are detections
+                        if self.debug and detections:
+                            image_bgr = self._visualize_detections_on_image(image_bgr, detections)
+                        
+                        # Save frame (always save, even if no detections)
+                        cv2.imwrite(str(frame_filename), image_bgr)
+                        
+                        # Get full path to saved image
+                        if frame_filename.exists():
+                            image_path = str(frame_filename.absolute())
+                        
+                        if self.debug:
+                            logger.debug(f"Saved frame {'with annotations' if (self.debug and detections) else ''} to: {frame_filename}")
+                    except Exception as e:
+                        logger.warning(f"Failed to save frame: {e}")
+
+                # Save to JSONL file if output_path is configured (save ALL frames, even without detections)
                 if hasattr(self, 'jsonl_file') and self.jsonl_file is not None:
                     try:
+                        # filename contains all unique information (timestamp + frame counter)
                         annotation = {
-                            "frame_id": frame_id,
-                            "timestamp": timestamp,
-                            "timestamp_str": timestamp_str,
                             "filename": frame_filename.name if frame_filename else None,
+                            "image_path": image_path,
                             "num_detections": len(detections),
                             "meta": {
-                                self.output_label: detections
+                                self.output_label: detections  # Empty list if no detections
                             }
                         }
                         self.jsonl_file.write(json.dumps(annotation) + '\n')
                         self.jsonl_file.flush()  # Ensure immediate write
                     except Exception as e:
                         logger.warning(f"Failed to save annotation to JSONL: {e}")
-
-                if self.debug:
-                    logger.debug(f"[{topic}] Found {len(detections)} detections")
-
-                # Save frame if detections found and frames_output_dir is configured
-                if detections and self.frames_dir is not None and frame_filename:
-                    try:
-                        import cv2
-                        # Get image from frame
-                        image_bgr = frame.rw_bgr.image.copy()
-                        
-                        # Only visualize detections if debug mode is enabled
-                        if self.debug:
-                            image_bgr = self._visualize_detections_on_image(image_bgr, detections)
-                        
-                        # Save frame
-                        cv2.imwrite(str(frame_filename), image_bgr)
-                        
-                        if self.debug:
-                            logger.debug(f"Saved frame {'with annotations' if self.debug else ''} to: {frame_filename}")
-                    except Exception as e:
-                        logger.warning(f"Failed to save frame: {e}")
 
                 # Optional visualization (for output frame)
                 if self.visualize and detections:
@@ -754,6 +845,46 @@ class FilterSAM3Detector(Filter):
             logger.warning(f"Failed to visualize detections on image: {e}")
         
         return image
+
+    def _mask_to_coco_polygons(self, mask: np.ndarray) -> list:
+        """
+        Convert binary mask to COCO polygon format.
+        
+        COCO format: list of polygons, where each polygon is a list of coordinates
+        [x1, y1, x2, y2, x3, y3, ...] representing the boundary of the mask.
+        
+        Args:
+            mask: Binary mask (H, W) with values 0 or 1
+            
+        Returns:
+            List of polygons in COCO format, or empty list if mask is empty
+        """
+        try:
+            import cv2
+            
+            # Find contours
+            contours, _ = cv2.findContours(
+                mask.astype(np.uint8),
+                cv2.RETR_EXTERNAL,
+                cv2.CHAIN_APPROX_SIMPLE
+            )
+            
+            polygons = []
+            for contour in contours:
+                # Simplify contour to reduce points
+                epsilon = 0.001 * cv2.arcLength(contour, True)
+                approx = cv2.approxPolyDP(contour, epsilon, True)
+                
+                if len(approx) >= 3:  # Need at least 3 points for a polygon
+                    # Flatten to [x1, y1, x2, y2, ...] format
+                    polygon = approx.flatten().tolist()
+                    polygons.append(polygon)
+            
+            return polygons
+            
+        except Exception as e:
+            logger.warning(f"Failed to convert mask to COCO polygons: {e}")
+            return []
 
 
 if __name__ == "__main__":
