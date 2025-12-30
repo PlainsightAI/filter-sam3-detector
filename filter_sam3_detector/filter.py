@@ -89,8 +89,9 @@ class FilterSAM3Detector(Filter):
             "output_scores": True,
             "output_label": "sam3_detections",
             "output_path": None,  # Path to save JSONL annotations
-            "frames_output_dir": None,  # Directory to save frames with detections
-            "debug": False,
+            "frames_output_dir": None,  # Directory to save original frames
+            "annotated_frames_output_dir": None,  # Directory to save annotated frames (separate from original)
+            "save_annotated_frames": False,  # Save frames with visual annotations (boxes, scores, masks)
             "visualize": False,
         }
         
@@ -114,7 +115,8 @@ class FilterSAM3Detector(Filter):
             "output_label": str,
             "output_path": str,
             "frames_output_dir": str,
-            "debug": bool,
+            "annotated_frames_output_dir": str,
+            "save_annotated_frames": bool,
             "visualize": bool,
         }
         
@@ -127,6 +129,11 @@ class FilterSAM3Detector(Filter):
         env_frames_output_dir = os.getenv("FILTER_FRAMES_OUTPUT_DIR")
         if env_frames_output_dir is not None:
             config["frames_output_dir"] = env_frames_output_dir.strip()
+        
+        # Special handling for FILTER_ANNOTATED_FRAMES_OUTPUT_DIR (maps to annotated_frames_output_dir)
+        env_annotated_frames_output_dir = os.getenv("FILTER_ANNOTATED_FRAMES_OUTPUT_DIR")
+        if env_annotated_frames_output_dir is not None:
+            config["annotated_frames_output_dir"] = env_annotated_frames_output_dir.strip()
 
         for key, expected_type in env_mapping.items():
             env_key = f"FILTER_{key.upper()}"
@@ -180,13 +187,9 @@ class FilterSAM3Detector(Filter):
         logger.info("==========================================")
 
         self.cfg = config
-        self.debug = config.get("debug", False)
         
         # Initialize jsonl_file to None (will be set if output_path is provided)
         self.jsonl_file = None
-
-        if self.debug:
-            logging.getLogger().setLevel(logging.DEBUG)
 
         # Store configuration (access as dict since FilterConfig is dict-like)
         self.model_id = config.get("model_id", "facebook/sam2-hiera-large")
@@ -201,6 +204,8 @@ class FilterSAM3Detector(Filter):
         self.output_label = config.get("output_label", "sam3_detections")
         self.output_path = config.get("output_path", None)
         self.frames_output_dir = config.get("frames_output_dir", None)
+        self.annotated_frames_output_dir = config.get("annotated_frames_output_dir", None)
+        self.save_annotated_frames = config.get("save_annotated_frames", False)
         self.visualize = config.get("visualize", False)
         
         # Initialize JSONL output file if path is provided
@@ -211,16 +216,33 @@ class FilterSAM3Detector(Filter):
             self.jsonl_file = open(output_path, 'w')
             logger.info(f"Saving annotations to: {output_path}")
         
-        # Initialize frames output directory if provided
+        # Initialize frames output directories if provided
         self.frames_dir = None
+        self.annotated_frames_dir = None
         self.frame_counter = 0  # Counter for unique frame numbering
+        
+        # Always save original frames if frames_output_dir is configured (default: true)
         if self.frames_output_dir:
             self.frames_dir = Path(self.frames_output_dir)
             self.frames_dir.mkdir(parents=True, exist_ok=True)
-            if self.debug:
-                logger.info(f"Saving frames with detections (annotated) to: {self.frames_dir}")
+            logger.info(f"Saving original frames to: {self.frames_dir}")
+        
+        # Save annotated frames only if save_annotated_frames is enabled (default: false)
+        if self.save_annotated_frames:
+            if self.annotated_frames_output_dir:
+                # Use explicitly configured directory
+                self.annotated_frames_dir = Path(self.annotated_frames_output_dir)
+            elif self.frames_output_dir:
+                # Default: use frames_output_dir parent + "frames_annotated"
+                # e.g., ./output/frames -> ./output/frames_annotated
+                frames_parent = Path(self.frames_output_dir).parent
+                self.annotated_frames_dir = frames_parent / "frames_annotated"
             else:
-                logger.info(f"Saving original frames to: {self.frames_dir}")
+                # Fallback: use ./output/frames_annotated
+                self.annotated_frames_dir = Path("./output/frames_annotated")
+            
+            self.annotated_frames_dir.mkdir(parents=True, exist_ok=True)
+            logger.info(f"Saving annotated frames to: {self.annotated_frames_dir}")
 
         # Determine device
         device_str = config.get("device", "cuda")
@@ -303,8 +325,6 @@ class FilterSAM3Detector(Filter):
                 output_frames[topic] = frame
                 continue
 
-            if self.debug:
-                logger.debug(f"Processing frame from topic: {topic}")
 
             # Check if model is loaded
             if self.model is None or self.processor is None:
@@ -477,38 +497,36 @@ class FilterSAM3Detector(Filter):
                 filename_base = f"frame_{frame_id_str}_ts{timestamp_str}_count{frame_counter:06d}"
                 frame_filename_str = f"{filename_base}.jpg"
                 
-                # Generate full path
+                # Generate full paths for original and annotated frames
                 frame_filename = None
+                annotated_frame_filename = None
+                
                 if self.frames_dir is not None:
                     frame_filename = self.frames_dir / frame_filename_str
+                
+                if self.annotated_frames_dir is not None:
+                    annotated_frame_filename = self.annotated_frames_dir / frame_filename_str
 
-                if self.debug:
-                    logger.debug(f"[{topic}] Found {len(detections)} detections")
 
-                # Save frame if frames_output_dir is configured (save ALL frames, even without detections)
-                # Save frame BEFORE writing to JSONL so image_path is available
-                image_path = None
-                if self.frames_dir is not None and frame_filename:
-                    try:
-                        import cv2
-                        # Get image from frame
-                        image_bgr = frame.rw_bgr.image.copy()
-                        
-                        # Only visualize detections if debug mode is enabled and there are detections
-                        if self.debug and detections:
-                            image_bgr = self._visualize_detections_on_image(image_bgr, detections)
-                        
-                        # Save frame (always save, even if no detections)
-                        cv2.imwrite(str(frame_filename), image_bgr)
-                        
-                        # Get full path to saved image
-                        if frame_filename.exists():
-                            image_path = str(frame_filename.absolute())
-                        
-                        if self.debug:
-                            logger.debug(f"Saved frame {'with annotations' if (self.debug and detections) else ''} to: {frame_filename}")
-                    except Exception as e:
-                        logger.warning(f"Failed to save frame: {e}")
+                # Save frames if output directories are configured
+                try:
+                    import cv2
+                    # Get original image from frame
+                    image_bgr_original = frame.rw_bgr.image.copy()
+                    
+                    # Save original frame (always save if frames_output_dir is configured)
+                    if self.frames_dir is not None and frame_filename:
+                        cv2.imwrite(str(frame_filename), image_bgr_original)
+                    
+                    # Save annotated frame (if annotated_frames_dir is configured and there are detections)
+                    if self.annotated_frames_dir is not None and annotated_frame_filename and detections:
+                        # Create annotated version
+                        image_bgr_annotated = image_bgr_original.copy()
+                        image_bgr_annotated = self._visualize_detections_on_image(image_bgr_annotated, detections)
+                        cv2.imwrite(str(annotated_frame_filename), image_bgr_annotated)
+                    
+                except Exception as e:
+                    logger.warning(f"Failed to save frame: {e}")
 
                 # Save to JSONL file if output_path is configured (save ALL frames, even without detections)
                 if hasattr(self, 'jsonl_file') and self.jsonl_file is not None:
@@ -516,7 +534,6 @@ class FilterSAM3Detector(Filter):
                         # filename contains all unique information (timestamp + frame counter)
                         annotation = {
                             "filename": frame_filename.name if frame_filename else None,
-                            "image_path": image_path,
                             "num_detections": len(detections),
                             "meta": {
                                 self.output_label: detections  # Empty list if no detections
@@ -533,9 +550,8 @@ class FilterSAM3Detector(Filter):
 
             except Exception as e:
                 logger.error(f"Error processing frame from {topic}: {e}")
-                if self.debug:
-                    import traceback
-                    logger.debug(traceback.format_exc())
+                import traceback
+                logger.debug(traceback.format_exc())
 
             output_frames[topic] = frame
 

@@ -40,3 +40,19 @@ uv.lock
 
 
 results*
+
+*.egg
+*.pyc
+*.pyo
+*.pyd
+*.pyw
+*.pyz
+*.pywz
+*.pyzz
+*.pywzz
+*.pyzzz
+*.pywzzz
+
+logs/*
+
+.env
