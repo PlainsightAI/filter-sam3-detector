@@ -1,6 +1,11 @@
+"""
+SAM3 Object Detection Filter for OpenFilter.
+
+This filter performs open-set object detection using SAM3 (Segment Anything Model 3).
+It supports text prompts and image exemplars for zero-shot and few-shot detection.
+"""
+
 import logging
-import os
-import json
 from typing import Optional
 from pathlib import Path
 
@@ -13,7 +18,6 @@ from openfilter.filter_runtime.filter import FilterConfig, Filter, Frame
 __all__ = ["FilterSAM3DetectorConfig", "FilterSAM3Detector"]
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
 
 # Try to import SAM3 from facebookresearch/sam3
 try:
@@ -26,33 +30,38 @@ except ImportError:
 
 
 class FilterSAM3DetectorConfig(FilterConfig):
-    """Configuration for SAM3 object detection filter."""
+    """Configuration for SAM3 object detection filter.
+
+    All parameters can be set via environment variables with FILTER_ prefix:
+        FILTER_MODEL_ID, FILTER_DEVICE, FILTER_TEXT_PROMPT, etc.
+
+    The platform automatically parses environment variables using json_getval,
+    so JSON values are properly converted (floats, bools, lists, dicts).
+    """
 
     # Model configuration
-    model_id: str = "facebook/sam2-hiera-large"  # HuggingFace model ID or local path
-    device: str = "cuda"  # Device to run inference on: "cuda", "cpu"
+    model_id: str = "facebook/sam2-hiera-large"
+    device: str = "cuda"
 
     # Prompt configuration
-    text_prompt: Optional[str] = None  # Text prompt for segmentation (e.g., "person", "car")
-
-    # Exemplar configuration - directory of cropped images showing what to detect
-    exemplars_path: Optional[str] = None  # Path to directory with exemplar images (jpg/png)
-    exemplar_embeddings_cache: Optional[str] = None  # Path to cache exemplar embeddings
+    text_prompt: Optional[str] = None
+    exemplars_path: Optional[str] = None
+    exemplar_embeddings_cache: Optional[str] = None
 
     # Detection parameters
-    confidence_threshold: float = 0.5  # Minimum confidence for detections
-    mask_threshold: float = 0.5  # Threshold for mask binarization
-    max_detections: int = 100  # Maximum number of detections per frame
+    confidence_threshold: float = 0.5
+    mask_threshold: float = 0.5
+    max_detections: int = 100
 
     # Output configuration
-    output_masks: bool = True  # Whether to output segmentation masks
-    output_boxes: bool = True  # Whether to output bounding boxes
-    output_scores: bool = True  # Whether to output confidence scores
-    output_label: str = "sam3_detections"  # Key for storing results in frame.data['meta']
+    output_masks: bool = True
+    output_boxes: bool = True
+    output_scores: bool = True
+    output_label: str = "sam3_detections"
 
     # Debug/development
-    debug: bool = False  # Enable debug logging
-    visualize: bool = False  # Visualize detections on output frames
+    debug: bool = False
+    visualize: bool = False
 
 
 class FilterSAM3Detector(Filter):
@@ -61,74 +70,55 @@ class FilterSAM3Detector(Filter):
 
     This filter performs open-set object detection using SAM3 (Segment Anything Model 3).
     It supports two prompting modes:
-    - Text prompts: Natural language descriptions (e.g., "person", "car")
-    - Image exemplars: Few-shot learning with cropped example images
 
-    Typical workflow:
-    1. Configure with text prompt and/or exemplar images directory
-    2. For each input frame, run SAM3 inference
-    3. Output detections with boxes and scores to frame metadata
+    - **Text prompts**: Natural language descriptions (e.g., "person", "car")
+    - **Image exemplars**: Few-shot learning with cropped example images
+
+    Example usage in docker-compose:
+
+        myfilter:
+          image: filter-sam3-detector:latest
+          environment:
+            FILTER_SOURCES: tcp://video_in
+            FILTER_OUTPUTS: tcp://*
+            FILTER_TEXT_PROMPT: "person"
+            FILTER_CONFIDENCE_THRESHOLD: 0.7
 
     Exemplar images:
-    - Provide a directory path containing cropped JPG/PNG images
-    - Each image should show exactly what you want to detect
-    - Images are encoded and averaged to create visual embeddings
-    - Example: exemplars_path="/path/to/containers/" with container1.jpg, container2.jpg, etc.
+        Provide a directory path containing cropped JPG/PNG images.
+        Each image should show exactly what you want to detect.
+        Images are encoded and averaged to create visual embeddings.
     """
 
     @classmethod
-    def normalize_config(cls, config: FilterSAM3DetectorConfig):
-        """Normalize and validate configuration parameters."""
-        config = FilterSAM3DetectorConfig(super().normalize_config(config))
+    def normalize_config(cls, config: dict):
+        """Validate configuration. Don't check external resources here."""
+        config = super().normalize_config(config)
 
-        # Load from environment variables
-        env_mapping = {
-            "model_id": str,
-            "device": str,
-            "text_prompt": str,
-            "exemplars_path": str,
-            "confidence_threshold": float,
-            "mask_threshold": float,
-            "max_detections": int,
-            "output_masks": bool,
-            "output_boxes": bool,
-            "output_scores": bool,
-            "output_label": str,
-            "debug": bool,
-            "visualize": bool,
-        }
-
-        for key, expected_type in env_mapping.items():
-            env_key = f"FILTER_{key.upper()}"
-            env_val = os.getenv(env_key)
-            if env_val is not None:
-                if expected_type is bool:
-                    setattr(config, key, env_val.strip().lower() in ("true", "1", "yes"))
-                elif expected_type is float:
-                    setattr(config, key, float(env_val.strip()))
-                elif expected_type is int:
-                    setattr(config, key, int(env_val.strip()))
-                else:
-                    setattr(config, key, env_val.strip())
+        # Normalize device to lowercase
+        if isinstance(config.get('device'), str):
+            config['device'] = config['device'].lower().strip()
 
         # Validate device
         valid_devices = ['cuda', 'cpu', 'mps']
-        if isinstance(config.device, str):
-            config.device = config.device.lower().strip()
-            if config.device not in valid_devices:
-                raise ValueError(f"Invalid device: {config.device}. Must be one of {valid_devices}")
+        device = config.get('device', 'cuda')
+        if device not in valid_devices:
+            raise ValueError(f"Invalid device: {device}. Must be one of {valid_devices}")
 
         # Validate numeric ranges
-        if not (0.0 <= config.confidence_threshold <= 1.0):
-            raise ValueError(f"confidence_threshold must be between 0 and 1, got {config.confidence_threshold}")
+        confidence = config.get('confidence_threshold', 0.5)
+        if not (0.0 <= confidence <= 1.0):
+            raise ValueError(f"confidence_threshold must be between 0 and 1, got {confidence}")
 
-        if not (0.0 <= config.mask_threshold <= 1.0):
-            raise ValueError(f"mask_threshold must be between 0 and 1, got {config.mask_threshold}")
+        mask_thresh = config.get('mask_threshold', 0.5)
+        if not (0.0 <= mask_thresh <= 1.0):
+            raise ValueError(f"mask_threshold must be between 0 and 1, got {mask_thresh}")
 
-        if config.max_detections < 1:
-            raise ValueError(f"max_detections must be >= 1, got {config.max_detections}")
+        max_det = config.get('max_detections', 100)
+        if max_det < 1:
+            raise ValueError(f"max_detections must be >= 1, got {max_det}")
 
-        return config
+        return FilterSAM3DetectorConfig(**config)
 
     def setup(self, config: FilterSAM3DetectorConfig):
         """
