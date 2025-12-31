@@ -97,14 +97,38 @@ def main():
     ]
 
     # Run pipeline using OpenFilter Runner
-    from openfilter.runner import run
+    from openfilter.filter_runtime.filter import Filter
+    from filter_sam3_detector import FilterSAM3Detector
+    
+    # Map filter names to Filter classes
+    # Note: Built-in OpenFilter filters (VideoIn, Recorder, ImageOut) are auto-discovered
+    # Custom filters should be imported explicitly
+    filter_map = {
+        "FilterSAM3Detector": FilterSAM3Detector,
+    }
+    
+    # Convert filter configuration to use Filter classes
+    # OpenFilter Runner accepts either Filter classes or string names (for built-ins)
+    filters_with_classes = []
+    for filter_name, config in filters:
+        if filter_name in filter_map:
+            filter_cls = filter_map[filter_name]
+        else:
+            # Built-in filters can be used as strings - OpenFilter will discover them
+            filter_cls = filter_name
+        filters_with_classes.append((filter_cls, config))
 
     print(f"Processing {len(args.video)} video(s)...")
     print(f"Prompt: {args.prompt or 'exemplars'}")
     print(f"Output: {output_dir}")
     print(f"Confidence threshold: {args.confidence}")
 
-    run(filters)
+    # Use Filter.Runner to run the pipeline
+    runner = Filter.Runner(filters_with_classes)
+    retcodes = runner.join()
+    
+    if any(rc != 0 for rc in retcodes):
+        print(f"Warning: Some filters exited with non-zero codes: {retcodes}")
 
     print(f"\nDone! Results saved to {output_dir}")
     print(f"  - detections.jsonl: Frame-by-frame detections")

@@ -1,12 +1,22 @@
 import logging
 import os
 import json
+import multiprocessing
+import time
 from typing import Optional
 from pathlib import Path
+from datetime import datetime
 
 import torch
 import numpy as np
 from PIL import Image
+
+# Fix CUDA multiprocessing issue - set spawn method before any CUDA operations
+try:
+    multiprocessing.set_start_method('spawn', force=True)  # CUDA doesn't like fork()
+except RuntimeError:
+    # Method already set, ignore
+    pass
 
 from openfilter.filter_runtime.filter import FilterConfig, Filter, Frame
 
@@ -27,32 +37,9 @@ except ImportError:
 
 class FilterSAM3DetectorConfig(FilterConfig):
     """Configuration for SAM3 object detection filter."""
-
-    # Model configuration
-    model_id: str = "facebook/sam2-hiera-large"  # HuggingFace model ID or local path
-    device: str = "cuda"  # Device to run inference on: "cuda", "cpu"
-
-    # Prompt configuration
-    text_prompt: Optional[str] = None  # Text prompt for segmentation (e.g., "person", "car")
-
-    # Exemplar configuration - directory of cropped images showing what to detect
-    exemplars_path: Optional[str] = None  # Path to directory with exemplar images (jpg/png)
-    exemplar_embeddings_cache: Optional[str] = None  # Path to cache exemplar embeddings
-
-    # Detection parameters
-    confidence_threshold: float = 0.5  # Minimum confidence for detections
-    mask_threshold: float = 0.5  # Threshold for mask binarization
-    max_detections: int = 100  # Maximum number of detections per frame
-
-    # Output configuration
-    output_masks: bool = True  # Whether to output segmentation masks
-    output_boxes: bool = True  # Whether to output bounding boxes
-    output_scores: bool = True  # Whether to output confidence scores
-    output_label: str = "sam3_detections"  # Key for storing results in frame.data['meta']
-
-    # Debug/development
-    debug: bool = False  # Enable debug logging
-    visualize: bool = False  # Visualize detections on output frames
+    
+    # FilterConfig is a dict-like class, so we define defaults in normalize_config
+    pass
 
 
 class FilterSAM3Detector(Filter):
@@ -77,16 +64,48 @@ class FilterSAM3Detector(Filter):
     """
 
     @classmethod
-    def normalize_config(cls, config: FilterSAM3DetectorConfig):
-        """Normalize and validate configuration parameters."""
-        config = FilterSAM3DetectorConfig(super().normalize_config(config))
-
-        # Load from environment variables
+    def normalize_config(cls, config: FilterConfig) -> FilterConfig:
+        """
+        Normalize and validate configuration parameters.
+        
+        This method MUST BE IDEMPOTENT - calling it multiple times should produce the same result.
+        """
+        # First, call parent normalize_config to handle sources, outputs, etc.
+        config = super().normalize_config(config)
+        config = FilterSAM3DetectorConfig(config)
+        
+        # Set defaults if not present
+        defaults = {
+            "model_id": "facebook/sam2-hiera-large",
+            "device": "cuda",
+            "text_prompt": None,
+            "exemplars_path": None,
+            "exemplar_embeddings_cache": None,
+            "confidence_threshold": 0.5,
+            "mask_threshold": 0.5,
+            "max_detections": 100,
+            "output_masks": False,  # Don't save masks by default (can be large)
+            "output_boxes": True,
+            "output_scores": True,
+            "output_label": "sam3_detections",
+            "output_path": None,  # Path to save JSONL annotations
+            "frames_output_dir": None,  # Directory to save original frames
+            "annotated_frames_output_dir": None,  # Directory to save annotated frames (separate from original)
+            "save_annotated_frames": False,  # Save frames with visual annotations (boxes, scores, masks)
+            "visualize": False,
+        }
+        
+        for key, default_value in defaults.items():
+            if key not in config:
+                config[key] = default_value
+        
+        # Load from environment variables (override config values)
         env_mapping = {
             "model_id": str,
             "device": str,
             "text_prompt": str,
             "exemplars_path": str,
+            "exemplar_embeddings_cache": str,
             "confidence_threshold": float,
             "mask_threshold": float,
             "max_detections": int,
@@ -94,43 +113,66 @@ class FilterSAM3Detector(Filter):
             "output_boxes": bool,
             "output_scores": bool,
             "output_label": str,
-            "debug": bool,
+            "output_path": str,
+            "frames_output_dir": str,
+            "annotated_frames_output_dir": str,
+            "save_annotated_frames": bool,
             "visualize": bool,
         }
+        
+        # Special handling for FILTER_OUTPUT_PATH (maps to output_path)
+        env_output_path = os.getenv("FILTER_OUTPUT_PATH")
+        if env_output_path is not None:
+            config["output_path"] = env_output_path.strip()
+        
+        # Special handling for FILTER_FRAMES_OUTPUT_DIR (maps to frames_output_dir)
+        env_frames_output_dir = os.getenv("FILTER_FRAMES_OUTPUT_DIR")
+        if env_frames_output_dir is not None:
+            config["frames_output_dir"] = env_frames_output_dir.strip()
+        
+        # Special handling for FILTER_ANNOTATED_FRAMES_OUTPUT_DIR (maps to annotated_frames_output_dir)
+        env_annotated_frames_output_dir = os.getenv("FILTER_ANNOTATED_FRAMES_OUTPUT_DIR")
+        if env_annotated_frames_output_dir is not None:
+            config["annotated_frames_output_dir"] = env_annotated_frames_output_dir.strip()
 
         for key, expected_type in env_mapping.items():
             env_key = f"FILTER_{key.upper()}"
             env_val = os.getenv(env_key)
             if env_val is not None:
                 if expected_type is bool:
-                    setattr(config, key, env_val.strip().lower() in ("true", "1", "yes"))
+                    config[key] = env_val.strip().lower() in ("true", "1", "yes")
                 elif expected_type is float:
-                    setattr(config, key, float(env_val.strip()))
+                    config[key] = float(env_val.strip())
                 elif expected_type is int:
-                    setattr(config, key, int(env_val.strip()))
+                    config[key] = int(env_val.strip())
                 else:
-                    setattr(config, key, env_val.strip())
+                    config[key] = env_val.strip()
 
         # Validate device
         valid_devices = ['cuda', 'cpu', 'mps']
-        if isinstance(config.device, str):
-            config.device = config.device.lower().strip()
-            if config.device not in valid_devices:
-                raise ValueError(f"Invalid device: {config.device}. Must be one of {valid_devices}")
+        device = config.get("device", "cuda")
+        if isinstance(device, str):
+            device = device.lower().strip()
+            if device not in valid_devices:
+                raise ValueError(f"Invalid device: {device}. Must be one of {valid_devices}")
+            config["device"] = device
 
         # Validate numeric ranges
-        if not (0.0 <= config.confidence_threshold <= 1.0):
-            raise ValueError(f"confidence_threshold must be between 0 and 1, got {config.confidence_threshold}")
-
-        if not (0.0 <= config.mask_threshold <= 1.0):
-            raise ValueError(f"mask_threshold must be between 0 and 1, got {config.mask_threshold}")
-
-        if config.max_detections < 1:
-            raise ValueError(f"max_detections must be >= 1, got {config.max_detections}")
+        confidence_threshold = config.get("confidence_threshold", 0.5)
+        if not (0.0 <= confidence_threshold <= 1.0):
+            raise ValueError(f"confidence_threshold must be between 0 and 1, got {confidence_threshold}")
+        
+        mask_threshold = config.get("mask_threshold", 0.5)
+        if not (0.0 <= mask_threshold <= 1.0):
+            raise ValueError(f"mask_threshold must be between 0 and 1, got {mask_threshold}")
+        
+        max_detections = config.get("max_detections", 100)
+        if max_detections < 1:
+            raise ValueError(f"max_detections must be >= 1, got {max_detections}")
 
         return config
 
-    def setup(self, config: FilterSAM3DetectorConfig):
+    def setup(self, config: FilterConfig):
         """
         Initialize the filter with the given configuration.
 
@@ -145,28 +187,68 @@ class FilterSAM3Detector(Filter):
         logger.info("==========================================")
 
         self.cfg = config
-        self.debug = config.debug
+        
+        # Initialize jsonl_file to None (will be set if output_path is provided)
+        self.jsonl_file = None
 
-        if self.debug:
-            logging.getLogger().setLevel(logging.DEBUG)
-
-        # Store configuration
-        self.model_id = config.model_id
-        self.text_prompt = config.text_prompt
-        self.exemplars_path = config.exemplars_path
-        self.confidence_threshold = config.confidence_threshold
-        self.mask_threshold = config.mask_threshold
-        self.max_detections = config.max_detections
-        self.output_masks = config.output_masks
-        self.output_boxes = config.output_boxes
-        self.output_scores = config.output_scores
-        self.output_label = config.output_label
-        self.visualize = config.visualize
+        # Store configuration (access as dict since FilterConfig is dict-like)
+        self.model_id = config.get("model_id", "facebook/sam2-hiera-large")
+        self.text_prompt = config.get("text_prompt")
+        self.exemplars_path = config.get("exemplars_path")
+        self.confidence_threshold = config.get("confidence_threshold", 0.5)
+        self.mask_threshold = config.get("mask_threshold", 0.5)
+        self.max_detections = config.get("max_detections", 100)
+        self.output_masks = config.get("output_masks", True)
+        self.output_boxes = config.get("output_boxes", True)
+        self.output_scores = config.get("output_scores", True)
+        self.output_label = config.get("output_label", "sam3_detections")
+        self.output_path = config.get("output_path", None)
+        self.frames_output_dir = config.get("frames_output_dir", None)
+        self.annotated_frames_output_dir = config.get("annotated_frames_output_dir", None)
+        self.save_annotated_frames = config.get("save_annotated_frames", False)
+        self.visualize = config.get("visualize", False)
+        
+        # Initialize JSONL output file if path is provided
+        self.jsonl_file = None
+        if self.output_path:
+            output_path = Path(self.output_path)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            self.jsonl_file = open(output_path, 'w')
+            logger.info(f"Saving annotations to: {output_path}")
+        
+        # Initialize frames output directories if provided
+        self.frames_dir = None
+        self.annotated_frames_dir = None
+        self.frame_counter = 0  # Counter for unique frame numbering
+        
+        # Always save original frames if frames_output_dir is configured (default: true)
+        if self.frames_output_dir:
+            self.frames_dir = Path(self.frames_output_dir)
+            self.frames_dir.mkdir(parents=True, exist_ok=True)
+            logger.info(f"Saving original frames to: {self.frames_dir}")
+        
+        # Save annotated frames only if save_annotated_frames is enabled (default: false)
+        if self.save_annotated_frames:
+            if self.annotated_frames_output_dir:
+                # Use explicitly configured directory
+                self.annotated_frames_dir = Path(self.annotated_frames_output_dir)
+            elif self.frames_output_dir:
+                # Default: use frames_output_dir parent + "frames_annotated"
+                # e.g., ./output/frames -> ./output/frames_annotated
+                frames_parent = Path(self.frames_output_dir).parent
+                self.annotated_frames_dir = frames_parent / "frames_annotated"
+            else:
+                # Fallback: use ./output/frames_annotated
+                self.annotated_frames_dir = Path("./output/frames_annotated")
+            
+            self.annotated_frames_dir.mkdir(parents=True, exist_ok=True)
+            logger.info(f"Saving annotated frames to: {self.annotated_frames_dir}")
 
         # Determine device
-        if config.device == "cuda" and torch.cuda.is_available():
+        device_str = config.get("device", "cuda")
+        if device_str == "cuda" and torch.cuda.is_available():
             self.device = torch.device("cuda")
-        elif config.device == "mps" and hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+        elif device_str == "mps" and hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
             self.device = torch.device("mps")
         else:
             self.device = torch.device("cpu")
@@ -196,6 +278,16 @@ class FilterSAM3Detector(Filter):
         - Cached data
         """
         logger.info("FilterSAM3Detector shutdown")
+
+        # Close JSONL file if open
+        if hasattr(self, 'jsonl_file') and self.jsonl_file is not None:
+            try:
+                self.jsonl_file.close()
+                if hasattr(self, 'output_path') and self.output_path:
+                    logger.info(f"Closed annotation file: {self.output_path}")
+            except Exception as e:
+                logger.warning(f"Error closing annotation file: {e}")
+            self.jsonl_file = None
 
         # Release model resources
         if self.model is not None:
@@ -233,8 +325,6 @@ class FilterSAM3Detector(Filter):
                 output_frames[topic] = frame
                 continue
 
-            if self.debug:
-                logger.debug(f"Processing frame from topic: {topic}")
 
             # Check if model is loaded
             if self.model is None or self.processor is None:
@@ -253,6 +343,9 @@ class FilterSAM3Detector(Filter):
                 image_bgr = frame.rw_bgr.image
                 image_rgb = image_bgr[:, :, ::-1]  # BGR to RGB
                 pil_image = Image.fromarray(image_rgb)
+                
+                # Get image dimensions for clipping boxes
+                img_height, img_width = image_bgr.shape[:2]
 
                 # Set image in processor
                 state = self.processor.set_image(pil_image)
@@ -283,6 +376,7 @@ class FilterSAM3Detector(Filter):
 
                 # Extract detections from state
                 detections = []
+                scores = None  # Initialize scores variable
 
                 if "boxes" in state and "scores" in state:
                     boxes = state["boxes"]
@@ -293,12 +387,33 @@ class FilterSAM3Detector(Filter):
 
                     for i in range(num_detections):
                         detection = {}
+                        detection_id = i + 1  # COCO annotation ID (1-indexed)
 
                         if self.output_boxes:
                             box = boxes[i]
                             if hasattr(box, 'tolist'):
                                 box = box.tolist()
-                            detection['box'] = [int(x) for x in box]
+                            box = [float(x) for x in box]
+                            
+                            # Clip box coordinates to image boundaries
+                            x1, y1, x2, y2 = box
+                            x1 = max(0.0, min(x1, img_width))
+                            y1 = max(0.0, min(y1, img_height))
+                            x2 = max(0.0, min(x2, img_width))
+                            y2 = max(0.0, min(y2, img_height))
+                            
+                            # Ensure x2 > x1 and y2 > y1
+                            if x2 <= x1:
+                                x2 = min(x1 + 1.0, img_width)
+                            if y2 <= y1:
+                                y2 = min(y1 + 1.0, img_height)
+                            
+                            # Keep original format [x1, y1, x2, y2] for compatibility (clipped)
+                            detection['box'] = [int(x1), int(y1), int(x2), int(y2)]
+                            
+                            # Convert to COCO bbox format [x, y, width, height]
+                            coco_bbox = [float(x1), float(y1), float(x2 - x1), float(y2 - y1)]
+                            detection['bbox'] = coco_bbox  # COCO format
 
                         if self.output_scores:
                             score = scores[i]
@@ -312,27 +427,171 @@ class FilterSAM3Detector(Filter):
                                 mask = mask.cpu().numpy()
                             if hasattr(mask, 'squeeze'):
                                 mask = mask.squeeze()
-                            # Store mask as binary array
-                            detection['mask'] = (mask > 0).astype(np.uint8).tolist()
+                            
+                            # Convert to binary mask
+                            binary_mask = (mask > 0.5).astype(np.uint8)
+                            
+                            # Convert mask to COCO format (polygons)
+                            segmentation = self._mask_to_coco_polygons(binary_mask)
+                            
+                            if segmentation:
+                                detection['segmentation'] = segmentation
+                                
+                                # Calculate area (number of pixels in mask)
+                                area = int(np.sum(binary_mask))
+                                detection['area'] = area
+                                
+                                # Category ID (1 = object, since we don't have specific categories)
+                                detection['category_id'] = 1
+                                
+                                # iscrowd (0 = single object, 1 = crowd)
+                                detection['iscrowd'] = 0
+                            
+                            # Note: We don't save the raw mask array by default (can be very large)
+                            # The segmentation polygons are sufficient for COCO format
+                            # If you need the full mask array, you can reconstruct it from segmentation
 
                         if detection:
+                            detection['id'] = detection_id
+                            
+                            # Add class name from text_prompt if available
+                            if self.text_prompt:
+                                detection['class'] = self.text_prompt
+                                detection['class_name'] = self.text_prompt
+                                detection['category_name'] = self.text_prompt
+                            
+                            # Add normalized rois [x1, y1, x2, y2] (values between 0 and 1)
+                            if 'box' in detection and img_width > 0 and img_height > 0:
+                                x1, y1, x2, y2 = detection['box']
+                                # Normalize coordinates to [0, 1]
+                                roi_normalized = [
+                                    float(x1) / img_width,
+                                    float(y1) / img_height,
+                                    float(x2) / img_width,
+                                    float(y2) / img_height
+                                ]
+                                detection['rois'] = [roi_normalized]
+                            
+                            # Add category_id if not already set (for COCO compatibility)
+                            if 'category_id' not in detection:
+                                detection['category_id'] = 1
+                            
                             detections.append(detection)
 
+                # Calculate detection_confidence (average or max score)
+                detection_confidence = None
+                if detections and scores is not None and len(scores) > 0:
+                    # Use the maximum confidence score
+                    max_score = max(float(s.item() if hasattr(s, 'item') else s) for s in scores[:len(detections)])
+                    detection_confidence = float(max_score)
+                elif detections and any('score' in d for d in detections):
+                    # Fallback: use max score from detections
+                    max_score = max(d.get('score', 0.0) for d in detections if 'score' in d)
+                    detection_confidence = float(max_score)
+
                 # Store results in frame metadata
-                frame.data.setdefault('meta', {})[self.output_label] = detections
+                frame_meta = frame.data.setdefault('meta', {})
+                frame_meta[self.output_label] = detections
+                
+                # Add detection_confidence to meta
+                if detection_confidence is not None:
+                    frame_meta['detection_confidence'] = detection_confidence
 
-                if self.debug:
-                    logger.debug(f"[{topic}] Found {len(detections)} detections")
+                # Get frame metadata for JSONL and filename
+                frame_meta = frame.data.get('meta', {})
+                
+                # Get timestamp from frame (OpenFilter provides this)
+                # Try multiple sources: frame.timestamp, meta.ts, meta.timestamp, data.timestamp
+                frame_ts = (
+                    getattr(frame, 'timestamp', None) 
+                    or frame_meta.get('ts', None)
+                    or frame_meta.get('timestamp', None) 
+                    or frame.data.get('timestamp', None)
+                )
+                
+                # Get frame ID from metadata
+                frame_id_num = frame_meta.get('id', None) or frame_meta.get('frame_id', None)
+                
+                # Use frame counter for unique numbering (increments for each frame processed)
+                frame_counter = self.frame_counter
+                self.frame_counter += 1
+                
+                # Generate unique filename using timestamp and frame counter
+                # Format similar to filter-frame-selector: frame_{id}_ts{timestamp}_count{counter}
+                if frame_ts is not None:
+                    # Format timestamp: replace dot with underscore to avoid dots in filename
+                    timestamp_str = f"{float(frame_ts):.3f}".replace(".", "_")
+                else:
+                    # Fallback: use current time
+                    current_time = time.time()
+                    timestamp_str = f"{current_time:.3f}".replace(".", "_")
+                
+                # Handle frame_id_num - convert to int if possible, otherwise use counter
+                if isinstance(frame_id_num, (int, float)):
+                    frame_id_str = f"{int(frame_id_num):06d}"
+                else:
+                    # Use counter if no frame_id available
+                    frame_id_str = f"{frame_counter:06d}"
+                
+                # Create filename: frame_{id}_ts{timestamp}_count{counter}.jpg
+                filename_base = f"frame_{frame_id_str}_ts{timestamp_str}_count{frame_counter:06d}"
+                frame_filename_str = f"{filename_base}.jpg"
+                
+                # Generate full paths for original and annotated frames
+                frame_filename = None
+                annotated_frame_filename = None
+                
+                if self.frames_dir is not None:
+                    frame_filename = self.frames_dir / frame_filename_str
+                
+                if self.annotated_frames_dir is not None:
+                    annotated_frame_filename = self.annotated_frames_dir / frame_filename_str
 
-                # Optional visualization
+
+                # Save frames if output directories are configured
+                try:
+                    import cv2
+                    # Get original image from frame
+                    image_bgr_original = frame.rw_bgr.image.copy()
+                    
+                    # Save original frame (always save if frames_output_dir is configured)
+                    if self.frames_dir is not None and frame_filename:
+                        cv2.imwrite(str(frame_filename), image_bgr_original)
+                    
+                    # Save annotated frame (if annotated_frames_dir is configured and there are detections)
+                    if self.annotated_frames_dir is not None and annotated_frame_filename and detections:
+                        # Create annotated version
+                        image_bgr_annotated = image_bgr_original.copy()
+                        image_bgr_annotated = self._visualize_detections_on_image(image_bgr_annotated, detections)
+                        cv2.imwrite(str(annotated_frame_filename), image_bgr_annotated)
+                    
+                except Exception as e:
+                    logger.warning(f"Failed to save frame: {e}")
+
+                # Save to JSONL file if output_path is configured (save ALL frames, even without detections)
+                if hasattr(self, 'jsonl_file') and self.jsonl_file is not None:
+                    try:
+                        # filename contains all unique information (timestamp + frame counter)
+                        annotation = {
+                            "filename": frame_filename.name if frame_filename else None,
+                            "num_detections": len(detections),
+                            "meta": {
+                                self.output_label: detections  # Empty list if no detections
+                            }
+                        }
+                        self.jsonl_file.write(json.dumps(annotation) + '\n')
+                        self.jsonl_file.flush()  # Ensure immediate write
+                    except Exception as e:
+                        logger.warning(f"Failed to save annotation to JSONL: {e}")
+
+                # Optional visualization (for output frame)
                 if self.visualize and detections:
                     frame = self._visualize_detections(frame, detections)
 
             except Exception as e:
                 logger.error(f"Error processing frame from {topic}: {e}")
-                if self.debug:
-                    import traceback
-                    logger.debug(traceback.format_exc())
+                import traceback
+                logger.debug(traceback.format_exc())
 
             output_frames[topic] = frame
 
@@ -349,8 +608,37 @@ class FilterSAM3Detector(Filter):
         try:
             logger.info(f"Loading SAM3 model on device: {self.device}")
 
+            # Find BPE path - check vendorized sam3 first, then installed package
+            bpe_path = None
+            # Try vendorized sam3 (in project root/sam3/assets/)
+            vendorized_bpe = Path(__file__).parent.parent / "sam3" / "assets" / "bpe_simple_vocab_16e6.txt.gz"
+            if vendorized_bpe.exists():
+                bpe_path = str(vendorized_bpe)
+                logger.info(f"Using vendorized BPE file: {bpe_path}")
+            else:
+                # Try vendorized sam3/sam3/assets/ (alternative location)
+                vendorized_bpe2 = Path(__file__).parent.parent / "sam3" / "sam3" / "assets" / "bpe_simple_vocab_16e6.txt.gz"
+                if vendorized_bpe2.exists():
+                    bpe_path = str(vendorized_bpe2)
+                    logger.info(f"Using vendorized BPE file: {bpe_path}")
+                else:
+                    # Try to find in installed package
+                    try:
+                        import sam3
+                        sam3_path = Path(sam3.__file__).parent
+                        installed_bpe = sam3_path / "assets" / "bpe_simple_vocab_16e6.txt.gz"
+                        if installed_bpe.exists():
+                            bpe_path = str(installed_bpe)
+                            logger.info(f"Using installed BPE file: {bpe_path}")
+                    except Exception as e:
+                        logger.debug(f"Could not find BPE in installed package: {e}")
+            
+            if bpe_path is None:
+                logger.warning("BPE file not found, SAM3 will try to use default path")
+
             # Build SAM3 model
             self.model = build_sam3_image_model(
+                bpe_path=bpe_path,
                 device=str(self.device),
                 eval_mode=True,
                 load_from_HF=True,
@@ -571,6 +859,88 @@ class FilterSAM3Detector(Filter):
             logger.warning(f"Failed to visualize detections: {e}")
 
         return frame
+
+    def _visualize_detections_on_image(self, image: np.ndarray, detections: list) -> np.ndarray:
+        """
+        Draw detection results on an image array (not Frame).
+        
+        Args:
+            image: BGR image array
+            detections: List of detection dictionaries
+            
+        Returns:
+            Image array with visualizations drawn
+        """
+        try:
+            import cv2
+            image = image.copy()
+            
+            for i, det in enumerate(detections):
+                # Draw bounding box
+                if 'box' in det:
+                    x1, y1, x2, y2 = det['box']
+                    color = (0, 255, 0)  # Green
+                    cv2.rectangle(image, (x1, y1), (x2, y2), color, 2)
+                    
+                    # Draw score
+                    if 'score' in det:
+                        score = det['score']
+                        label = f"{score:.2f}"
+                        cv2.putText(image, label, (x1, y1 - 10),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+                
+                # Draw mask overlay (semi-transparent)
+                if 'mask' in det:
+                    mask = np.array(det['mask'], dtype=np.uint8)
+                    if mask.shape == image.shape[:2]:
+                        color_mask = np.zeros_like(image)
+                        color_mask[mask > 0] = [0, 255, 0]  # Green mask
+                        image = cv2.addWeighted(image, 1.0, color_mask, 0.3, 0)
+            
+        except Exception as e:
+            logger.warning(f"Failed to visualize detections on image: {e}")
+        
+        return image
+
+    def _mask_to_coco_polygons(self, mask: np.ndarray) -> list:
+        """
+        Convert binary mask to COCO polygon format.
+        
+        COCO format: list of polygons, where each polygon is a list of coordinates
+        [x1, y1, x2, y2, x3, y3, ...] representing the boundary of the mask.
+        
+        Args:
+            mask: Binary mask (H, W) with values 0 or 1
+            
+        Returns:
+            List of polygons in COCO format, or empty list if mask is empty
+        """
+        try:
+            import cv2
+            
+            # Find contours
+            contours, _ = cv2.findContours(
+                mask.astype(np.uint8),
+                cv2.RETR_EXTERNAL,
+                cv2.CHAIN_APPROX_SIMPLE
+            )
+            
+            polygons = []
+            for contour in contours:
+                # Simplify contour to reduce points
+                epsilon = 0.001 * cv2.arcLength(contour, True)
+                approx = cv2.approxPolyDP(contour, epsilon, True)
+                
+                if len(approx) >= 3:  # Need at least 3 points for a polygon
+                    # Flatten to [x1, y1, x2, y2, ...] format
+                    polygon = approx.flatten().tolist()
+                    polygons.append(polygon)
+            
+            return polygons
+            
+        except Exception as e:
+            logger.warning(f"Failed to convert mask to COCO polygons: {e}")
+            return []
 
 
 if __name__ == "__main__":
