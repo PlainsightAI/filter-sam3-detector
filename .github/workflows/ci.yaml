@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -e .[dev] \
+            --index-url https://python.openfilter.io/simple \
+            --extra-index-url https://pypi.org/simple
+
+      - name: Run tests
+        run: pytest -vv tests/
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install linters
+        run: pip install flake8 black isort
+
+      - name: Check formatting
+        run: |
+          black --check filter_sam3_detector/
+          isort --check-only filter_sam3_detector/
+
+      - name: Lint
+        run: flake8 filter_sam3_detector/ --max-line-length=120

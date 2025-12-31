@@ -38,9 +38,10 @@ Thumbs.db
 *.mp4
 uv.lock
 
+# Data directory (keep structure, ignore contents)
+data/*
+!data/.gitkeep
 
-sam3/
-
+# Demo images
 imgs_demo/*
-
 imgs_salad/*

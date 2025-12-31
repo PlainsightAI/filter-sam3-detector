@@ -1,0 +1,32 @@
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+RUN useradd -ms /bin/bash appuser
+WORKDIR /app
+
+# Install system dependencies for OpenCV and PyTorch
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgl1 \
+    libglib2.0-0 \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install uv for faster dependency resolution
+RUN pip install --no-cache-dir uv
+
+# Copy project files
+COPY pyproject.toml VERSION ./
+COPY sam3/ ./sam3/
+COPY filter_sam3_detector/ ./filter_sam3_detector/
+
+# Install the filter in development mode
+RUN uv pip install --system -e . \
+    --index-url https://python.openfilter.io/simple \
+    --extra-index-url https://pypi.org/simple
+
+RUN mkdir -p /app/logs && chown -R appuser:appuser /app
+
+USER appuser
+CMD ["python", "-m", "filter_sam3_detector.filter"]
