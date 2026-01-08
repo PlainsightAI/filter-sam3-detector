@@ -1,0 +1,110 @@
+# Temporal Interval Detection Pipeline
+#
+# This pipeline uses EMA (Exponential Moving Average) smoothing to convert
+# noisy per-frame detections into stable presence/absence intervals.
+#
+# Use Case: When you need stable foreground detection for:
+#   - Ground truth generation for testing
+#   - Activity detection (person entered/left scene)
+#   - Event-based triggers
+#   - Reducing false positives from frame-to-frame noise
+#
+# How it works:
+#   1. SAM3 detector produces per-frame detections
+#   2. TemporalIntervalFilter applies dual-EMA smoothing:
+#      - Fast EMA (half_life): Quick response for signal value
+#      - Slow EMA (full_decay_life): Stable threshold crossing detection
+#   3. State changes (present->absent, absent->present) create intervals
+#
+# EMA Parameters:
+#   - half_life: Frames for 50% signal decay (fast EMA)
+#   - full_decay_life: Frames for ~99.3% decay (slow EMA for crossing)
+#   - If only one is specified, the other is derived automatically:
+#       full_decay_life = 7.21 * half_life
+#       half_life = 0.139 * full_decay_life
+#
+# Output Format (in frame.data['meta']['temporal_intervals']):
+#   {
+#     "current_state": {"foreground": true},
+#     "ema_values": {"foreground": 0.85},
+#     "intervals": [
+#       {"label": "foreground", "present": true, "start_frame": 0, "end_frame": null, "confidence": 0.92}
+#     ]
+#   }
+#
+# Usage:
+#   docker compose -f examples/pipelines/temporal-intervals.yaml up
+#
+# With custom EMA settings:
+#   HALF_LIFE=10 FULL_DECAY_LIFE=60 docker compose -f examples/pipelines/temporal-intervals.yaml up
+
+services:
+  video_in:
+    image: containers.openfilter.io/plainsightai/openfilter-video-in:v0.1.10
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-}
+      FILTER_ID: VideoIn
+      FILTER_SOURCES: file:///video.mp4!sync!loop
+      FILTER_OUTPUTS: tcp://*
+    volumes:
+      - ${VIDEO_PATH:-../../data/sample.mp4}:/video.mp4:ro
+
+  sam3_detector:
+    image: plainsightai/openfilter-sam3-detector:latest
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-}
+      FILTER_ID: SAM3Detector
+      FILTER_SOURCES: tcp://video_in
+      FILTER_OUTPUTS: tcp://*
+      # Detection prompt - what to detect
+      FILTER_TEXT_PROMPT: ${TEXT_PROMPT:-person}
+      # Lower threshold for raw detections - temporal filter will smooth these
+      FILTER_CONFIDENCE_THRESHOLD: ${CONFIDENCE_THRESHOLD:-0.3}
+      # Visualization handled by temporal filter
+      FILTER_VISUALIZE: false
+    volumes:
+      - ${EXEMPLARS_PATH:-../../exemplars}:/app/exemplars:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  temporal_intervals:
+    image: plainsightai/openfilter-sam3-detector:latest
+    entrypoint: ["python", "-m", "filter_sam3_detector.temporal_intervals"]
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-}
+      FILTER_ID: TemporalIntervals
+      FILTER_SOURCES: tcp://sam3_detector
+      FILTER_OUTPUTS: tcp://*
+      # EMA smoothing parameters (specify one or both)
+      # half_life: frames for 50% decay (fast response)
+      FILTER_HALF_LIFE: ${HALF_LIFE:-5}
+      # full_decay_life: frames for 99.3% decay (stable crossing)
+      # If not set, derived as 7.21 * half_life
+      FILTER_FULL_DECAY_LIFE: ${FULL_DECAY_LIFE:-}
+      # Threshold for presence detection
+      FILTER_PRESENCE_THRESHOLD: ${PRESENCE_THRESHOLD:-0.5}
+      # Minimum raw detection confidence to consider
+      FILTER_MIN_CONFIDENCE: ${MIN_CONFIDENCE:-0.3}
+      # Input key from SAM3 detector
+      FILTER_DETECTION_KEY: sam3_detections
+      # Label for tracked presence (use 'label' field from detections for per-class tracking)
+      FILTER_DEFAULT_LABEL: foreground
+      # Output intervals to JSON file for ground truth
+      FILTER_OUTPUT_JSON_PATH: ${OUTPUT_JSON:-/app/output/intervals.json}
+      FILTER_DEBUG: ${DEBUG:-false}
+    volumes:
+      - ${OUTPUT_DIR:-../../output}:/app/output
+
+  webvis:
+    image: containers.openfilter.io/plainsightai/openfilter-webvis:v0.1.10
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-}
+      FILTER_ID: Webvis
+      FILTER_SOURCES: tcp://temporal_intervals
+    ports:
+      - ${WEBVIS_PORT:-8001}:8000

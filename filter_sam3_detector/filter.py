@@ -20,6 +20,8 @@ except RuntimeError:
 
 from openfilter.filter_runtime.filter import FilterConfig, Filter, Frame
 
+from .temporal_intervals import EMATracker, DetectionInterval, IntervalTracker
+
 __all__ = ["FilterSAM3DetectorConfig", "FilterSAM3Detector"]
 
 logger = logging.getLogger(__name__)
@@ -93,6 +95,16 @@ class FilterSAM3Detector(Filter):
             "annotated_frames_output_dir": None,  # Directory to save annotated frames (separate from original)
             "save_annotated_frames": False,  # Save frames with visual annotations (boxes, scores, masks)
             "visualize": False,
+            # Temporal interval tracking options (integrated from TemporalIntervalFilter)
+            "enable_temporal_intervals": False,  # Enable inline temporal interval tracking
+            "temporal_half_life": None,  # Frames for 50% EMA decay (fast signal)
+            "temporal_full_decay_life": None,  # Frames for ~99.3% EMA decay (slow crossing)
+            "temporal_presence_threshold": 0.5,  # EMA threshold for presence detection
+            "temporal_min_confidence": 0.0,  # Min detection confidence to consider
+            "temporal_output_json_path": None,  # Path to write intervals JSON
+            "temporal_streaming_mode": False,  # Emit intervals incrementally to JSON
+            "temporal_emit_on_change": True,  # Add interval state to frame metadata on changes
+            "temporal_label_field": None,  # Detection field for class label (None = use text_prompt)
         }
         
         for key, default_value in defaults.items():
@@ -118,6 +130,16 @@ class FilterSAM3Detector(Filter):
             "annotated_frames_output_dir": str,
             "save_annotated_frames": bool,
             "visualize": bool,
+            # Temporal interval env mappings
+            "enable_temporal_intervals": bool,
+            "temporal_half_life": float,
+            "temporal_full_decay_life": float,
+            "temporal_presence_threshold": float,
+            "temporal_min_confidence": float,
+            "temporal_output_json_path": str,
+            "temporal_streaming_mode": bool,
+            "temporal_emit_on_change": bool,
+            "temporal_label_field": str,
         }
         
         # Special handling for FILTER_OUTPUT_PATH (maps to output_path)
@@ -266,7 +288,38 @@ class FilterSAM3Detector(Filter):
         if self.exemplars_path:
             self._load_exemplar_images()
 
+        # Initialize temporal interval tracking if enabled
+        self.enable_temporal_intervals = config.get("enable_temporal_intervals", False)
+        self.interval_tracker: Optional[IntervalTracker] = None
+
+        if self.enable_temporal_intervals:
+            self._setup_temporal_intervals(config)
+
         logger.info("FilterSAM3Detector setup complete")
+
+    def _setup_temporal_intervals(self, config: FilterConfig):
+        """Initialize temporal interval tracking using reusable IntervalTracker."""
+        # Store config for detection aggregation
+        self.temporal_min_confidence = config.get("temporal_min_confidence", 0.0)
+        self.temporal_emit_on_change = config.get("temporal_emit_on_change", True)
+        self.temporal_label_field = config.get("temporal_label_field")
+        self.temporal_default_label = self.text_prompt or "foreground"
+
+        # Create IntervalTracker with all tracking logic
+        self.interval_tracker = IntervalTracker(
+            half_life=config.get("temporal_half_life"),
+            full_decay_life=config.get("temporal_full_decay_life"),
+            presence_threshold=config.get("temporal_presence_threshold", 0.5),
+            output_json_path=config.get("temporal_output_json_path"),
+            streaming_mode=config.get("temporal_streaming_mode", False),
+        )
+
+        logger.info(
+            f"Temporal intervals enabled: half_life={config.get('temporal_half_life')}, "
+            f"full_decay_life={config.get('temporal_full_decay_life')}, "
+            f"threshold={config.get('temporal_presence_threshold', 0.5)}, "
+            f"streaming={config.get('temporal_streaming_mode', False)}"
+        )
 
     def shutdown(self):
         """
@@ -278,6 +331,10 @@ class FilterSAM3Detector(Filter):
         - Cached data
         """
         logger.info("FilterSAM3Detector shutdown")
+
+        # Finalize temporal intervals if enabled
+        if self.interval_tracker is not None:
+            self.interval_tracker.finalize()
 
         # Close JSONL file if open
         if hasattr(self, 'jsonl_file') and self.jsonl_file is not None:
@@ -303,6 +360,76 @@ class FilterSAM3Detector(Filter):
             torch.cuda.empty_cache()
 
         logger.info("FilterSAM3Detector shutdown complete")
+
+    def _process_temporal_intervals(self, frame: Frame, detections: list):
+        """
+        Process temporal interval tracking for the current frame.
+
+        Uses IntervalTracker for EMA updates, state changes, and interval management.
+        """
+        # Get frame ID from metadata if available
+        meta = frame.data.get('meta', {})
+        frame_id = int(meta['id']) if 'id' in meta else None
+
+        # Aggregate detections by label (max score per label)
+        detected_labels = self._aggregate_temporal_detections(detections)
+
+        # Update tracker and get state changes
+        state_changes = self.interval_tracker.update(detected_labels, frame_id)
+
+        # Add interval info to frame metadata if state changed
+        if state_changes and self.temporal_emit_on_change:
+            meta = frame.data.setdefault('meta', {})
+            meta['temporal_intervals'] = {
+                "frame_id": frame_id or self.interval_tracker.frame_count,
+                "state_changes": [
+                    {"label": label, "present": present, "ema": round(ema, 4)}
+                    for label, present, ema in state_changes
+                ],
+            }
+
+    def _aggregate_temporal_detections(self, detections: list) -> dict[str, float]:
+        """
+        Aggregate detections by label, returning max confidence per label.
+
+        Returns:
+            Dict mapping label -> max confidence score
+        """
+        label_scores: dict[str, float] = {}
+
+        for det in detections:
+            if not isinstance(det, dict):
+                continue
+
+            # Get confidence score
+            score = det.get('score', 1.0)
+            if score < self.temporal_min_confidence:
+                continue
+
+            # Get label from detection or use default
+            if self.temporal_label_field and self.temporal_label_field in det:
+                label = str(det[self.temporal_label_field])
+            else:
+                # Use class field if available, otherwise default label
+                label = det.get('class') or det.get('class_name') or self.temporal_default_label
+
+            # Track max score per label
+            if label not in label_scores or score > label_scores[label]:
+                label_scores[label] = score
+
+        return label_scores
+
+    def get_temporal_intervals(self) -> list[DetectionInterval]:
+        """Get all completed temporal intervals (for programmatic access)."""
+        if self.interval_tracker is None:
+            return []
+        return self.interval_tracker.get_intervals()
+
+    def get_temporal_state(self) -> dict[str, dict]:
+        """Get current temporal presence state for all tracked labels."""
+        if self.interval_tracker is None:
+            return {}
+        return self.interval_tracker.get_current_state()
 
     def process(self, frames: dict[str, Frame]) -> dict[str, Frame]:
         """
@@ -492,10 +619,14 @@ class FilterSAM3Detector(Filter):
                 # Store results in frame metadata
                 frame_meta = frame.data.setdefault('meta', {})
                 frame_meta[self.output_label] = detections
-                
+
                 # Add detection_confidence to meta
                 if detection_confidence is not None:
                     frame_meta['detection_confidence'] = detection_confidence
+
+                # Process temporal intervals if enabled
+                if self.enable_temporal_intervals:
+                    self._process_temporal_intervals(frame, detections)
 
                 # Get frame metadata for JSONL and filename
                 frame_meta = frame.data.get('meta', {})
@@ -509,8 +640,8 @@ class FilterSAM3Detector(Filter):
                     or frame.data.get('timestamp', None)
                 )
                 
-                # Get frame ID from metadata
-                frame_id_num = frame_meta.get('id', None) or frame_meta.get('frame_id', None)
+                # Get frame ID from metadata (VideoIn sets meta['id'])
+                frame_id_num = frame_meta.get('id', None)
                 
                 # Use frame counter for unique numbering (increments for each frame processed)
                 frame_counter = self.frame_counter

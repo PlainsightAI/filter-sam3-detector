@@ -1,0 +1,63 @@
+# Raw Detection Pipeline
+#
+# This pipeline outputs per-frame detections with bounding boxes and confidence
+# scores. Each frame contains the raw detection results from SAM3.
+#
+# Use Case: When you need per-frame detection data for:
+#   - Training data collection
+#   - Frame-by-frame analysis
+#   - Custom post-processing
+#   - Integration with tracking algorithms
+#
+# Output Format (in frame.data['meta']['sam3_detections']):
+#   [
+#     {"box": [x1, y1, x2, y2], "score": 0.95, "label": "person"},
+#     {"box": [x1, y1, x2, y2], "score": 0.87, "label": "person"},
+#     ...
+#   ]
+#
+# Usage:
+#   docker compose -f examples/pipelines/raw-detections.yaml up
+
+services:
+  video_in:
+    image: containers.openfilter.io/plainsightai/openfilter-video-in:v0.1.10
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-}
+      FILTER_ID: VideoIn
+      FILTER_SOURCES: file:///video.mp4!sync!loop
+      FILTER_OUTPUTS: tcp://*
+    volumes:
+      - ${VIDEO_PATH:-../../data/sample.mp4}:/video.mp4:ro
+
+  sam3_detector:
+    image: plainsightai/openfilter-sam3-detector:latest
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-}
+      FILTER_ID: SAM3Detector
+      FILTER_SOURCES: tcp://video_in
+      FILTER_OUTPUTS: tcp://*
+      # Detection prompt - what to detect
+      FILTER_TEXT_PROMPT: ${TEXT_PROMPT:-person}
+      # Minimum confidence for raw detections
+      FILTER_CONFIDENCE_THRESHOLD: ${CONFIDENCE_THRESHOLD:-0.5}
+      # Enable visualization overlay
+      FILTER_VISUALIZE: ${VISUALIZE:-true}
+    volumes:
+      - ${EXEMPLARS_PATH:-../../exemplars}:/app/exemplars:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  webvis:
+    image: containers.openfilter.io/plainsightai/openfilter-webvis:v0.1.10
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-}
+      FILTER_ID: Webvis
+      FILTER_SOURCES: tcp://sam3_detector
+    ports:
+      - ${WEBVIS_PORT:-8001}:8000

@@ -57,6 +57,31 @@ FILTER_VISUALIZE=false                       # Draw detections on frames
 FILTER_DEBUG=false                           # Enable debug logging
 ```
 
+### Integrated Temporal Intervals
+
+Enable inline temporal interval tracking directly in the SAM3 detector (no separate filter needed):
+
+```bash
+# Enable temporal tracking
+FILTER_ENABLE_TEMPORAL_INTERVALS=true        # Enable inline temporal interval tracking
+
+# Streaming mode (emit intervals incrementally)
+FILTER_TEMPORAL_STREAMING_MODE=true          # Emit intervals as they occur (recommended)
+
+# EMA parameters
+FILTER_TEMPORAL_HALF_LIFE=5.0                # Frames for 50% EMA decay
+FILTER_TEMPORAL_FULL_DECAY_LIFE=30.0         # Alternative: frames for full decay (optional)
+
+# Detection thresholds
+FILTER_TEMPORAL_PRESENCE_THRESHOLD=0.4       # EMA score threshold for "present"
+FILTER_TEMPORAL_MIN_CONFIDENCE=0.0           # Minimum detection confidence to consider
+
+# Output configuration
+FILTER_TEMPORAL_OUTPUT_JSON_PATH=/output/intervals.json  # Path to write intervals
+FILTER_TEMPORAL_EMIT_ON_CHANGE=true          # Only emit when presence state changes
+FILTER_TEMPORAL_LABEL_FIELD=label            # Field to use for label grouping (optional)
+```
+
 ## Example .env File
 
 Create a `.env` file in the project root:
@@ -220,6 +245,15 @@ Configuration is applied in this order (later overrides earlier):
 | `FILTER_OUTPUT_LABEL` | string | "sam3_detections" | Output label key |
 | `FILTER_VISUALIZE` | bool | false | Draw detections |
 | `FILTER_DEBUG` | bool | false | Debug logging |
+| `FILTER_ENABLE_TEMPORAL_INTERVALS` | bool | false | Enable inline temporal tracking |
+| `FILTER_TEMPORAL_STREAMING_MODE` | bool | false | Emit intervals incrementally |
+| `FILTER_TEMPORAL_HALF_LIFE` | float | 5.0 | Frames for 50% EMA decay |
+| `FILTER_TEMPORAL_FULL_DECAY_LIFE` | float | None | Frames for full decay (alt to half_life) |
+| `FILTER_TEMPORAL_PRESENCE_THRESHOLD` | float | 0.4 | EMA threshold for presence |
+| `FILTER_TEMPORAL_MIN_CONFIDENCE` | float | 0.0 | Min detection confidence |
+| `FILTER_TEMPORAL_OUTPUT_JSON_PATH` | string | None | Path to write intervals JSON |
+| `FILTER_TEMPORAL_EMIT_ON_CHANGE` | bool | true | Emit only on state changes |
+| `FILTER_TEMPORAL_LABEL_FIELD` | string | None | Field for label grouping |
 
 ## Examples
 

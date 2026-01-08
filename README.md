@@ -172,7 +172,58 @@ cup_examples/
 
 Each image should show exactly one instance of the object you want to detect.
 
-### Method 2: Using as a Standalone Filter
+### Method 2: Docker Pipeline
+
+Run the complete detection pipeline with Docker Compose:
+
+```bash
+# 1. Copy your video to the data directory
+cp your_video.mp4 data/sample-video.mp4
+
+# 2. Set your HuggingFace token (required for gated SAM3 model)
+export HF_TOKEN="your_huggingface_token"
+
+# 3. Build the container (bakes model weights into image)
+docker compose build sam3_detector
+
+# 4. Run the pipeline
+FILTER_TEXT_PROMPT="person" docker compose up
+
+# 5. View results at http://localhost:8001 (webvis)
+# Temporal intervals are streamed to output/intervals.json
+```
+
+**Pipeline Architecture:**
+```
+video_in → sam3_detector (with integrated temporal intervals) → webvis
+               ↓
+         output/intervals.json (streamed)
+```
+
+**Requirements:**
+- Docker with NVIDIA Container Toolkit
+- CUDA-compatible GPU (sm_50+ including RTX 50-series/Blackwell)
+- HuggingFace account with access to gated models
+
+**Environment Variables:**
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `HF_TOKEN` | - | HuggingFace token for model access (build-time) |
+| `FILTER_TEXT_PROMPT` | "person" | What to detect |
+| `FILTER_HALF_LIFE` | 5.0 | EMA decay rate (frames) |
+| `FILTER_PRESENCE_THRESHOLD` | 0.4 | Detection threshold |
+
+**Output Format (intervals.json):**
+```json
+{
+  "intervals": [
+    {"start_frame": 23, "end_frame": 69, "label": "person", "present": true, "confidence": 0.95}
+  ],
+  "total_frames": 463
+}
+```
+
+### Method 3: Using as a Standalone Filter
 
 ```bash
 # Set environment variables
@@ -186,7 +237,7 @@ export FILTER_OUTPUTS="tcp://127.0.0.1:5556"
 filter-sam3-detector
 ```
 
-### Method 3: Using in Python Code
+### Method 4: Using in Python Code
 
 ```python
 from filter_sam3_detector import FilterSAM3Detector
@@ -216,6 +267,99 @@ filters = [
 runner = Filter.Runner(filters)
 runner.join()
 ```
+
+## Temporal Interval Detection
+
+Convert noisy per-frame detections into stable presence/absence intervals using EMA smoothing.
+
+### Quick Start (Docker - Recommended)
+
+```bash
+# Run the integrated pipeline (temporal intervals built into SAM3 detector)
+cp your_video.mp4 data/sample-video.mp4
+export HF_TOKEN="your_token"
+docker compose build sam3_detector
+FILTER_TEXT_PROMPT="person" docker compose up
+
+# Intervals stream to output/intervals.json as detection progresses
+```
+
+### Quick Start (Python Script)
+
+```bash
+# Run on any video with custom prompts
+uv run python scripts/run_temporal_intervals.py video.mp4 \
+    --prompts "person,hand,cup" \
+    --output results.json
+```
+
+### Integrated Mode (Recommended)
+
+Enable temporal intervals directly in the SAM3 detector - no separate filter needed:
+
+```python
+from filter_sam3_detector import FilterSAM3Detector
+
+# Single filter with integrated temporal tracking
+pipeline = [
+    (FilterSAM3Detector, {
+        "text_prompt": "person",
+        "output_label": "detections",
+        # Integrated temporal intervals
+        "enable_temporal_intervals": True,
+        "temporal_streaming_mode": True,  # Emit incrementally
+        "temporal_half_life": 5.0,
+        "temporal_presence_threshold": 0.4,
+        "temporal_output_json_path": "intervals.json",
+    }),
+]
+```
+
+### Separate Filter Mode (Legacy)
+
+For pipelines requiring separate filter stages:
+
+```python
+from filter_sam3_detector import FilterSAM3Detector
+from filter_sam3_detector.temporal_intervals import TemporalIntervalFilter
+
+# SAM3 detector -> Temporal interval filter
+pipeline = [
+    (FilterSAM3Detector, {
+        "text_prompt": "person",
+        "output_label": "detections",
+    }),
+    (TemporalIntervalFilter, {
+        "detection_key": "detections",
+        "half_life": 5.0,           # EMA responsiveness (frames)
+        "presence_threshold": 0.4,  # Detection threshold
+        "output_json_path": "intervals.json",
+    }),
+]
+```
+
+### Output Format
+
+```json
+{
+  "intervals": [
+    {"start_frame": 20, "end_frame": 150, "label": "person", "present": true, "confidence": 0.92},
+    {"start_frame": 151, "end_frame": 180, "label": "person", "present": false, "confidence": 0.15}
+  ],
+  "total_frames": 200
+}
+```
+
+### Configuration Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `enable_temporal_intervals` | false | Enable integrated temporal tracking |
+| `temporal_streaming_mode` | false | Emit intervals incrementally (vs. at end) |
+| `temporal_half_life` | 5.0 | Frames for 50% EMA decay |
+| `temporal_presence_threshold` | 0.4 | EMA score to trigger presence |
+| `temporal_output_json_path` | None | Path to write intervals JSON |
+| `temporal_emit_on_change` | true | Only emit when state changes |
 
 ## Usage Scenarios
 
