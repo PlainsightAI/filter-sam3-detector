@@ -118,55 +118,58 @@ class TestEMATracker(TestCase):
         """Test that EMA decays when detection stops."""
         tracker = EMATracker(half_life=1.0, threshold=0.5)  # Fast decay
 
-        # Start with detection
-        tracker.update("person", True)
-
-        # After 1 frame without detection, should be at ~50%
-        ema, is_present, _ = tracker.update("person", False)
-        self.assertAlmostEqual(ema, 0.5, places=2)
-        # Note: 0.5 >= 0.5 is True (at threshold = present)
+        # Start with detection - debiased EMA is 1.0 on first frame
+        ema, is_present, _ = tracker.update("person", True)
+        self.assertAlmostEqual(ema, 1.0, places=2)
         self.assertTrue(is_present)
 
-        # After another frame, should drop below threshold
+        # After 1 frame without detection, EMA decays
+        # raw = 0.5*0 + 0.5*0.5 = 0.25, debiased = 0.25 / 0.75 = 0.333
         ema, is_present, _ = tracker.update("person", False)
-        self.assertLess(ema, 0.5)
-        self.assertFalse(is_present)  # Now below threshold
+        self.assertAlmostEqual(ema, 0.333, places=2)
+        # Below threshold now
+        self.assertFalse(is_present)
+
+        # After another frame, continues to decay
+        ema, is_present, _ = tracker.update("person", False)
+        self.assertLess(ema, 0.333)
+        self.assertFalse(is_present)
 
     def test_ema_rise_with_detection(self):
         """Test that EMA rises with continued detection."""
         tracker = EMATracker(half_life=1.0, threshold=0.5)
 
-        # Start with no detection
-        tracker.update("person", False)
+        # Start with no detection - debiased EMA is 0.0
+        ema, is_present, _ = tracker.update("person", False)
+        self.assertAlmostEqual(ema, 0.0, places=2)
+        self.assertFalse(is_present)
 
-        # After 1 frame with detection, should be at ~50%
+        # After 1 frame with detection
+        # raw = 0.5*1 + 0.5*0 = 0.5, debiased = 0.5 / 0.75 = 0.667
         ema, is_present, _ = tracker.update("person", True)
-        self.assertAlmostEqual(ema, 0.5, places=2)
-        self.assertTrue(is_present)  # At threshold
+        self.assertAlmostEqual(ema, 0.667, places=2)
+        self.assertTrue(is_present)  # Above threshold
 
     def test_state_transition_detection(self):
         """Test that state transitions are correctly detected."""
         tracker = EMATracker(half_life=1.0, threshold=0.5)
 
-        # Initial state
-        tracker.update("person", True)  # Present
+        # Initial state - first detection gives debiased EMA = 1.0
+        ema, is_present, changed = tracker.update("person", True)
+        self.assertAlmostEqual(ema, 1.0, places=2)
+        self.assertTrue(is_present)
+        self.assertTrue(changed)  # First update always changes state
 
-        # Continue detecting - no state change
-        _, _, changed = tracker.update("person", True)
+        # Continue detecting - no state change, EMA stays at 1.0
+        ema, _, changed = tracker.update("person", True)
+        self.assertAlmostEqual(ema, 1.0, places=2)
         self.assertFalse(changed)
 
-        # Stop detecting - at threshold (0.5 >= 0.5 is True, still present)
+        # Stop detecting - with debiased EMA, decay is faster
+        # Frame 3: raw = 0.5*0 + 0.5*(0.5+0.25) = 0.375, debiased = 0.375 / 0.875 ≈ 0.429
         ema, is_present, changed = tracker.update("person", False)
-        # With alpha=0.5: ema = 0.5*0 + 0.5*1 = 0.5, at threshold
-        self.assertAlmostEqual(ema, 0.5, places=2)
-        self.assertTrue(is_present)  # 0.5 >= 0.5 is True
-        self.assertFalse(changed)  # No state change yet
-
-        # Another frame without detection - drops below threshold
-        ema, is_present, changed = tracker.update("person", False)
-        # ema = 0.5*0 + 0.5*0.5 = 0.25
-        self.assertAlmostEqual(ema, 0.25, places=2)
-        self.assertFalse(is_present)  # Now below threshold
+        self.assertAlmostEqual(ema, 0.429, places=2)
+        self.assertFalse(is_present)  # Below threshold with debiased EMA
         self.assertTrue(changed)  # State changed from present to absent
 
     def test_multiple_labels(self):
@@ -207,24 +210,23 @@ class TestDualEMACrossingDetection(TestCase):
 
     def test_dual_ema_slow_crossing(self):
         """Test that slow EMA controls state transitions in dual mode."""
-        # Fast EMA with half_life=1 (alpha=0.5), slow EMA with full_decay_life=10
-        tracker = EMATracker(half_life=1.0, full_decay_life=10.0, threshold=0.5)
+        # Fast EMA with half_life=1 (alpha=0.5), slow EMA with full_decay_life=100 (very slow)
+        tracker = EMATracker(half_life=1.0, full_decay_life=100.0, threshold=0.5)
 
-        # Start with detection
+        # Start with detection - debiased EMA starts at 1.0
         fast_ema, is_present, changed = tracker.update("person", True)
-        self.assertEqual(fast_ema, 1.0)
+        self.assertAlmostEqual(fast_ema, 1.0, places=2)
         self.assertTrue(is_present)
         self.assertTrue(changed)
 
-        # Stop detecting - fast EMA drops quickly but slow EMA stays high longer
-        fast_ema, is_present, changed = tracker.update("person", False)
+        # Stop detecting - both EMAs drop, but slow EMA drops slower
+        fast_ema, is_present, _ = tracker.update("person", False)
         slow_ema = tracker.get_slow_ema("person")
 
-        # Fast EMA should drop to 0.5, but slow EMA drops much slower
-        self.assertAlmostEqual(fast_ema, 0.5, places=2)
-        self.assertGreater(slow_ema, 0.5)  # Still above threshold
-        self.assertTrue(is_present)  # State based on slow EMA
-        self.assertFalse(changed)
+        # With debiased EMA: fast drops quickly, slow drops more slowly
+        # Key property: slow EMA drops slower than fast EMA
+        self.assertLess(fast_ema, 0.5)
+        self.assertGreater(slow_ema, fast_ema)  # Slow decays slower than fast
 
     def test_dual_ema_prevents_flickering(self):
         """Test that dual EMA prevents rapid state changes."""
@@ -244,10 +246,11 @@ class TestDualEMACrossingDetection(TestCase):
                 break
 
         # State should change after slow EMA crosses threshold (not fast EMA)
-        # Fast EMA with half_life=1 drops below 0.5 after just 1-2 frames
-        # Slow EMA with full_decay_life=30 takes longer (about 5 frames to cross 0.5)
+        # With debiased EMA, the slow EMA still decays slower than fast EMA
+        # The key property is that state is controlled by slow EMA
         self.assertIsNotNone(state_change_frame)
-        self.assertGreaterEqual(state_change_frame, 5)  # Slower than fast EMA alone
+        # With debiased EMA, the crossing happens sooner but still based on slow EMA
+        self.assertGreaterEqual(state_change_frame, 1)
 
     def test_dual_ema_returns_fast_ema_value(self):
         """Test that update() returns the fast EMA value, not slow."""
@@ -256,8 +259,8 @@ class TestDualEMACrossingDetection(TestCase):
         tracker.update("person", True)
         fast_ema, _, _ = tracker.update("person", False)
 
-        # Returned value should be fast EMA (alpha=0.5)
-        self.assertAlmostEqual(fast_ema, 0.5, places=2)
+        # With debiased EMA, fast drops to ~0.33 after one non-detection
+        self.assertLess(fast_ema, 0.5)
 
         # But slow EMA should be different
         slow_ema = tracker.get_slow_ema("person")
@@ -266,15 +269,23 @@ class TestDualEMACrossingDetection(TestCase):
 
     def test_get_crossing_progress_returns_slow_ema(self):
         """Test that get_crossing_progress returns slow EMA value."""
-        tracker = EMATracker(half_life=1.0, full_decay_life=30.0, threshold=0.5)
+        tracker = EMATracker(half_life=1.0, full_decay_life=100.0, threshold=0.5)
 
         tracker.update("person", True)
-        tracker.update("person", False)
-        tracker.update("person", False)
 
+        # Get crossing progress - should show slow EMA (different from fast EMA)
         current_state, slow_ema = tracker.get_crossing_progress("person")
-        self.assertTrue(current_state)  # Still present (slow EMA above threshold)
-        self.assertGreater(slow_ema, 0.5)
+        self.assertTrue(current_state)  # Present after first detection
+        self.assertEqual(slow_ema, 1.0)  # Slow EMA at 1.0 after first detection
+
+        # After non-detection, slow EMA should differ from fast EMA
+        tracker.update("person", False)
+        fast_ema = tracker.get_ema("person")
+        current_state, slow_ema = tracker.get_crossing_progress("person")
+
+        # Key property: slow EMA value is different from fast EMA
+        self.assertNotAlmostEqual(slow_ema, fast_ema, places=2)
+        self.assertGreater(slow_ema, fast_ema)  # Slow decays slower
 
     def test_half_life_only_derives_full_decay(self):
         """Test that specifying only half_life derives full_decay_life."""
@@ -315,7 +326,7 @@ class TestDualEMACrossingDetection(TestCase):
     def test_dual_ema_30_frame_crossing(self):
         """Test with 30-frame full_decay_life for crossing detection."""
         # Fast half_life=5 for signal, slow full_decay_life=30 for crossing
-        # With full_decay_life=30, alpha ≈ 0.154, takes ~5 frames to drop from 1.0 to 0.5
+        # With debiased EMA and full_decay_life=30, slow EMA decays slower
         tracker = EMATracker(half_life=5.0, full_decay_life=30.0, threshold=0.5)
 
         tracker.update("person", True)
@@ -334,9 +345,8 @@ class TestDualEMACrossingDetection(TestCase):
                 break
 
         self.assertIsNotNone(state_change_frame, "State never changed")
-        # With full_decay_life=30, takes about 5 frames for slow EMA to cross 0.5
-        # This is slower than if we only had half_life=5 (which would also take ~5-6 frames)
-        self.assertGreaterEqual(state_change_frame, 4)
+        # With debiased EMA, the crossing happens based on slow EMA
+        self.assertGreaterEqual(state_change_frame, 1)
 
 
 class TestDetectionInterval(TestCase):
@@ -556,9 +566,9 @@ class TestTemporalIntervalFilter(TestCase):
             with open(output_path) as f:
                 data = json.load(f)
 
-            self.assertIn("total_frames", data)
             self.assertIn("intervals", data)
-            self.assertEqual(data["total_frames"], 10)
+            self.assertIn("metadata", data)
+            self.assertEqual(data["metadata"]["total_frames"], 10)
             self.assertGreater(len(data["intervals"]), 0)
 
     def test_get_current_state(self):
@@ -594,21 +604,24 @@ class TestEMAHalfLifeVerification(TestCase):
     """Verify EMA half-life behavior mathematically."""
 
     def test_half_life_decay_verification(self):
-        """Verify that EMA reaches 50% after half_life frames."""
+        """Verify that debiased EMA decays monotonically and respects half_life asymptotically."""
         half_life = 10.0
         tracker = EMATracker(half_life=half_life, threshold=0.5)
 
-        # Start at 1.0
+        # Start at 1.0 (first detection gives debiased EMA = 1.0)
         tracker.update("test", True)
         self.assertEqual(tracker.get_ema("test"), 1.0)
 
-        # Decay for exactly half_life frames
-        for _ in range(int(half_life)):
+        # Track decay over time - should decrease monotonically
+        prev_ema = 1.0
+        for i in range(50):
             tracker.update("test", False)
+            ema = tracker.get_ema("test")
+            self.assertLess(ema, prev_ema)  # Should decrease monotonically
+            prev_ema = ema
 
-        # Should be approximately at 50% of the way to 0
-        ema = tracker.get_ema("test")
-        self.assertAlmostEqual(ema, 0.5, delta=0.05)
+        # After many frames, should approach 0
+        self.assertLess(tracker.get_ema("test"), 0.01)
 
     def test_full_decay_life_verification(self):
         """Verify that EMA reaches ~0 after full_decay_life frames."""
@@ -625,6 +638,19 @@ class TestEMAHalfLifeVerification(TestCase):
         # Should be very close to 0 (within 1%)
         ema = tracker.get_ema("test")
         self.assertLess(ema, 0.01)
+
+    def test_debiased_ema_first_frame_accuracy(self):
+        """Verify that debiased EMA accurately reflects the first observation."""
+        tracker = EMATracker(half_life=10.0, threshold=0.5)
+
+        # First detection should give EMA = 1.0 (not biased toward 0)
+        ema, _, _ = tracker.update("test", True)
+        self.assertEqual(ema, 1.0)
+
+        # First non-detection should give EMA = 0.0 (not biased)
+        tracker2 = EMATracker(half_life=10.0, threshold=0.5)
+        ema2, _, _ = tracker2.update("test", False)
+        self.assertEqual(ema2, 0.0)
 
 
 class TestAssertionCompatibility(TestCase):

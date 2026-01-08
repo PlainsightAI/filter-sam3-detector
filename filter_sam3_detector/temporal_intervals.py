@@ -26,7 +26,13 @@ from typing import Optional
 
 from openfilter.filter_runtime.filter import FilterConfig, Filter, Frame
 
-__all__ = ["TemporalIntervalConfig", "TemporalIntervalFilter", "EMATracker", "DetectionInterval"]
+__all__ = [
+    "TemporalIntervalConfig",
+    "TemporalIntervalFilter",
+    "EMATracker",
+    "DetectionInterval",
+    "IntervalTracker",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -216,6 +222,224 @@ class EMATracker:
         self.current_state.clear()
 
 
+class IntervalTracker:
+    """
+    Reusable interval tracking component that can be embedded in any filter.
+
+    This class encapsulates the interval tracking logic (EMA updates, state changes,
+    interval management) without being tied to the Filter interface. It can be used
+    by both TemporalIntervalFilter (standalone) and FilterSAM3Detector (integrated).
+
+    Features:
+    - EMA-based presence detection with dual EMA for robustness
+    - Streaming JSON output for real-time interval emission
+    - Interval aggregation with confidence averaging
+    - Optional callback for state changes
+
+    Args:
+        half_life: Frames for 50% EMA decay (fast signal)
+        full_decay_life: Frames for ~99.3% EMA decay (slow crossing)
+        presence_threshold: EMA threshold for presence detection
+        output_json_path: Optional path for JSON output
+        streaming_mode: If True, write intervals incrementally
+        on_interval_closed: Optional callback(interval) when interval closes
+    """
+
+    def __init__(
+        self,
+        half_life: Optional[float] = None,
+        full_decay_life: Optional[float] = None,
+        presence_threshold: float = 0.5,
+        output_json_path: Optional[str] = None,
+        streaming_mode: bool = False,
+        on_interval_closed: Optional[callable] = None,
+    ):
+        self.tracker = EMATracker(
+            half_life=half_life,
+            full_decay_life=full_decay_life,
+            threshold=presence_threshold,
+        )
+
+        self.output_json_path = Path(output_json_path) if output_json_path else None
+        self.streaming_mode = streaming_mode
+        self.on_interval_closed = on_interval_closed
+
+        # Interval tracking state
+        self.frame_count = 0
+        self.intervals: list[DetectionInterval] = []
+        self.open_intervals: dict[str, dict] = {}  # label -> {start_frame, confidence_sum, frame_count, present}
+
+        # Streaming file handle
+        self._json_file = None
+        self._first_interval = True
+
+        if self.output_json_path and self.streaming_mode:
+            self._open_streaming_file()
+
+    def _open_streaming_file(self):
+        """Open streaming JSON file and write header."""
+        self.output_json_path.parent.mkdir(parents=True, exist_ok=True)
+        self._json_file = open(self.output_json_path, 'w')
+        self._json_file.write('{"intervals": [\n')
+        self._json_file.flush()
+        self._first_interval = True
+        logger.info(f"Streaming intervals to: {self.output_json_path}")
+
+    def update(self, detected_labels: dict[str, float], frame_id: Optional[int] = None) -> list[tuple[str, bool, float]]:
+        """
+        Update tracking with current frame's detections.
+
+        Args:
+            detected_labels: Dict mapping label -> max confidence score for this frame
+            frame_id: Optional explicit frame ID (uses internal counter if None)
+
+        Returns:
+            List of state changes as (label, is_present, ema) tuples
+        """
+        self.frame_count += 1
+        current_frame = frame_id if frame_id is not None else self.frame_count
+
+        # Update EMA for all known labels
+        all_labels = set(detected_labels.keys()) | set(self.tracker.ema.keys())
+        state_changes = []
+
+        for label in all_labels:
+            detected = label in detected_labels
+
+            ema, is_present, changed = self.tracker.update(label, detected)
+
+            if changed:
+                state_changes.append((label, is_present, ema))
+                self._handle_state_change(label, is_present, current_frame, ema)
+            elif label in self.open_intervals:
+                # Update running confidence for open interval
+                self.open_intervals[label]["confidence_sum"] += ema
+                self.open_intervals[label]["frame_count"] += 1
+
+        return state_changes
+
+    def _handle_state_change(self, label: str, is_present: bool, frame_id: int, ema: float):
+        """Handle a state transition for a label."""
+        if is_present:
+            # Start new presence interval
+            self.open_intervals[label] = {
+                "start_frame": frame_id,
+                "confidence_sum": ema,
+                "frame_count": 1,
+                "present": True,
+            }
+        else:
+            # Close existing interval and start absence interval
+            self._close_interval(label)
+            self.open_intervals[label] = {
+                "start_frame": frame_id,
+                "confidence_sum": ema,
+                "frame_count": 1,
+                "present": False,
+            }
+
+    def _close_interval(self, label: str):
+        """Close an open interval and add to completed intervals."""
+        if label not in self.open_intervals:
+            return
+
+        info = self.open_intervals.pop(label)
+        avg_confidence = info["confidence_sum"] / max(1, info["frame_count"])
+
+        interval = DetectionInterval(
+            start_frame=info["start_frame"],
+            end_frame=self.frame_count,
+            label=label,
+            present=info["present"],
+            confidence=avg_confidence,
+        )
+        self.intervals.append(interval)
+
+        # Stream to file if enabled
+        if self._json_file is not None:
+            self._stream_interval(interval)
+
+        # Invoke callback if provided
+        if self.on_interval_closed:
+            self.on_interval_closed(interval)
+
+        logger.debug(f"Closed interval: {interval}")
+
+    def _stream_interval(self, interval: DetectionInterval):
+        """Write a single interval to the streaming JSON file."""
+        try:
+            if self._first_interval:
+                self._first_interval = False
+            else:
+                self._json_file.write(',\n')
+
+            interval_json = json.dumps(interval.to_dict())
+            self._json_file.write(f'  {interval_json}')
+            self._json_file.flush()
+        except Exception as e:
+            logger.warning(f"Failed to stream interval: {e}")
+
+    def finalize(self):
+        """
+        Finalize tracking: close open intervals and write output.
+
+        Call this when processing is complete (e.g., in filter shutdown).
+        """
+        # Close any open intervals
+        for label in list(self.open_intervals.keys()):
+            self._close_interval(label)
+
+        logger.info(f"IntervalTracker: {len(self.intervals)} intervals recorded")
+
+        # Finalize streaming file or write batch
+        if self._json_file is not None:
+            try:
+                self._json_file.write(f'\n], "total_frames": {self.frame_count}}}\n')
+                self._json_file.close()
+                logger.info(f"Closed streaming JSON: {self.output_json_path}")
+            except Exception as e:
+                logger.warning(f"Error closing streaming JSON: {e}")
+            self._json_file = None
+        elif self.output_json_path:
+            self._write_intervals()
+
+    def _write_intervals(self):
+        """Write all intervals to JSON file (non-streaming mode)."""
+        try:
+            self.output_json_path.parent.mkdir(parents=True, exist_ok=True)
+            output = {
+                "total_frames": self.frame_count,
+                "intervals": [interval.to_dict() for interval in self.intervals],
+            }
+            with open(self.output_json_path, 'w') as f:
+                json.dump(output, f, indent=2)
+            logger.info(f"Wrote {len(self.intervals)} intervals to {self.output_json_path}")
+        except Exception as e:
+            logger.error(f"Failed to write intervals: {e}")
+
+    def get_intervals(self) -> list[DetectionInterval]:
+        """Get all completed intervals."""
+        return list(self.intervals)
+
+    def get_current_state(self) -> dict[str, dict]:
+        """Get current presence state for all tracked labels."""
+        return {
+            label: {
+                "present": self.tracker.is_present(label),
+                "ema": round(self.tracker.get_ema(label), 4),
+            }
+            for label in self.tracker.ema.keys()
+        }
+
+    def is_present(self, label: str) -> bool:
+        """Check if a label is currently present."""
+        return self.tracker.is_present(label)
+
+    def get_ema(self, label: str) -> float:
+        """Get current EMA value for a label."""
+        return self.tracker.get_ema(label)
+
+
 class TemporalIntervalConfig(FilterConfig):
     """Configuration for temporal interval detection filter."""
 
@@ -298,7 +522,7 @@ class TemporalIntervalFilter(Filter):
         return TemporalIntervalConfig(**config)
 
     def setup(self, config: TemporalIntervalConfig):
-        """Initialize the filter."""
+        """Initialize the filter using reusable IntervalTracker."""
         logger.info(f"TemporalIntervalFilter setup: {config.clean()}")
 
         self.cfg = config
@@ -306,13 +530,6 @@ class TemporalIntervalFilter(Filter):
 
         if self.debug:
             logging.getLogger().setLevel(logging.DEBUG)
-
-        # Initialize dual-EMA tracker
-        self.tracker = EMATracker(
-            half_life=config.half_life,
-            full_decay_life=config.full_decay_life,
-            threshold=config.presence_threshold,
-        )
 
         # Detection input config
         self.detection_key = config.detection_key
@@ -322,31 +539,25 @@ class TemporalIntervalFilter(Filter):
         self.min_confidence = config.min_confidence
 
         # Output config
-        self.output_json_path = Path(config.output_json_path) if config.output_json_path else None
         self.output_key = config.output_key
         self.emit_on_change = config.emit_on_change
         self.emit_on_complete = config.emit_on_complete
 
-        # Interval tracking state
-        self.frame_count = 0
-        self.intervals: list[DetectionInterval] = []
-        self.open_intervals: dict[str, dict] = {}  # label -> {start_frame, confidence_sum, frame_count}
+        # Use reusable IntervalTracker for all tracking logic
+        self.interval_tracker = IntervalTracker(
+            half_life=config.half_life,
+            full_decay_life=config.full_decay_life,
+            presence_threshold=config.presence_threshold,
+            output_json_path=config.output_json_path if config.emit_on_complete else None,
+            streaming_mode=False,  # Standalone filter writes at shutdown
+        )
 
-        logger.info(f"TemporalIntervalFilter initialized with alpha={self.tracker.alpha:.4f}")
+        logger.info(f"TemporalIntervalFilter initialized with alpha={self.interval_tracker.tracker.alpha:.4f}")
 
     def shutdown(self):
         """Clean up and finalize intervals."""
         logger.info("TemporalIntervalFilter shutdown")
-
-        # Close any open intervals
-        for label in list(self.open_intervals.keys()):
-            self._close_interval(label)
-
-        # Write final output
-        if self.emit_on_complete and self.output_json_path:
-            self._write_intervals()
-
-        logger.info(f"TemporalIntervalFilter: {len(self.intervals)} intervals recorded")
+        self.interval_tracker.finalize()
 
     def process(self, frames: dict[str, Frame]) -> dict[str, Frame]:
         """Process frames and track detection intervals."""
@@ -356,8 +567,9 @@ class TemporalIntervalFilter(Filter):
             if frame is None:
                 continue
 
-            self.frame_count += 1
-            current_frame = self._get_frame_id(frame)
+            # Get frame ID from metadata if available
+            meta = frame.data.get('meta', {})
+            frame_id = int(meta['id']) if 'id' in meta else None
 
             # Get detections from frame metadata
             detections = self._get_detections(frame)
@@ -365,35 +577,24 @@ class TemporalIntervalFilter(Filter):
             # Aggregate detections by label
             detected_labels = self._aggregate_detections(detections)
 
-            # Update EMA for all known labels
-            all_labels = set(detected_labels.keys()) | set(self.tracker.ema.keys())
-            state_changes = []
+            # Update tracker and get state changes
+            state_changes = self.interval_tracker.update(detected_labels, frame_id)
 
-            for label in all_labels:
-                detected = label in detected_labels
-                max_score = detected_labels.get(label, 0.0)
-
-                ema, is_present, changed = self.tracker.update(label, detected)
-
-                if changed:
-                    state_changes.append((label, is_present, ema))
-                    self._handle_state_change(label, is_present, current_frame, ema)
-                elif label in self.open_intervals:
-                    # Update running confidence for open interval
-                    self.open_intervals[label]["confidence_sum"] += ema
-                    self.open_intervals[label]["frame_count"] += 1
-
-                if self.debug:
+            if self.debug:
+                current_frame = frame_id or self.interval_tracker.frame_count
+                for label, score in detected_labels.items():
+                    ema = self.interval_tracker.get_ema(label)
+                    is_present = self.interval_tracker.is_present(label)
                     logger.debug(
-                        f"[frame {current_frame}] {label}: detected={detected}, "
-                        f"score={max_score:.3f}, ema={ema:.3f}, present={is_present}"
+                        f"[frame {current_frame}] {label}: detected=True, "
+                        f"score={score:.3f}, ema={ema:.3f}, present={is_present}"
                     )
 
             # Add interval info to frame metadata if state changed
             if state_changes and self.emit_on_change:
                 meta = frame.data.setdefault('meta', {})
                 meta[self.output_key] = {
-                    "frame_id": current_frame,
+                    "frame_id": frame_id or self.interval_tracker.frame_count,
                     "state_changes": [
                         {"label": label, "present": present, "ema": round(ema, 4)}
                         for label, present, ema in state_changes
@@ -403,13 +604,6 @@ class TemporalIntervalFilter(Filter):
             output_frames[topic] = frame
 
         return output_frames
-
-    def _get_frame_id(self, frame: Frame) -> int:
-        """Extract frame ID from frame metadata, or use frame count."""
-        meta = frame.data.get('meta', {})
-        if 'id' in meta:
-            return int(meta['id'])
-        return self.frame_count
 
     def _get_detections(self, frame: Frame) -> list[dict]:
         """Extract detections from frame metadata."""
@@ -449,80 +643,13 @@ class TemporalIntervalFilter(Filter):
 
         return label_scores
 
-    def _handle_state_change(self, label: str, is_present: bool, frame_id: int, ema: float):
-        """Handle a state transition for a label."""
-        if is_present:
-            # Start new interval
-            self.open_intervals[label] = {
-                "start_frame": frame_id,
-                "confidence_sum": ema,
-                "frame_count": 1,
-                "present": True,
-            }
-        else:
-            # Close existing interval and start absence interval
-            self._close_interval(label)
-            self.open_intervals[label] = {
-                "start_frame": frame_id,
-                "confidence_sum": ema,
-                "frame_count": 1,
-                "present": False,
-            }
-
-    def _close_interval(self, label: str):
-        """Close an open interval and add to completed intervals."""
-        if label not in self.open_intervals:
-            return
-
-        info = self.open_intervals.pop(label)
-        avg_confidence = info["confidence_sum"] / max(1, info["frame_count"])
-
-        interval = DetectionInterval(
-            start_frame=info["start_frame"],
-            end_frame=self.frame_count,
-            label=label,
-            present=info["present"],
-            confidence=avg_confidence,
-        )
-        self.intervals.append(interval)
-
-        if self.debug:
-            logger.debug(f"Closed interval: {interval}")
-
-    def _write_intervals(self):
-        """Write intervals to JSON file."""
-        if not self.output_json_path:
-            return
-
-        try:
-            self.output_json_path.parent.mkdir(parents=True, exist_ok=True)
-
-            output = {
-                "total_frames": self.frame_count,
-                "intervals": [interval.to_dict() for interval in self.intervals],
-            }
-
-            with open(self.output_json_path, 'w') as f:
-                json.dump(output, f, indent=2)
-
-            logger.info(f"Wrote {len(self.intervals)} intervals to {self.output_json_path}")
-
-        except Exception as e:
-            logger.error(f"Failed to write intervals: {e}")
-
     def get_intervals(self) -> list[DetectionInterval]:
         """Get all completed intervals (for programmatic access)."""
-        return list(self.intervals)
+        return self.interval_tracker.get_intervals()
 
     def get_current_state(self) -> dict[str, dict]:
         """Get current presence state for all tracked labels."""
-        return {
-            label: {
-                "present": self.tracker.is_present(label),
-                "ema": round(self.tracker.get_ema(label), 4),
-            }
-            for label in self.tracker.ema.keys()
-        }
+        return self.interval_tracker.get_current_state()
 
 
 if __name__ == "__main__":
