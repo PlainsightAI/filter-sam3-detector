@@ -142,16 +142,28 @@ class EMATracker:
 
         self.threshold = threshold
 
-        # Fast EMA state (primary signal)
-        self.ema: dict[str, float] = {}  # label -> current fast EMA value
+        # Fast EMA state (primary signal) - stores RAW (biased) EMA values
+        self._ema_raw: dict[str, float] = {}  # label -> raw fast EMA value
+        self.ema: dict[str, float] = {}  # label -> debiased fast EMA value (for external access)
         self.current_state: dict[str, bool] = {}  # label -> is_present (confirmed state)
 
-        # Slow EMA state (for crossing detection)
-        self._slow_ema: dict[str, float] = {}  # label -> current slow EMA value
+        # Slow EMA state (for crossing detection) - stores RAW (biased) EMA values
+        self._slow_ema_raw: dict[str, float] = {}  # label -> raw slow EMA value
+        self._slow_ema: dict[str, float] = {}  # label -> debiased slow EMA value
+
+        # Bias correction factors: (1 - alpha)^t for each label
+        self._fast_bias: dict[str, float] = {}  # label -> (1 - alpha_fast)^t
+        self._slow_bias: dict[str, float] = {}  # label -> (1 - alpha_slow)^t
 
     def update(self, label: str, detected: bool) -> tuple[float, bool, bool]:
         """
         Update EMA for a label and return current state.
+
+        Uses debiased EMA to avoid initial bias toward 0. The debiasing formula is:
+            ema_debiased = ema_raw / (1 - (1 - alpha)^t)
+
+        This ensures the first observation is accurately reflected (EMA = 1.0 for
+        first detection, EMA = 0.0 for first non-detection).
 
         Args:
             label: Detection class label
@@ -159,36 +171,60 @@ class EMATracker:
 
         Returns:
             Tuple of (fast_ema_value, is_present, state_changed)
-            - fast_ema_value: The fast EMA signal value
-            - is_present: State based on slow EMA crossing threshold
+            - fast_ema_value: The debiased fast EMA signal value
+            - is_present: State based on debiased slow EMA crossing threshold
             - state_changed: Whether state changed this frame
         """
         value = 1.0 if detected else 0.0
 
-        if label not in self.ema:
-            # Initialize both EMAs
-            self.ema[label] = value
-            self._slow_ema[label] = value
-            self.current_state[label] = value >= self.threshold
-            return self.ema[label], self.current_state[label], True
+        if label not in self._ema_raw:
+            # Initialize both EMAs - first observation gets value directly
+            self._ema_raw[label] = self.alpha_fast * value
+            self._slow_ema_raw[label] = self.alpha_slow * value
 
-        # Update fast EMA (for signal value)
-        prev_fast_ema = self.ema[label]
-        new_fast_ema = self.alpha_fast * value + (1 - self.alpha_fast) * prev_fast_ema
-        self.ema[label] = new_fast_ema
+            # Initialize bias correction factors
+            self._fast_bias[label] = 1 - self.alpha_fast
+            self._slow_bias[label] = 1 - self.alpha_slow
 
-        # Update slow EMA (for crossing detection)
-        prev_slow_ema = self._slow_ema[label]
-        new_slow_ema = self.alpha_slow * value + (1 - self.alpha_slow) * prev_slow_ema
-        self._slow_ema[label] = new_slow_ema
+            # Debiased values for first frame
+            debiased_fast = value  # First frame: raw / (1 - bias) = alpha*v / alpha = v
+            debiased_slow = value
 
-        # State is determined by slow EMA crossing threshold
+            self.ema[label] = debiased_fast
+            self._slow_ema[label] = debiased_slow
+            self.current_state[label] = debiased_slow >= self.threshold
+
+            return debiased_fast, self.current_state[label], True
+
+        # Update raw fast EMA
+        prev_fast_raw = self._ema_raw[label]
+        new_fast_raw = self.alpha_fast * value + (1 - self.alpha_fast) * prev_fast_raw
+        self._ema_raw[label] = new_fast_raw
+
+        # Update raw slow EMA
+        prev_slow_raw = self._slow_ema_raw[label]
+        new_slow_raw = self.alpha_slow * value + (1 - self.alpha_slow) * prev_slow_raw
+        self._slow_ema_raw[label] = new_slow_raw
+
+        # Update bias correction factors: bias_t = (1 - alpha)^t
+        self._fast_bias[label] *= (1 - self.alpha_fast)
+        self._slow_bias[label] *= (1 - self.alpha_slow)
+
+        # Compute debiased EMAs: debiased = raw / (1 - bias)
+        debiased_fast = new_fast_raw / (1 - self._fast_bias[label])
+        debiased_slow = new_slow_raw / (1 - self._slow_bias[label])
+
+        # Store debiased values
+        self.ema[label] = debiased_fast
+        self._slow_ema[label] = debiased_slow
+
+        # State is determined by debiased slow EMA crossing threshold
         prev_state = self.current_state[label]
-        new_state = new_slow_ema >= self.threshold
+        new_state = debiased_slow >= self.threshold
         state_changed = prev_state != new_state
         self.current_state[label] = new_state
 
-        return new_fast_ema, new_state, state_changed
+        return debiased_fast, new_state, state_changed
 
     def get_ema(self, label: str) -> float:
         """Get current fast EMA value for a label."""
@@ -217,8 +253,12 @@ class EMATracker:
 
     def reset(self):
         """Reset all tracking state."""
+        self._ema_raw.clear()
         self.ema.clear()
+        self._slow_ema_raw.clear()
         self._slow_ema.clear()
+        self._fast_bias.clear()
+        self._slow_bias.clear()
         self.current_state.clear()
 
 
@@ -240,8 +280,7 @@ class IntervalTracker:
         half_life: Frames for 50% EMA decay (fast signal)
         full_decay_life: Frames for ~99.3% EMA decay (slow crossing)
         presence_threshold: EMA threshold for presence detection
-        output_json_path: Optional path for JSON output
-        streaming_mode: If True, write intervals incrementally
+        output_json_path: Optional path for JSON output (streaming)
         on_interval_closed: Optional callback(interval) when interval closes
     """
 
@@ -251,7 +290,6 @@ class IntervalTracker:
         full_decay_life: Optional[float] = None,
         presence_threshold: float = 0.5,
         output_json_path: Optional[str] = None,
-        streaming_mode: bool = False,
         on_interval_closed: Optional[callable] = None,
     ):
         self.tracker = EMATracker(
@@ -261,7 +299,6 @@ class IntervalTracker:
         )
 
         self.output_json_path = Path(output_json_path) if output_json_path else None
-        self.streaming_mode = streaming_mode
         self.on_interval_closed = on_interval_closed
 
         # Interval tracking state
@@ -271,18 +308,14 @@ class IntervalTracker:
 
         # Streaming file handle
         self._json_file = None
-        self._first_interval = True
 
-        if self.output_json_path and self.streaming_mode:
+        if self.output_json_path:
             self._open_streaming_file()
 
     def _open_streaming_file(self):
-        """Open streaming JSON file and write header."""
+        """Open streaming JSON file (ndjson format - one interval per line)."""
         self.output_json_path.parent.mkdir(parents=True, exist_ok=True)
         self._json_file = open(self.output_json_path, 'w')
-        self._json_file.write('{"intervals": [\n')
-        self._json_file.flush()
-        self._first_interval = True
         logger.info(f"Streaming intervals to: {self.output_json_path}")
 
     def update(self, detected_labels: dict[str, float], frame_id: Optional[int] = None) -> list[tuple[str, bool, float]]:
@@ -366,56 +399,35 @@ class IntervalTracker:
         logger.debug(f"Closed interval: {interval}")
 
     def _stream_interval(self, interval: DetectionInterval):
-        """Write a single interval to the streaming JSON file."""
+        """Write a single interval to the streaming ndjson file."""
         try:
-            if self._first_interval:
-                self._first_interval = False
-            else:
-                self._json_file.write(',\n')
-
             interval_json = json.dumps(interval.to_dict())
-            self._json_file.write(f'  {interval_json}')
+            self._json_file.write(f'{interval_json}\n')
             self._json_file.flush()
         except Exception as e:
             logger.warning(f"Failed to stream interval: {e}")
 
     def finalize(self):
         """
-        Finalize tracking: close open intervals and write output.
+        Finalize tracking: close open intervals and close output file.
 
         Call this when processing is complete (e.g., in filter shutdown).
+        Output is ndjson format - each line is a complete JSON object.
         """
         # Close any open intervals
         for label in list(self.open_intervals.keys()):
             self._close_interval(label)
 
-        logger.info(f"IntervalTracker: {len(self.intervals)} intervals recorded")
+        logger.info(f"IntervalTracker: {len(self.intervals)} intervals recorded over {self.frame_count} frames")
 
-        # Finalize streaming file or write batch
+        # Close streaming file (no footer needed - ndjson format)
         if self._json_file is not None:
             try:
-                self._json_file.write(f'\n], "total_frames": {self.frame_count}}}\n')
                 self._json_file.close()
-                logger.info(f"Closed streaming JSON: {self.output_json_path}")
+                logger.info(f"Closed streaming ndjson: {self.output_json_path}")
             except Exception as e:
-                logger.warning(f"Error closing streaming JSON: {e}")
+                logger.warning(f"Error closing streaming file: {e}")
             self._json_file = None
-        elif self.output_json_path:
-            self._write_intervals()
-
-    def _write_intervals(self):
-        """Write all intervals to JSON file (non-streaming mode)."""
-        try:
-            self.output_json_path.parent.mkdir(parents=True, exist_ok=True)
-            output = {
-                "total_frames": self.frame_count,
-                "intervals": [interval.to_dict() for interval in self.intervals],
-            }
-            with open(self.output_json_path, 'w') as f:
-                json.dump(output, f, indent=2)
-            logger.info(f"Wrote {len(self.intervals)} intervals to {self.output_json_path}")
-        except Exception as e:
-            logger.error(f"Failed to write intervals: {e}")
 
     def get_intervals(self) -> list[DetectionInterval]:
         """Get all completed intervals."""
@@ -466,6 +478,11 @@ class TemporalIntervalConfig(FilterConfig):
     emit_on_change: bool = True  # Emit interval data on state changes
     emit_on_complete: bool = True  # Emit all intervals on filter shutdown
 
+    # Event sink integration
+    # When enabled, emits state changes on a dedicated 'events' topic for filter-event-sink
+    emit_event_topic: bool = False  # Emit events on dedicated topic for event sink
+    event_topic_name: str = "events"  # Topic name for event emission
+
     # Debug
     debug: bool = False
 
@@ -507,6 +524,8 @@ class TemporalIntervalFilter(Filter):
             config['emit_on_change'] = config['emit_on_change'].lower() in ('true', '1', 'yes')
         if isinstance(config.get('emit_on_complete'), str):
             config['emit_on_complete'] = config['emit_on_complete'].lower() in ('true', '1', 'yes')
+        if isinstance(config.get('emit_event_topic'), str):
+            config['emit_event_topic'] = config['emit_event_topic'].lower() in ('true', '1', 'yes')
         if isinstance(config.get('debug'), str):
             config['debug'] = config['debug'].lower() in ('true', '1', 'yes')
 
@@ -542,6 +561,8 @@ class TemporalIntervalFilter(Filter):
         self.output_key = config.output_key
         self.emit_on_change = config.emit_on_change
         self.emit_on_complete = config.emit_on_complete
+        self.emit_event_topic = config.emit_event_topic
+        self.event_topic_name = config.event_topic_name
 
         # Use reusable IntervalTracker for all tracking logic
         self.interval_tracker = IntervalTracker(
@@ -549,7 +570,6 @@ class TemporalIntervalFilter(Filter):
             full_decay_life=config.full_decay_life,
             presence_threshold=config.presence_threshold,
             output_json_path=config.output_json_path if config.emit_on_complete else None,
-            streaming_mode=False,  # Standalone filter writes at shutdown
         )
 
         logger.info(f"TemporalIntervalFilter initialized with alpha={self.interval_tracker.tracker.alpha:.4f}")
@@ -592,14 +612,23 @@ class TemporalIntervalFilter(Filter):
 
             # Add interval info to frame metadata if state changed
             if state_changes and self.emit_on_change:
-                meta = frame.data.setdefault('meta', {})
-                meta[self.output_key] = {
-                    "frame_id": frame_id or self.interval_tracker.frame_count,
+                current_frame_id = frame_id or self.interval_tracker.frame_count
+                state_change_data = {
+                    "frame_id": current_frame_id,
                     "state_changes": [
                         {"label": label, "present": present, "ema": round(ema, 4)}
                         for label, present, ema in state_changes
                     ],
                 }
+
+                # Add to frame metadata (for downstream filters)
+                meta = frame.data.setdefault('meta', {})
+                meta[self.output_key] = state_change_data
+
+                # Emit on dedicated event topic for filter-event-sink
+                if self.emit_event_topic:
+                    event_frame = Frame(data=state_change_data)
+                    output_frames[self.event_topic_name] = event_frame
 
             output_frames[topic] = frame
 
