@@ -1,5 +1,8 @@
 # Docker build for filter-sam3-detector
-# Triggers: push to main, tag v*
+# Triggers: tag v*, tag *-dev
+#
+# - Version tags (v*): Push to Docker Hub as release images
+# - Dev tags (*-dev): Push to GAR for development/testing
 #
 # Secrets required in GCP Secret Manager:
 #   - dockerhub-username
@@ -8,6 +11,7 @@
 
 substitutions:
   _DOCKERHUB_REPO: plainsightai/openfilter-sam3-detector
+  _GAR_REPO: us-west1-docker.pkg.dev/plainsightai-dev/sam3-builds/filter-sam3-detector
 
 availableSecrets:
   secretManager:
@@ -26,7 +30,6 @@ steps:
       - '-c'
       - |
         set -e
-        echo "$$DOCKERHUB_TOKEN" | docker login -u "$$DOCKERHUB_USERNAME" --password-stdin
 
         # Read version from VERSION file
         VERSION=$(cat VERSION | tr -d '[:space:]')
@@ -35,21 +38,32 @@ steps:
         echo "$$HF_TOKEN" > /tmp/hf_token
         DOCKER_BUILDKIT=1 docker build \
           --secret id=hf_token,src=/tmp/hf_token \
-          -t ${_DOCKERHUB_REPO}:${SHORT_SHA} \
+          -t build:${SHORT_SHA} \
           .
         rm /tmp/hf_token
 
-        # Tag and push
+        # Tag and push based on trigger type
         if [[ "${TAG_NAME}" =~ ^v ]]; then
-          echo "Version tag build: ${TAG_NAME}"
-          docker tag ${_DOCKERHUB_REPO}:${SHORT_SHA} ${_DOCKERHUB_REPO}:$${VERSION}
-          docker tag ${_DOCKERHUB_REPO}:${SHORT_SHA} ${_DOCKERHUB_REPO}:latest
+          # Version tag: push to Docker Hub
+          echo "Version tag build: ${TAG_NAME} -> Docker Hub"
+          echo "$$DOCKERHUB_TOKEN" | docker login -u "$$DOCKERHUB_USERNAME" --password-stdin
+
+          docker tag build:${SHORT_SHA} ${_DOCKERHUB_REPO}:$${VERSION}
+          docker tag build:${SHORT_SHA} ${_DOCKERHUB_REPO}:latest
           docker push ${_DOCKERHUB_REPO}:$${VERSION}
           docker push ${_DOCKERHUB_REPO}:latest
+        elif [[ "${TAG_NAME}" =~ -dev$ ]]; then
+          # Dev tag (*-dev): push to GAR
+          echo "Dev tag build: ${TAG_NAME} -> GAR"
+          gcloud auth configure-docker us-west1-docker.pkg.dev --quiet
+
+          docker tag build:${SHORT_SHA} ${_GAR_REPO}:${TAG_NAME}
+          docker tag build:${SHORT_SHA} ${_GAR_REPO}:${SHORT_SHA}
+          docker push ${_GAR_REPO}:${TAG_NAME}
+          docker push ${_GAR_REPO}:${SHORT_SHA}
         else
-          echo "Main branch build: SHA ${SHORT_SHA}"
+          echo "Unknown tag pattern: ${TAG_NAME} - skipping push"
         fi
-        docker push ${_DOCKERHUB_REPO}:${SHORT_SHA}
 
 options:
   machineType: 'E2_HIGHCPU_8'
