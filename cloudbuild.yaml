@@ -42,6 +42,11 @@ steps:
           .
         rm /tmp/hf_token
 
+        # Helper function to compare semver (returns 0 if $1 >= $2)
+        version_gte() {
+          printf '%s\n%s' "$1" "$2" | sort -V -C
+        }
+
         # Tag and push based on trigger type
         if [[ "${TAG_NAME}" =~ ^v ]]; then
           # Version tag: push to Docker Hub
@@ -49,9 +54,22 @@ steps:
           echo "$$DOCKERHUB_TOKEN" | docker login -u "$$DOCKERHUB_USERNAME" --password-stdin
 
           docker tag build:${SHORT_SHA} ${_DOCKERHUB_REPO}:$${VERSION}
-          docker tag build:${SHORT_SHA} ${_DOCKERHUB_REPO}:latest
           docker push ${_DOCKERHUB_REPO}:$${VERSION}
-          docker push ${_DOCKERHUB_REPO}:latest
+
+          # Only update 'latest' if this version >= current latest
+          LATEST_VERSION=$(curl -s "https://hub.docker.com/v2/repositories/${_DOCKERHUB_REPO}/tags/latest" | grep -o '"name":"[^"]*"' | head -1 | cut -d'"' -f4 || echo "0.0.0")
+          # Get the actual version that 'latest' points to by checking digest
+          CURRENT_LATEST=$(curl -s "https://hub.docker.com/v2/repositories/${_DOCKERHUB_REPO}/tags?page_size=100" | \
+            grep -o '"name":"[0-9]*\.[0-9]*\.[0-9]*"' | cut -d'"' -f4 | sort -V | tail -1 || echo "0.0.0")
+
+          echo "Current version: $${VERSION}, Latest published: $${CURRENT_LATEST}"
+          if version_gte "$${VERSION}" "$${CURRENT_LATEST}"; then
+            echo "Version $${VERSION} >= $${CURRENT_LATEST}, updating 'latest' tag"
+            docker tag build:${SHORT_SHA} ${_DOCKERHUB_REPO}:latest
+            docker push ${_DOCKERHUB_REPO}:latest
+          else
+            echo "Version $${VERSION} < $${CURRENT_LATEST}, skipping 'latest' tag update"
+          fi
         elif [[ "${TAG_NAME}" =~ -dev$ ]]; then
           # Dev tag (*-dev): push to GAR
           echo "Dev tag build: ${TAG_NAME} -> GAR"
