@@ -11,7 +11,7 @@
 
 substitutions:
   _DOCKERHUB_REPO: plainsightai/openfilter-sam3-detector
-  _GAR_REPO: us-west1-docker.pkg.dev/plainsightai-dev/sam3-builds/filter-sam3-detector
+  _GAR_REPO: us-west1-docker.pkg.dev/plainsightai-dev/oci/filter-sam3-detector
 
 availableSecrets:
   secretManager:
