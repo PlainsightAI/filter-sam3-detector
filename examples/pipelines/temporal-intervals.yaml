@@ -15,6 +15,7 @@
 #      - Fast EMA (half_life): Quick response for signal value
 #      - Slow EMA (full_decay_life): Stable threshold crossing detection
 #   3. State changes (present->absent, absent->present) create intervals
+#   4. (Optional) EventSink publishes state changes to CloudEvents API
 #
 # EMA Parameters:
 #   - half_life: Frames for 50% signal decay (fast EMA)
@@ -25,10 +26,9 @@
 #
 # Output Format (in frame.data['meta']['temporal_intervals']):
 #   {
-#     "current_state": {"foreground": true},
-#     "ema_values": {"foreground": 0.85},
-#     "intervals": [
-#       {"label": "foreground", "present": true, "start_frame": 0, "end_frame": null, "confidence": 0.92}
+#     "frame_id": 123,
+#     "state_changes": [
+#       {"label": "foreground", "present": true, "ema": 0.92}
 #     ]
 #   }
 #
@@ -37,12 +37,15 @@
 #
 # With custom EMA settings:
 #   HALF_LIFE=10 FULL_DECAY_LIFE=60 docker compose -f examples/pipelines/temporal-intervals.yaml up
+#
+# With event sink (requires FILTER_API_ENDPOINT and FILTER_API_TOKEN):
+#   FILTER_API_ENDPOINT=https://api.example.com/events FILTER_API_TOKEN=xxx \
+#     docker compose -f examples/pipelines/temporal-intervals.yaml --profile event-sink up
 
 services:
   video_in:
     image: containers.openfilter.io/plainsightai/openfilter-video-in:v0.1.10
     environment:
-      LOG_LEVEL: ${LOG_LEVEL:-}
       FILTER_ID: VideoIn
       FILTER_SOURCES: file:///video.mp4!sync!loop
       FILTER_OUTPUTS: tcp://*
@@ -50,9 +53,9 @@ services:
       - ${VIDEO_PATH:-../../data/sample.mp4}:/video.mp4:ro
 
   sam3_detector:
-    image: plainsightai/openfilter-sam3-detector:latest
+    image: ${SAM3_IMAGE:-filter-sam3-detector:local}
     environment:
-      LOG_LEVEL: ${LOG_LEVEL:-}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
       FILTER_ID: SAM3Detector
       FILTER_SOURCES: tcp://video_in
       FILTER_OUTPUTS: tcp://*
@@ -73,10 +76,10 @@ services:
               capabilities: [gpu]
 
   temporal_intervals:
-    image: plainsightai/openfilter-sam3-detector:latest
+    image: ${SAM3_IMAGE:-filter-sam3-detector:local}
     entrypoint: ["python", "-m", "filter_sam3_detector.temporal_intervals"]
     environment:
-      LOG_LEVEL: ${LOG_LEVEL:-}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
       FILTER_ID: TemporalIntervals
       FILTER_SOURCES: tcp://sam3_detector
       FILTER_OUTPUTS: tcp://*
@@ -97,8 +100,31 @@ services:
       # Output intervals to JSON file for ground truth
       FILTER_OUTPUT_JSON_PATH: ${OUTPUT_JSON:-/app/output/intervals.json}
       FILTER_DEBUG: ${DEBUG:-false}
+      # Event sink integration - emit state changes on dedicated topic
+      FILTER_EMIT_EVENT_TOPIC: ${EMIT_EVENT_TOPIC:-true}
+      FILTER_EVENT_TOPIC_NAME: ${EVENT_TOPIC_NAME:-events}
     volumes:
       - ${OUTPUT_DIR:-../../output}:/app/output
+
+  # Optional: Event Sink filter for publishing to CloudEvents API
+  # Enable with: docker compose --profile event-sink up
+  event_sink:
+    image: ${EVENT_SINK_IMAGE:-filter-event-sink:local}
+    profiles:
+      - event-sink
+    environment:
+      FILTER_ID: EventSink
+      # Subscribe to TemporalIntervals filter's 'events' topic, remap to FilterID__topic format
+      # The ?? creates a doubly ephemeral connection, events>TemporalIntervals__events remaps the topic
+      FILTER_SOURCES: tcp://temporal_intervals??;events>TemporalIntervals__events
+      # API configuration (required when using event-sink profile)
+      FILTER_API_ENDPOINT: ${FILTER_API_ENDPOINT}
+      FILTER_API_TOKEN: ${FILTER_API_TOKEN}
+      # Optional configuration
+      FILTER_API_CUSTOM_HEADERS: ${FILTER_API_CUSTOM_HEADERS:-}
+      FILTER_EVENT_TOPICS: ${FILTER_EVENT_TOPICS:-*}
+      FILTER_FLUSH_INTERVAL_SECONDS: ${FILTER_FLUSH_INTERVAL_SECONDS:-5.0}
+      FILTER_MAX_BATCH_EVENTS: ${FILTER_MAX_BATCH_EVENTS:-1000}
 
   webvis:
     image: containers.openfilter.io/plainsightai/openfilter-webvis:v0.1.10

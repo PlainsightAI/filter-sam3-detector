@@ -114,6 +114,44 @@ Output file format:
 }
 ```
 
+### Event Sink Integration
+
+The temporal intervals pipeline supports publishing state change events to a CloudEvents API via the `filter-event-sink` filter. This enables real-time event streaming to external systems.
+
+**Enable event sink with the `--profile event-sink` flag:**
+
+```bash
+# Required environment variables
+export FILTER_API_ENDPOINT="https://api.example.com/filter-pipelines/my-pipeline/events"
+export FILTER_API_TOKEN="your-api-token"
+
+# Run with event sink enabled
+docker compose -f examples/pipelines/temporal-intervals.yaml --profile event-sink up
+```
+
+**Event format** (published to CloudEvents API):
+```json
+{
+  "frame_id": 123,
+  "state_changes": [
+    {"label": "foreground", "present": true, "ema": 0.92}
+  ]
+}
+```
+
+**Event sink configuration options:**
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `FILTER_API_ENDPOINT` | CloudEvents API endpoint URL (required) | - |
+| `FILTER_API_TOKEN` | API authentication token (required) | - |
+| `FILTER_API_CUSTOM_HEADERS` | Additional HTTP headers | - |
+| `FILTER_EVENT_TOPICS` | Topics to collect events from | `*` |
+| `FILTER_FLUSH_INTERVAL_SECONDS` | Max time between batch flushes | `5.0` |
+| `FILTER_MAX_BATCH_EVENTS` | Max events per batch | `1000` |
+
+The event sink batches events and posts them to the API endpoint with gzip compression. Events are only emitted when state changes occur (presence→absence or absence→presence), not every frame.
+
 ## Environment Variables
 
 Both pipelines support these common variables:

@@ -115,7 +115,7 @@ class TestEMATracker(TestCase):
         self.assertTrue(changed)
 
     def test_ema_decay_without_detection(self):
-        """Test that EMA decays when detection stops."""
+        """Test that debiased EMA decays when detection stops."""
         tracker = EMATracker(half_life=1.0, threshold=0.5)  # Fast decay
 
         # Start with detection - debiased EMA is 1.0 on first frame
@@ -123,20 +123,21 @@ class TestEMATracker(TestCase):
         self.assertAlmostEqual(ema, 1.0, places=2)
         self.assertTrue(is_present)
 
-        # After 1 frame without detection, EMA decays
-        # raw = 0.5*0 + 0.5*0.5 = 0.25, debiased = 0.25 / 0.75 = 0.333
+        # After 1 frame without detection, debiased EMA decays
+        # raw = 0.5*0 + 0.5*(0.5*1) = 0.25, bias = 0.25, debiased = 0.25/0.75 = 0.333
         ema, is_present, _ = tracker.update("person", False)
         self.assertAlmostEqual(ema, 0.333, places=2)
         # Below threshold now
         self.assertFalse(is_present)
 
         # After another frame, continues to decay
+        prev_ema = ema
         ema, is_present, _ = tracker.update("person", False)
-        self.assertLess(ema, 0.333)
+        self.assertLess(ema, prev_ema)  # EMA should decrease
         self.assertFalse(is_present)
 
     def test_ema_rise_with_detection(self):
-        """Test that EMA rises with continued detection."""
+        """Test that debiased EMA rises with continued detection."""
         tracker = EMATracker(half_life=1.0, threshold=0.5)
 
         # Start with no detection - debiased EMA is 0.0
@@ -145,7 +146,7 @@ class TestEMATracker(TestCase):
         self.assertFalse(is_present)
 
         # After 1 frame with detection
-        # raw = 0.5*1 + 0.5*0 = 0.5, debiased = 0.5 / 0.75 = 0.667
+        # raw = 0.5*1 + 0.5*0 = 0.5, bias = 0.25, debiased = 0.5/0.75 = 0.667
         ema, is_present, _ = tracker.update("person", True)
         self.assertAlmostEqual(ema, 0.667, places=2)
         self.assertTrue(is_present)  # Above threshold
@@ -166,7 +167,8 @@ class TestEMATracker(TestCase):
         self.assertFalse(changed)
 
         # Stop detecting - with debiased EMA, decay is faster
-        # Frame 3: raw = 0.5*0 + 0.5*(0.5+0.25) = 0.375, debiased = 0.375 / 0.875 ≈ 0.429
+        # Frame 3: raw = 0.5*0 + 0.5*(0.5+0.25) = 0.375, bias = 0.125
+        # debiased = 0.375 / 0.875 ≈ 0.429
         ema, is_present, changed = tracker.update("person", False)
         self.assertAlmostEqual(ema, 0.429, places=2)
         self.assertFalse(is_present)  # Below threshold with debiased EMA
@@ -262,7 +264,7 @@ class TestDualEMACrossingDetection(TestCase):
         # With debiased EMA, fast drops to ~0.33 after one non-detection
         self.assertLess(fast_ema, 0.5)
 
-        # But slow EMA should be different
+        # Slow EMA should be different (higher since it decays slower)
         slow_ema = tracker.get_slow_ema("person")
         self.assertNotAlmostEqual(slow_ema, fast_ema, places=2)
         self.assertGreater(slow_ema, fast_ema)  # Slow decays slower
@@ -434,9 +436,9 @@ class TestTemporalIntervalFilter(TestCase):
         filter_instance = TemporalIntervalFilter(config=config)
         filter_instance.setup(config)
 
-        self.assertIsNotNone(filter_instance.tracker)
-        self.assertEqual(filter_instance.frame_count, 0)
-        self.assertEqual(len(filter_instance.intervals), 0)
+        self.assertIsNotNone(filter_instance.interval_tracker)
+        self.assertEqual(filter_instance.interval_tracker.frame_count, 0)
+        self.assertEqual(len(filter_instance.interval_tracker.intervals), 0)
 
         filter_instance.shutdown()
 
@@ -457,8 +459,8 @@ class TestTemporalIntervalFilter(TestCase):
         output = filter_instance.process({"main": frame1})
 
         self.assertIn("main", output)
-        self.assertEqual(filter_instance.frame_count, 1)
-        self.assertTrue(filter_instance.tracker.is_present("foreground"))
+        self.assertEqual(filter_instance.interval_tracker.frame_count, 1)
+        self.assertTrue(filter_instance.interval_tracker.is_present("foreground"))
 
         filter_instance.shutdown()
 
@@ -484,12 +486,12 @@ class TestTemporalIntervalFilter(TestCase):
             frame = self._create_frame(detections=[], frame_id=i)
             filter_instance.process({"main": frame})
 
-        self.assertFalse(filter_instance.tracker.is_present("foreground"))
+        self.assertFalse(filter_instance.interval_tracker.is_present("foreground"))
 
         filter_instance.shutdown()
 
         # Should have intervals recorded
-        self.assertGreater(len(filter_instance.intervals), 0)
+        self.assertGreater(len(filter_instance.interval_tracker.intervals), 0)
 
     def test_process_with_label_field(self):
         """Test processing with labeled detections."""
@@ -510,8 +512,8 @@ class TestTemporalIntervalFilter(TestCase):
         )
         filter_instance.process({"main": frame})
 
-        self.assertTrue(filter_instance.tracker.is_present("person"))
-        self.assertTrue(filter_instance.tracker.is_present("car"))
+        self.assertTrue(filter_instance.interval_tracker.is_present("person"))
+        self.assertTrue(filter_instance.interval_tracker.is_present("car"))
 
         filter_instance.shutdown()
 
@@ -531,13 +533,13 @@ class TestTemporalIntervalFilter(TestCase):
         )
         filter_instance.process({"main": frame})
 
-        # Should not register as detected
-        self.assertFalse(filter_instance.tracker.is_present("foreground"))
+        # Should not register as detected (no label tracked at all)
+        self.assertNotIn("foreground", filter_instance.interval_tracker.tracker.ema)
 
         filter_instance.shutdown()
 
     def test_output_json_file(self):
-        """Test writing intervals to JSON file."""
+        """Test writing intervals to ndjson file (one JSON object per line)."""
         with tempfile.TemporaryDirectory() as tmpdir:
             output_path = Path(tmpdir) / "intervals.json"
 
@@ -560,16 +562,27 @@ class TestTemporalIntervalFilter(TestCase):
 
             filter_instance.shutdown()
 
-            # Check output file
+            # Check output file exists
             self.assertTrue(output_path.exists())
 
+            # Parse ndjson format (one JSON object per line)
+            intervals = []
             with open(output_path) as f:
-                data = json.load(f)
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        intervals.append(json.loads(line))
 
-            self.assertIn("intervals", data)
-            self.assertIn("metadata", data)
-            self.assertEqual(data["metadata"]["total_frames"], 10)
-            self.assertGreater(len(data["intervals"]), 0)
+            # Should have at least one interval
+            self.assertGreater(len(intervals), 0)
+
+            # Each interval should have expected fields
+            for interval in intervals:
+                self.assertIn("start_frame", interval)
+                self.assertIn("end_frame", interval)
+                self.assertIn("label", interval)
+                self.assertIn("present", interval)
+                self.assertIn("confidence", interval)
 
     def test_get_current_state(self):
         """Test getting current state of all labels."""
@@ -701,3 +714,299 @@ class TestAssertionCompatibility(TestCase):
 
         # We should have both types
         self.assertGreater(len(presence_intervals) + len(absence_intervals), 0)
+
+
+class TestEventTopicEmission(TestCase):
+    """Test event topic emission for filter-event-sink integration."""
+
+    def test_emit_event_topic_disabled_by_default(self):
+        """Test that event topic emission is disabled by default."""
+        config = TemporalIntervalFilter.normalize_config({
+            'half_life': 1.0,
+        })
+        self.assertFalse(config.emit_event_topic)
+
+    def test_emit_event_topic_enabled(self):
+        """Test enabling event topic emission via config."""
+        config = TemporalIntervalFilter.normalize_config({
+            'half_life': 1.0,
+            'emit_event_topic': True,
+        })
+        self.assertTrue(config.emit_event_topic)
+
+    def test_emit_event_topic_string_conversion(self):
+        """Test that string 'true' is converted to boolean."""
+        config = TemporalIntervalFilter.normalize_config({
+            'half_life': 1.0,
+            'emit_event_topic': 'true',
+        })
+        self.assertTrue(config.emit_event_topic)
+
+        config2 = TemporalIntervalFilter.normalize_config({
+            'half_life': 1.0,
+            'emit_event_topic': 'false',
+        })
+        self.assertFalse(config2.emit_event_topic)
+
+    def test_custom_event_topic_name(self):
+        """Test custom event topic name configuration."""
+        config = TemporalIntervalFilter.normalize_config({
+            'half_life': 1.0,
+            'emit_event_topic': True,
+            'event_topic_name': 'custom_events',
+        })
+        self.assertEqual(config.event_topic_name, 'custom_events')
+
+    def test_event_topic_emitted_on_state_change(self):
+        """Test that event topic frame is emitted when state changes."""
+        config = TemporalIntervalFilter.normalize_config({
+            'half_life': 1.0,
+            'emit_event_topic': True,
+            'event_topic_name': 'events',
+        })
+        filter_instance = TemporalIntervalFilter(config=config)
+        filter_instance.setup(config)
+
+        image = np.zeros((100, 100, 3), dtype=np.uint8)
+
+        # First frame with detection - should trigger state change (absent -> present)
+        frame = Frame(image, {"meta": {"id": 1, "sam3_detections": [{"score": 0.9}]}}, 'BGR')
+        output = filter_instance.process({"main": frame})
+
+        # Should have both the main topic and the events topic
+        self.assertIn("main", output)
+        self.assertIn("events", output)
+
+        # Events topic should have state change data
+        events_frame = output["events"]
+        self.assertIsNotNone(events_frame.data)
+        self.assertIn("frame_id", events_frame.data)
+        self.assertIn("state_changes", events_frame.data)
+        self.assertEqual(len(events_frame.data["state_changes"]), 1)
+        self.assertEqual(events_frame.data["state_changes"][0]["label"], "foreground")
+        self.assertTrue(events_frame.data["state_changes"][0]["present"])
+
+        filter_instance.shutdown()
+
+    def test_no_event_topic_when_no_state_change(self):
+        """Test that event topic is not emitted when there's no state change."""
+        config = TemporalIntervalFilter.normalize_config({
+            'half_life': 1.0,
+            'emit_event_topic': True,
+        })
+        filter_instance = TemporalIntervalFilter(config=config)
+        filter_instance.setup(config)
+
+        image = np.zeros((100, 100, 3), dtype=np.uint8)
+
+        # First frame triggers state change
+        frame1 = Frame(image, {"meta": {"id": 1, "sam3_detections": [{"score": 0.9}]}}, 'BGR')
+        filter_instance.process({"main": frame1})
+
+        # Second frame with same detection - no state change
+        frame2 = Frame(image, {"meta": {"id": 2, "sam3_detections": [{"score": 0.9}]}}, 'BGR')
+        output2 = filter_instance.process({"main": frame2})
+
+        # Should only have main topic, not events
+        self.assertIn("main", output2)
+        self.assertNotIn("events", output2)
+
+        filter_instance.shutdown()
+
+    def test_event_topic_not_emitted_when_disabled(self):
+        """Test that event topic is not emitted when emit_event_topic is False."""
+        config = TemporalIntervalFilter.normalize_config({
+            'half_life': 1.0,
+            'emit_event_topic': False,
+        })
+        filter_instance = TemporalIntervalFilter(config=config)
+        filter_instance.setup(config)
+
+        image = np.zeros((100, 100, 3), dtype=np.uint8)
+
+        # Frame with detection - state change but emit_event_topic is False
+        frame = Frame(image, {"meta": {"id": 1, "sam3_detections": [{"score": 0.9}]}}, 'BGR')
+        output = filter_instance.process({"main": frame})
+
+        # Should only have main topic
+        self.assertIn("main", output)
+        self.assertNotIn("events", output)
+
+        # But state change should still be in metadata
+        self.assertIn("temporal_intervals", output["main"].data["meta"])
+
+        filter_instance.shutdown()
+
+    def test_event_topic_format_for_event_sink(self):
+        """Test that event topic data format is compatible with filter-event-sink."""
+        config = TemporalIntervalFilter.normalize_config({
+            'half_life': 1.0,
+            'emit_event_topic': True,
+        })
+        filter_instance = TemporalIntervalFilter(config=config)
+        filter_instance.setup(config)
+
+        image = np.zeros((100, 100, 3), dtype=np.uint8)
+
+        # Trigger presence state
+        frame = Frame(image, {"meta": {"id": 42, "sam3_detections": [{"score": 0.95}]}}, 'BGR')
+        output = filter_instance.process({"main": frame})
+
+        events_data = output["events"].data
+
+        # Verify format expected by filter-event-sink:
+        # The data should be a dict that can be directly used as event payload
+        self.assertIsInstance(events_data, dict)
+        self.assertIn("frame_id", events_data)
+        self.assertIn("state_changes", events_data)
+
+        # frame_id should be the actual frame ID
+        self.assertEqual(events_data["frame_id"], 42)
+
+        # state_changes should be a list of dicts with label, present, ema
+        self.assertIsInstance(events_data["state_changes"], list)
+        for change in events_data["state_changes"]:
+            self.assertIn("label", change)
+            self.assertIn("present", change)
+            self.assertIn("ema", change)
+            self.assertIsInstance(change["ema"], float)
+
+        filter_instance.shutdown()
+
+
+class TestEventSinkIntegration(TestCase):
+    """Integration tests simulating the full event sink pipeline flow."""
+
+    def test_event_sink_extraction_simulation(self):
+        """
+        Simulate the full pipeline: temporal filter -> event sink extraction.
+
+        This test verifies that the event data emitted by TemporalIntervalFilter
+        is correctly formatted for filter-event-sink's _extract_events method.
+        """
+        # Setup temporal filter with event emission enabled
+        config = TemporalIntervalFilter.normalize_config({
+            'half_life': 1.0,
+            'emit_event_topic': True,
+            'event_topic_name': 'events',
+        })
+        filter_instance = TemporalIntervalFilter(config=config)
+        filter_instance.setup(config)
+
+        image = np.zeros((100, 100, 3), dtype=np.uint8)
+
+        # Trigger a state change (absent -> present)
+        frame = Frame(image, {"meta": {"id": 100, "sam3_detections": [{"score": 0.9}]}}, 'BGR')
+        output = filter_instance.process({"main": frame})
+
+        # Verify events topic was emitted
+        self.assertIn("events", output)
+        events_frame = output["events"]
+
+        # --- Simulate event sink receiving the frame ---
+        # In the real pipeline, the topic would be remapped:
+        # tcp://temporal_intervals??;events>TemporalIntervals__events
+        # So event sink sees: {"TemporalIntervals__events": events_frame}
+
+        remapped_topic = "TemporalIntervals__events"
+        frames_at_event_sink = {remapped_topic: events_frame}
+
+        # Simulate event sink's _extract_events logic
+        extracted_events = []
+        for topic, frame in frames_at_event_sink.items():
+            if not frame.data:
+                continue
+
+            topic_parts = topic.split('__')
+            source_filter_name = topic_parts[0]
+            source_topic = 'main'
+            if len(topic_parts) > 1:
+                source_topic = topic_parts[1]
+
+            extracted_events.append({
+                'filter_name': source_filter_name,
+                'topic': source_topic,
+                'data': frame.data,
+            })
+
+        # Verify extraction worked correctly
+        self.assertEqual(len(extracted_events), 1)
+        event = extracted_events[0]
+
+        # Check filter name extracted from topic prefix
+        self.assertEqual(event['filter_name'], 'TemporalIntervals')
+
+        # Check topic extracted from suffix
+        self.assertEqual(event['topic'], 'events')
+
+        # Check data structure
+        self.assertIn('frame_id', event['data'])
+        self.assertEqual(event['data']['frame_id'], 100)
+        self.assertIn('state_changes', event['data'])
+        self.assertEqual(len(event['data']['state_changes']), 1)
+        self.assertEqual(event['data']['state_changes'][0]['label'], 'foreground')
+        self.assertTrue(event['data']['state_changes'][0]['present'])
+
+        filter_instance.shutdown()
+
+    def test_multiple_state_changes_extraction(self):
+        """Test extraction of multiple state changes across frames."""
+        config = TemporalIntervalFilter.normalize_config({
+            'half_life': 1.0,
+            'emit_event_topic': True,
+            'label_field': 'class',  # Use class field for multi-label tracking
+        })
+        filter_instance = TemporalIntervalFilter(config=config)
+        filter_instance.setup(config)
+
+        image = np.zeros((100, 100, 3), dtype=np.uint8)
+
+        # Frame with multiple classes detected
+        detections = [
+            {"class": "person", "score": 0.9},
+            {"class": "car", "score": 0.85},
+        ]
+        frame = Frame(image, {"meta": {"id": 1, "sam3_detections": detections}}, 'BGR')
+        output = filter_instance.process({"main": frame})
+
+        self.assertIn("events", output)
+        events_data = output["events"].data
+
+        # Should have state changes for both labels
+        self.assertEqual(len(events_data["state_changes"]), 2)
+        labels = {sc["label"] for sc in events_data["state_changes"]}
+        self.assertEqual(labels, {"person", "car"})
+
+        # All should be present=True (first detection)
+        for sc in events_data["state_changes"]:
+            self.assertTrue(sc["present"])
+
+        filter_instance.shutdown()
+
+    def test_no_event_when_no_state_change(self):
+        """Verify no events emitted when state doesn't change."""
+        config = TemporalIntervalFilter.normalize_config({
+            'half_life': 1.0,
+            'emit_event_topic': True,
+        })
+        filter_instance = TemporalIntervalFilter(config=config)
+        filter_instance.setup(config)
+
+        image = np.zeros((100, 100, 3), dtype=np.uint8)
+
+        # First frame - triggers state change
+        frame1 = Frame(image, {"meta": {"id": 1, "sam3_detections": [{"score": 0.9}]}}, 'BGR')
+        output1 = filter_instance.process({"main": frame1})
+        self.assertIn("events", output1)
+
+        # Second frame with same detection - no state change
+        frame2 = Frame(image, {"meta": {"id": 2, "sam3_detections": [{"score": 0.9}]}}, 'BGR')
+        output2 = filter_instance.process({"main": frame2})
+
+        # Should NOT have events topic (no state change)
+        self.assertNotIn("events", output2)
+
+        # Event sink would receive empty frames dict for this frame
+        # This is correct - only emit events on state changes
+
+        filter_instance.shutdown()
