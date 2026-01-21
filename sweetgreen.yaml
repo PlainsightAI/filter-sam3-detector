@@ -1,16 +1,46 @@
-# SAM3 detector for Sweetgreen-style ingredient detection
-# Outputs event-sink compatible NDJSON for offline analysis
+# SAM3 detector integration with Sweetgreen pipeline
+# Substitutes protege model filters with SAM3, keeps aggregator intact
+#
+# This tests that SAM3's protege-compatible output format works with the real
+# sweetgreen aggregator and downstream components. It's designed to "rhyme"
+# with the production topology in external-sweetgreen/scripts/docker-compose.prod.yaml
+#
+# Architecture:
+#   SUBSTITUTED (protege models -> single SAM3):
+#     - filter-bowl-detector (bowl detection)
+#     - filter-chit-detector (chit detection)
+#     - filter_protege_bowl (ingredient classification)
+#     - filter_protege_dressing_cups (dressing detection)
+#     - filter_crop (not needed - SAM3 detects on full frame)
+#     - filter_sweetgreen_ocr (not needed for integration test)
+#
+#   KEPT (real production components):
+#     - video_in (with _filter topic support for frame ID propagation)
+#     - filter_sweet_green_subject_data_aggregator <-- KEY: tests protege format compatibility
+#     - webvis
 #
 # Usage:
-#   1. Build local image: HF_TOKEN=$(gcloud secrets versions access latest --secret=sam3-hf-token --project=plainsightai-dev) \
-#                         docker build --secret id=hf_token,env=HF_TOKEN -t filter-sam3-detector:local .
-#   2. Place test video:  cp your-video.mp4 data/sample-video.mp4
-#   3. Run pipeline:      docker compose -f sweetgreen.yaml up --abort-on-container-exit
-#   4. View detections:   cat output/detections.jsonl
+#   1. Build local image:
+#      HF_TOKEN=$(gcloud secrets versions access latest --secret=sam3-hf-token --project=plainsightai-dev) \
+#        docker build --secret id=hf_token,env=HF_TOKEN -t filter-sam3-detector:local .
+#
+#   2. Place test video (see SWEETGREEN.md for instructions):
+#      data/sample-video.mp4
+#
+#   3. Run pipeline:
+#      docker compose -f sweetgreen.yaml up --abort-on-container-exit
+#
+#   4. View results:
+#      - Browser: http://localhost:8020 (aggregator visualization)
+#      - JSONL:   cat output/detections.jsonl
+#
+# For production with event sink (use --profile event-sink):
+#   FILTER_API_ENDPOINT=... FILTER_API_TOKEN=... \
+#     docker compose -f sweetgreen.yaml --profile event-sink up
 
 services:
   video_in:
-    image: containers.openfilter.io/plainsightai/openfilter-video-in:v0.1.10
+    image: us-west1-docker.pkg.dev/plainsightai-prod/oci/video_in:v1.4.25
     platform: linux/amd64
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
@@ -19,36 +49,47 @@ services:
       # !sync processes all frames without skipping, !loop=false stops at end
       FILTER_SOURCES: ${VIDEO_INPUT:-file:///video.mp4!sync!loop=false}
       FILTER_FPS: ${FILTER_FPS:-5}
-      FILTER_OUTPUTS: tcp://*:5550
+      FILTER_OUTPUTS: "tcp://*:5550"
+      # Enable _filter topic emission for frame ID propagation (TI-130)
+      # This allows downstream filters to get globally unique frame IDs
+      FILTER_OUTPUTS_FILTER: "true"
     volumes:
       - ./data/sample-video.mp4:/video.mp4:ro
     networks:
       - filter-network
 
+  # Single SAM3 instance detecting all classes (bowl, ingredients, dressing cups)
+  # Outputs protege-compatible format for aggregator consumption
+  # This substitutes: filter-bowl-detector, filter-chit-detector, filter_protege_bowl,
+  #                   filter_protege_dressing_cups, filter_crop
   sam3_detector:
-    image: us-west1-docker.pkg.dev/plainsightai-dev/oci/filter-sam3-detector:0.2.0-dev
+    image: ${SAM3_IMAGE:-us-west1-docker.pkg.dev/plainsightai-dev/oci/filter-sam3-detector:0.2.0-dev}
     platform: linux/amd64
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       FILTER_ID: SAM3Detector
-      FILTER_SOURCES: tcp://video_in:5550
+      # Subscribe to both main topic and _filter topic for frame ID (wildcard captures both)
+      # The _filter topic contains frame IDs from VideoIn per TI-130
+      FILTER_SOURCES: tcp://video_in:5550;*
       FILTER_OUTPUTS: tcp://*:5551
+      # Enable _filter topic emission for downstream filters (event sink, etc.)
+      FILTER_OUTPUTS_FILTER: "true"
 
-      # SAM3 multi-class detection - sweetgreen ingredients
-      # Uses FILTER_TEXT_PROMPTS (list) for efficient parallel detection
-      # Includes bowl, chit, dressing_cup for SG aggregator compatibility
-      FILTER_TEXT_PROMPTS: ${FILTER_TEXT_PROMPTS:-bowl,chit,dressing_cup,salad,avocado,chicken,steak,egg,tofu,portobello}
-      FILTER_CONFIDENCE_THRESHOLD: ${FILTER_CONFIDENCE_THRESHOLD:-0.3}
+      # Multi-class detection: bowl + ingredients + dressing cups
+      # Using prompts that match aggregator's expected class names
+      # Production uses: avocado, blackened_chicken, roasted_chicken, caramelized_garlic_steak,
+      #                  hard_boiled_egg, miso_glazed_steelhead, roasted_tofu, warm_portobello_mix
+      # SAM3 uses simpler prompts that get aliased by the aggregator
+      FILTER_TEXT_PROMPTS: ${FILTER_TEXT_PROMPTS:-bowl,avocado,chicken,blackened_chicken,steak,egg,tofu,portobello,dressing_cup}
+      FILTER_CONFIDENCE_THRESHOLD: ${FILTER_CONFIDENCE_THRESHOLD:-0.25}
       FILTER_OUTPUT_LABEL: sam3_detections
       FILTER_OUTPUT_BOXES: "true"
       FILTER_VISUALIZE: "false"
 
       # Frame-level output: write detections in event-sink format to NDJSON
+      # Format: {"filter_name": "SAM3Detector", "topic": "main", "data": {"id": frame_id, "meta": {...}}}
       FILTER_OUTPUT_PATH: /output/detections.jsonl
       FILTER_OUTPUT_FILTER_NAME: SAM3Detector
-
-      # Disable temporal intervals for frame-level output
-      FILTER_ENABLE_TEMPORAL_INTERVALS: "false"
     deploy:
       resources:
         reservations:
@@ -61,14 +102,129 @@ services:
     networks:
       - filter-network
 
-  # Null sink to consume frames (required for pipeline to progress)
+  # Real sweetgreen aggregator - NOT substituted
+  # This tests that SAM3's protege-compatible output format works with the real aggregator
+  #
+  # Production FILTER_SOURCES (for reference):
+  #   '["tcp://filter-bowl-detector:5620;main",
+  #     "tcp://filter_sweetgreen_ocr:6000;chit",
+  #     "tcp://filter_protege_bowl:6002;bowl",
+  #     "tcp://filter_protege_dressing_cups:6008;bowl>dressing_cups"]'
+  #
+  # SAM3 integration: SAM3 provides all detections in a single stream.
+  # We map main topic to multiple inputs the aggregator expects.
+  filter_sweet_green_subject_data_aggregator:
+    image: us-west1-docker.pkg.dev/plainsightai-prod/oci/filter-sweet-green-subject-data-aggregator:v0.1.11
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      FILTER_ID: filter_sweet_green_subject_data_aggregator
+      FILTER_DEBUG: "true"
+
+      # SAM3 provides all detections in a single stream
+      # Map main topic to 'main' (bowl detection) and 'bowl' (ingredient classification)
+      # The aggregator extracts bowl detections and ingredient classifications from meta.detections
+      FILTER_SOURCES: '["tcp://sam3_detector:5551;main","tcp://sam3_detector:5551;main>bowl","tcp://sam3_detector:5551;main>dressing_cups"]'
+      FILTER_REQUIRE_ALL: "false"
+      FILTER_OUTPUTS: "tcp://*:6004"
+      FILTER_OUTPUT_TOPIC: aggregated
+
+      FILTER_TOPICS: '["bowl","dressing_cups"]'
+      FILTER_FORWARD_UPSTREAM_DATA: "true"
+
+      FILTER_DRAW_LABELS: "true"
+      FILTER_DRAW_DETECTIONS: "true"
+      FILTER_DRAW_BBOX_THICKNESS: "2"
+      FILTER_DRAW_BBOX_ALPHA: "0.25"
+      FILTER_DRAW_BOWL_BBOX_COLOR_BGR: "[66,66,255]"
+      FILTER_DRAW_CHIT_BBOX_COLOR_BGR: "[255,128,0]"
+
+      FILTER_DRAW_DRESSING_COUNT: "true"
+      FILTER_DRAW_DRESSING_PREFIX: "DRESSING CUPS"
+
+      # Ingredients list - SAM3 uses simpler names that get aliased below
+      FILTER_INGREDIENTS: '["avocado","blackened_chicken","roasted_chicken","caramelized_garlic_steak","hard_boiled_egg","roasted_tofu","warm_portobello_mix"]'
+
+      # Thresholds for SAM3 integration testing (lower than production to account for SAM3 calibration)
+      FILTER_THRESHOLDS__caramelized_garlic_steak: "0.25"
+      FILTER_THRESHOLDS__roasted_chicken: "0.25"
+      FILTER_THRESHOLDS__blackened_chicken: "0.25"
+      FILTER_THRESHOLDS__avocado: "0.20"
+      FILTER_THRESHOLDS__hard_boiled_egg: "0.25"
+      FILTER_THRESHOLDS__roasted_tofu: "0.25"
+      FILTER_THRESHOLDS__warm_portobello_mix: "0.25"
+
+      FILTER_DISPLAY_NAMES__avocado: "Avocado"
+      FILTER_DISPLAY_NAMES__blackened_chicken: "Blackened Chicken"
+      FILTER_DISPLAY_NAMES__roasted_chicken: "Roasted Chicken"
+      FILTER_DISPLAY_NAMES__caramelized_garlic_steak: "Caramelized Garlic Steak"
+      FILTER_DISPLAY_NAMES__hard_boiled_egg: "Hard Boiled Egg"
+      FILTER_DISPLAY_NAMES__roasted_tofu: "Roasted Tofu"
+      FILTER_DISPLAY_NAMES__warm_portobello_mix: "Warm Portobello Mix"
+
+      # Global aliases: SAM3 class names -> aggregator canonical names
+      # SAM3 outputs exact prompt text as class name
+      FILTER_ALIASES__avocado: "avocado"
+      FILTER_ALIASES__chicken: "roasted_chicken"
+      FILTER_ALIASES__blackened_chicken: "blackened_chicken"
+      FILTER_ALIASES__steak: "caramelized_garlic_steak"
+      FILTER_ALIASES__egg: "hard_boiled_egg"
+      FILTER_ALIASES__tofu: "roasted_tofu"
+      FILTER_ALIASES__portobello: "warm_portobello_mix"
+      FILTER_ALIASES__dressing_cup: "dressing_cup"
+
+      # Per-topic aliases (bowl topic)
+      FILTER_ALIASES_BOWL__avocado: "avocado"
+      FILTER_ALIASES_BOWL__chicken: "roasted_chicken"
+      FILTER_ALIASES_BOWL__blackened_chicken: "blackened_chicken"
+      FILTER_ALIASES_BOWL__steak: "caramelized_garlic_steak"
+      FILTER_ALIASES_BOWL__egg: "hard_boiled_egg"
+      FILTER_ALIASES_BOWL__tofu: "roasted_tofu"
+      FILTER_ALIASES_BOWL__portobello: "warm_portobello_mix"
+
+      FILTER_CLASSIFIER_ALIASES__bowl: "sam3_classifier_metadata"
+      FILTER_CLASSIFIER_VERSIONS__bowl: "sam3-integration-test"
+
+      FILTER_STABILIZATION_MODES__bowl: "mode"
+      FILTER_MODE_MIN_OBS: "5"
+      FILTER_ANALYSIS_LOGGING_ENABLED: "false"
+
+      FILTER_MQ_LOG: metrics
+    networks:
+      - filter-network
+
   webvis:
-    image: containers.openfilter.io/plainsightai/openfilter-webvis:v0.1.10
+    image: us-west1-docker.pkg.dev/plainsightai-prod/oci/webvis:v1.4.25
+    environment:
+      FILTER_ID: webvis
+      FILTER_SOURCES: tcp://filter_sweet_green_subject_data_aggregator:6004;aggregated>main
+    ports:
+      - ${PIPELINE_PORT:-8020}:8000
+    networks:
+      - filter-network
+
+  # Event sink for production - posts detections to CloudEvents API
+  # Activated with: --profile event-sink
+  filter_event_sink:
+    profiles:
+      - event-sink
+    image: containers.openfilter.io/plainsightai/openfilter-event-sink:1.0.3
     platform: linux/amd64
     environment:
-      LOG_LEVEL: ${LOG_LEVEL:-WARNING}
-      FILTER_ID: Webvis
-      FILTER_SOURCES: tcp://sam3_detector:5551
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      FILTER_ID: SAM3EventSink
+      # Subscribe to aggregator output with _filter topic for frame IDs
+      FILTER_SOURCES: tcp://filter_sweet_green_subject_data_aggregator:6004;*
+      FILTER_MQ_LOG: ${FILTER_MQ_LOG:-pretty}
+
+      # CloudEvents API configuration (required when using event-sink profile)
+      FILTER_API_ENDPOINT: ${FILTER_API_ENDPOINT:?FILTER_API_ENDPOINT is required for event-sink profile}
+      FILTER_API_TOKEN: ${FILTER_API_TOKEN:?FILTER_API_TOKEN is required for event-sink profile}
+      FILTER_API_CUSTOM_HEADERS: ${FILTER_API_CUSTOM_HEADERS:-}
+
+      # Event filtering and batching
+      FILTER_EVENT_TOPICS: ${FILTER_EVENT_TOPICS:-*}
+      FILTER_FLUSH_INTERVAL_SECONDS: ${FILTER_FLUSH_INTERVAL_SECONDS:-5.0}
+      FILTER_MAX_BATCH_EVENTS: ${FILTER_MAX_BATCH_EVENTS:-5000}
     networks:
       - filter-network
 

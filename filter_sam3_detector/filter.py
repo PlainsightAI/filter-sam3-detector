@@ -261,6 +261,7 @@ class FilterSAM3Detector(Filter):
         self.frames_dir = None
         self.annotated_frames_dir = None
         self.frame_counter = 0  # Counter for unique frame numbering
+        self.global_detection_id = 0  # Global counter for unique detection IDs across all frames
         
         # Always save original frames if frames_output_dir is configured (default: true)
         if self.frames_output_dir:
@@ -450,6 +451,29 @@ class FilterSAM3Detector(Filter):
             return {}
         return self.interval_tracker.get_current_state()
 
+    def _extract_filter_frame_id(self, frames: dict[str, Frame]) -> Optional[int]:
+        """Extract frame ID from _filter hidden topic (TI-130).
+
+        The _filter topic is emitted by openfilter runtime and contains:
+        - id: Frame ID(s) from input frames' meta.id or auto-generated
+
+        Returns frame ID if found, None otherwise.
+        """
+        # Check for _filter topic (format: SourceName___filter or _filter)
+        for topic, frame in frames.items():
+            # Match _filter hidden topic:
+            # - Standalone: '_filter'
+            # - With source prefix: 'SourceName___filter' (SourceName + __ + _filter)
+            if topic == '_filter' or topic.endswith('___filter'):
+                if frame and frame.data and isinstance(frame.data, dict):
+                    frame_id = frame.data.get('id')
+                    if frame_id is not None:
+                        logger.debug(f"Extracted frame id from {topic}: {frame_id}")
+                        return int(frame_id) if isinstance(frame_id, (int, float)) else frame_id
+                break  # Only use first _filter topic found
+
+        return None
+
     def process(self, frames: dict[str, Frame]) -> dict[str, Frame]:
         """
         Process input frames and detect objects.
@@ -462,8 +486,16 @@ class FilterSAM3Detector(Filter):
         """
         output_frames = {}
 
+        # Extract frame ID from _filter topic (TI-130)
+        # The _filter topic is emitted by openfilter runtime and contains frame IDs
+        filter_frame_id = self._extract_filter_frame_id(frames)
+
         for topic, frame in frames.items():
             if frame is None:
+                continue
+
+            # Skip _filter topic - it's metadata only, not for processing
+            if topic == '_filter' or topic.endswith('___filter'):
                 continue
 
             if not frame.has_image:
@@ -508,7 +540,6 @@ class FilterSAM3Detector(Filter):
                 # Collect all detections across all prompts
                 detections = []
                 all_scores = []  # Track all scores for detection_confidence calculation
-                detection_id_counter = 0
 
                 # Process each prompt using cached image features
                 if prompts_to_use:
@@ -518,12 +549,12 @@ class FilterSAM3Detector(Filter):
                         prompt_state = self.processor.set_text_prompt_no_grounding(prompt, state)
                         prompt_state = self.processor.forward_grounding(prompt_state)
 
-                        # Extract detections for this prompt
+                        # Extract detections for this prompt (use global ID counter for uniqueness)
                         prompt_detections = self._extract_detections_from_state(
-                            prompt_state, prompt, img_width, img_height, detection_id_counter
+                            prompt_state, prompt, img_width, img_height, self.global_detection_id
                         )
                         detections.extend(prompt_detections)
-                        detection_id_counter += len(prompt_detections)
+                        self.global_detection_id += len(prompt_detections)
 
                         # Track scores
                         if "scores" in prompt_state:
@@ -548,11 +579,12 @@ class FilterSAM3Detector(Filter):
                     # Run grounding with visual prompt embeddings
                     visual_state = self._forward_grounding_with_visual_prompt(state)
 
-                    # Extract detections for visual prompt
+                    # Extract detections for visual prompt (use global ID counter)
                     visual_detections = self._extract_detections_from_state(
-                        visual_state, "visual", img_width, img_height, detection_id_counter
+                        visual_state, "visual", img_width, img_height, self.global_detection_id
                     )
                     detections.extend(visual_detections)
+                    self.global_detection_id += len(visual_detections)
 
                     # Track scores
                     if "scores" in visual_state:
@@ -593,19 +625,20 @@ class FilterSAM3Detector(Filter):
 
                 # Get frame metadata for JSONL and filename
                 frame_meta = frame.data.get('meta', {})
-                
+
                 # Get timestamp from frame (OpenFilter provides this)
                 # Try multiple sources: frame.timestamp, meta.ts, meta.timestamp, data.timestamp
                 frame_ts = (
-                    getattr(frame, 'timestamp', None) 
+                    getattr(frame, 'timestamp', None)
                     or frame_meta.get('ts', None)
-                    or frame_meta.get('timestamp', None) 
+                    or frame_meta.get('timestamp', None)
                     or frame.data.get('timestamp', None)
                 )
-                
-                # Get frame ID from metadata (VideoIn sets meta['id'])
-                frame_id_num = frame_meta.get('id', None)
-                
+
+                # Get frame ID - priority: _filter topic > meta['id'] > frame_counter
+                # The _filter topic (TI-130) is the idiomatic way to get frame IDs in openfilter
+                frame_id_num = filter_frame_id if filter_frame_id is not None else frame_meta.get('id', None)
+
                 # Use frame counter for unique numbering (increments for each frame processed)
                 frame_counter = self.frame_counter
                 self.frame_counter += 1
@@ -665,19 +698,23 @@ class FilterSAM3Detector(Filter):
                 # Save to JSONL file if output_path is configured (save ALL frames, even without detections)
                 if hasattr(self, 'jsonl_file') and self.jsonl_file is not None:
                     try:
-                        # Build protege-compatible meta for JSONL output
-                        jsonl_meta = {
-                            self.output_label: detections  # Original SAM3 format
-                        }
-                        # Add protege-compatible fields
+                        # Build unified meta for JSONL output
+                        # Uses single 'detections' array with IDs (no separate sam3_detections)
+                        jsonl_meta = {}
                         self._add_protege_compatible_output(jsonl_meta, detections)
 
-                        # Event sink format: {'filter_name': ..., 'topic': ..., 'data': {'meta': ...}}
-                        # This matches what filter-event-sink would output
+                        # Include frame_id in meta (from VideoIn's meta['id'] or use frame_counter as fallback)
+                        output_frame_id = frame_id_num if frame_id_num is not None else frame_counter
+                        jsonl_meta['frame_id'] = output_frame_id
+
+                        # Event sink format: {'filter_name': ..., 'topic': ..., 'data': {'id': ..., 'meta': ...}}
+                        # This matches what filter-event-sink outputs - frame id is merged into data
+                        # (see filter-event-sink's _merge_event_data which puts id from _filter topic into data)
                         event_record = {
                             "filter_name": self.output_filter_name,
                             "topic": "main",
                             "data": {
+                                "id": output_frame_id,
                                 "meta": jsonl_meta
                             }
                         }
@@ -706,13 +743,14 @@ class FilterSAM3Detector(Filter):
         This enables SAM3 to work with downstream filters that expect protege-model format,
         such as the sweetgreen subject data aggregator.
 
-        Protege format expects:
-        - meta.detections: list of {"class": str, "rois": [[x1,y1,x2,y2], ...]}
+        Output format:
+        - meta.detections: list of {"id": int, "class": str, "score": float, "box": [x1,y1,x2,y2]}
+          Each detection has a globally unique ID across all frames.
         - meta.classification: {"classes": [...], "confidences": [...], "architecture": str}
 
         Args:
             frame_meta: Frame metadata dict to update
-            detections: List of SAM3 detection dicts with box, score, class fields
+            detections: List of SAM3 detection dicts with id, box, score, class fields
         """
         if not detections:
             # Even with no detections, add empty structures for consistency
@@ -724,12 +762,13 @@ class FilterSAM3Detector(Filter):
             }
             return
 
-        # Build protege-style detections list
-        # Group detections by class and collect ROIs
-        class_rois: dict[str, list] = {}
-        class_scores: dict[str, float] = {}  # Track max score per class
+        # Build unified detections list with IDs
+        # Each detection is a flat dict with id, class, score, box
+        unified_detections = []
+        class_scores: dict[str, float] = {}  # Track max score per class for classification
 
         for det in detections:
+            det_id = det.get('id')
             cls = det.get('class') or det.get('class_name') or 'object'
             box = det.get('box')  # [x1, y1, x2, y2] pixel coordinates
             score = det.get('score', 0.0)
@@ -737,23 +776,21 @@ class FilterSAM3Detector(Filter):
             if box is None:
                 continue
 
-            if cls not in class_rois:
-                class_rois[cls] = []
-                class_scores[cls] = 0.0
+            # Unified detection format with globally unique ID
+            unified_det = {
+                'id': det_id,
+                'class': cls,
+                'score': score,
+                'box': box,
+            }
+            unified_detections.append(unified_det)
 
-            # ROIs in protege format: list of [x1, y1, x2, y2] (can have multiple per class)
-            class_rois[cls].append(box)
+            # Track max score per class for classification summary
+            if cls not in class_scores:
+                class_scores[cls] = 0.0
             class_scores[cls] = max(class_scores[cls], score)
 
-        # Build detections in protege format
-        protege_detections = []
-        for cls, rois in class_rois.items():
-            protege_detections.append({
-                'class': cls,
-                'rois': rois,
-            })
-
-        frame_meta['detections'] = protege_detections
+        frame_meta['detections'] = unified_detections
 
         # Build classification block (classes with their confidence scores)
         # Sort by score descending for consistency
