@@ -83,29 +83,39 @@ docker compose -f sweetgreen.yaml --profile event-sink up --abort-on-container-e
 
 ## Architecture
 
+### Multi-Output Mode (sweetgreen.yaml)
+
+A single SAM3 instance handles all detection tasks using **multi-output mode**. The model loads once, processes each frame once through the expensive backbone pass, then runs each prompt set against the cached image features:
+
 ```
                         ┌─────────────────────┐
                         │      video_in       │
-                        │  (with _filter ID)  │
+                        │  (emits _filter ID) │
                         └─────────┬───────────┘
                                   │
                                   ▼
                         ┌─────────────────────┐
-                        │   sam3_detector     │
-                        │ (replaces 5 filters)│
+                        │    sam3_detector    │
+                        │   (multi-output)    │
+                        │                     │
+                        │ prompt_sets:        │
+                        │  - bowl_detector    │
+                        │  - chit_detector    │
+                        │  - ingredients      │
+                        │  - dressing         │
                         └─────────┬───────────┘
                                   │
-                    ┌─────────────┼─────────────┐
-                    │             │             │
-                    ▼             ▼             ▼
-                  main          bowl     dressing_cups
-                    │             │             │
-                    └─────────────┼─────────────┘
-                                  │
-                                  ▼
-                        ┌─────────────────────┐
-                        │     aggregator      │
-                        │  (real production)  │
+              ┌───────────┬───────┼───────┬───────────┐
+              │           │       │       │           │
+              ▼           ▼       ▼       ▼           │
+            main        chit    bowl   dressing      │
+              │           │       │     _cups        │
+              └───────────┴───────┴───────┘          │
+                                  │                  │
+                                  ▼                  │
+                        ┌─────────────────────┐      │
+                        │     aggregator      │◄─────┘
+                        │  (real production)  │ (receives _filter)
                         └─────────┬───────────┘
                                   │
                     ┌─────────────┴─────────────┐
@@ -118,16 +128,21 @@ docker compose -f sweetgreen.yaml --profile event-sink up --abort-on-container-e
                                       └─────────────────┘
 ```
 
+**Why multi-output mode?**
+- **Memory efficient**: One GPU, one model load (~16GB VRAM)
+- **Fast**: Backbone pass runs once per frame, then each prompt set uses cached features
+- **Production-compatible**: Outputs match the 4-topic structure expected by the aggregator
+
 ### What SAM3 Replaces
 
-| Production Filter | SAM3 Equivalent |
-|-------------------|-----------------|
-| `filter-bowl-detector` | bowl detection via text prompt "bowl" |
-| `filter-chit-detector` | N/A (not needed for visual testing) |
-| `filter_protege_bowl` | ingredient classification via text prompts |
-| `filter_protege_dressing_cups` | dressing_cup detection via text prompt |
-| `filter_crop` | N/A (SAM3 detects on full frame) |
-| `filter_sweetgreen_ocr` | N/A (not needed for integration test) |
+| Production Filter | SAM3 Replacement | Text Prompts |
+|-------------------|------------------|--------------|
+| `filter-bowl-detector` | `sam3_detector` (single) or `sam3_bowl_detector` (multi) | bowl |
+| `filter-chit-detector` | `sam3_detector` (single) or `sam3_chit_detector` (multi) | chit |
+| `filter_protege_bowl` | `sam3_detector` (single) or `sam3_ingredient_classifier` (multi) | avocado, chicken, blackened_chicken, steak, egg, tofu, portobello |
+| `filter_protege_dressing_cups` | `sam3_detector` (single) or `sam3_dressing_detector` (multi) | dressing_cup |
+| `filter_crop` | N/A | (SAM3 detects on full frame, no crop needed) |
+| `filter_sweetgreen_ocr` | N/A | (OCR not replaceable by detection model) |
 
 ## Output Format
 
@@ -214,7 +229,9 @@ FILTER_SOURCES: '["tcp://filter-bowl-detector:5620;main",
                   "tcp://filter_protege_dressing_cups:6008;bowl>dressing_cups"]'
 ```
 
-SAM3 integration simplifies this to:
+### Single-GPU SAM3 (sweetgreen.yaml)
+
+A single SAM3 instance provides all topics:
 
 ```yaml
 FILTER_SOURCES: '["tcp://sam3_detector:5551;main",
@@ -222,7 +239,18 @@ FILTER_SOURCES: '["tcp://sam3_detector:5551;main",
                   "tcp://sam3_detector:5551;main>dressing_cups"]'
 ```
 
-The aggregator receives the same topic structure (`main`, `bowl`, `dressing_cups`) and processes SAM3's unified detection format identically to protege model outputs.
+### Multi-GPU SAM3 (sweetgreen-multi-gpu.yaml)
+
+Dedicated SAM3 instances match production port structure:
+
+```yaml
+FILTER_SOURCES: '["tcp://sam3_bowl_detector:5620;main",
+                  "tcp://sam3_chit_detector:5720;chit",
+                  "tcp://sam3_ingredient_classifier:6002;bowl",
+                  "tcp://sam3_dressing_detector:6008;bowl>dressing_cups"]'
+```
+
+Both configurations maintain the same topic routing (`main`, `bowl`, `dressing_cups`) that the aggregator expects.
 
 ## Troubleshooting
 

@@ -82,6 +82,7 @@ class FilterSAM3Detector(Filter):
             "device": "cuda",
             "text_prompt": None,  # Single prompt (backward compatible)
             "text_prompts": None,  # Multiple prompts for parallel detection
+            "prompt_sets": None,  # Multi-output mode: list of {name, prompts, topic, ...}
             "exemplars_path": None,
             "exemplar_embeddings_cache": None,
             "confidence_threshold": 0.5,
@@ -119,6 +120,7 @@ class FilterSAM3Detector(Filter):
             "device": str,
             "text_prompt": str,
             "text_prompts": str,  # Comma-separated list of prompts
+            "prompt_sets": str,  # JSON array of prompt set configs
             "exemplars_path": str,
             "exemplar_embeddings_cache": str,
             "confidence_threshold": float,
@@ -209,6 +211,30 @@ class FilterSAM3Detector(Filter):
         elif not isinstance(text_prompts, list):
             raise ValueError(f"text_prompts must be a list or comma-separated string, got {type(text_prompts)}")
 
+        # Parse prompt_sets from JSON string to list of dicts
+        # Format: [{"name": "bowl", "prompts": ["bowl"], "topic": "main", "confidence_threshold": 0.5, "max_detections": 1}, ...]
+        prompt_sets = config.get("prompt_sets")
+        if isinstance(prompt_sets, str):
+            try:
+                config["prompt_sets"] = json.loads(prompt_sets)
+            except json.JSONDecodeError as e:
+                raise ValueError(f"prompt_sets must be valid JSON array, got error: {e}")
+        elif prompt_sets is not None and not isinstance(prompt_sets, list):
+            raise ValueError(f"prompt_sets must be a list or JSON string, got {type(prompt_sets)}")
+
+        # Validate prompt_sets structure
+        if config.get("prompt_sets"):
+            for i, ps in enumerate(config["prompt_sets"]):
+                if not isinstance(ps, dict):
+                    raise ValueError(f"prompt_sets[{i}] must be a dict, got {type(ps)}")
+                if "name" not in ps:
+                    raise ValueError(f"prompt_sets[{i}] missing required 'name' field")
+                if "prompts" not in ps:
+                    raise ValueError(f"prompt_sets[{i}] missing required 'prompts' field")
+                # Ensure prompts is a list
+                if isinstance(ps["prompts"], str):
+                    ps["prompts"] = [p.strip() for p in ps["prompts"].split(",") if p.strip()]
+
         return config
 
     def setup(self, config: FilterConfig):
@@ -234,6 +260,7 @@ class FilterSAM3Detector(Filter):
         self.model_id = config.get("model_id", "facebook/sam2-hiera-large")
         self.text_prompt = config.get("text_prompt")  # Single prompt (backward compatible)
         self.text_prompts = config.get("text_prompts")  # Multiple prompts for parallel detection
+        self.prompt_sets = config.get("prompt_sets")  # Multi-output mode
         self.exemplars_path = config.get("exemplars_path")
         self.confidence_threshold = config.get("confidence_threshold", 0.5)
         self.mask_threshold = config.get("mask_threshold", 0.5)
@@ -307,6 +334,12 @@ class FilterSAM3Detector(Filter):
         self.visual_prompt_mask = None
         if self.exemplars_path:
             self._load_exemplar_images()
+
+        # Log multi-output mode configuration
+        if self.prompt_sets:
+            logger.info(f"Multi-output mode enabled with {len(self.prompt_sets)} prompt sets:")
+            for ps in self.prompt_sets:
+                logger.info(f"  - {ps['name']}: prompts={ps['prompts']}, topic={ps.get('topic', 'main')}")
 
         # Initialize temporal interval tracking if enabled
         self.enable_temporal_intervals = config.get("enable_temporal_intervals", False)
@@ -494,10 +527,6 @@ class FilterSAM3Detector(Filter):
             if frame is None:
                 continue
 
-            # Skip _filter topic - it's metadata only, not for processing
-            if topic == '_filter' or topic.endswith('___filter'):
-                continue
-
             if not frame.has_image:
                 # Forward non-image frames unchanged
                 output_frames[topic] = frame
@@ -510,6 +539,19 @@ class FilterSAM3Detector(Filter):
                 output_frames[topic] = frame
                 continue
 
+            # Multi-output mode: process each prompt_set and output to different topics
+            if self.prompt_sets:
+                try:
+                    multi_output = self._process_multi_output(frame, filter_frame_id)
+                    output_frames.update(multi_output)
+                except Exception as e:
+                    logger.error(f"Error in multi-output processing: {e}")
+                    import traceback
+                    logger.debug(traceback.format_exc())
+                    output_frames[topic] = frame
+                continue
+
+            # Standard single-output mode
             # Determine which prompts to use
             # Priority: text_prompts (list) > text_prompt (single) > visual embeddings
             prompts_to_use = None
@@ -698,18 +740,16 @@ class FilterSAM3Detector(Filter):
                 # Save to JSONL file if output_path is configured (save ALL frames, even without detections)
                 if hasattr(self, 'jsonl_file') and self.jsonl_file is not None:
                     try:
-                        # Build unified meta for JSONL output
-                        # Uses single 'detections' array with IDs (no separate sam3_detections)
+                        # Build protege-compatible meta for JSONL output
                         jsonl_meta = {}
                         self._add_protege_compatible_output(jsonl_meta, detections)
 
-                        # Include frame_id in meta (from VideoIn's meta['id'] or use frame_counter as fallback)
+                        # Include frame_id in meta (from _filter topic or VideoIn's meta['id'])
                         output_frame_id = frame_id_num if frame_id_num is not None else frame_counter
                         jsonl_meta['frame_id'] = output_frame_id
 
                         # Event sink format: {'filter_name': ..., 'topic': ..., 'data': {'id': ..., 'meta': ...}}
                         # This matches what filter-event-sink outputs - frame id is merged into data
-                        # (see filter-event-sink's _merge_event_data which puts id from _filter topic into data)
                         event_record = {
                             "filter_name": self.output_filter_name,
                             "topic": "main",
@@ -736,6 +776,111 @@ class FilterSAM3Detector(Filter):
 
         return output_frames
 
+    def _process_multi_output(self, frame: Frame, filter_frame_id: Optional[int]) -> dict[str, Frame]:
+        """
+        Process frame with multiple prompt sets, outputting to different topics.
+
+        Multi-output mode allows a single SAM3 instance to serve multiple "virtual detectors",
+        each with its own prompts, thresholds, and output topic. The model runs inference
+        once per frame (expensive backbone pass), then processes each prompt set using the
+        cached image features.
+
+        Args:
+            frame: Input frame with image
+            filter_frame_id: Frame ID from _filter topic (or None)
+
+        Returns:
+            Dictionary mapping output topics to frames with filtered detections
+        """
+        import copy
+
+        output_frames = {}
+
+        # Extract image from frame (convert BGR to RGB PIL)
+        image_bgr = frame.rw_bgr.image
+        image_rgb = image_bgr[:, :, ::-1]  # BGR to RGB
+        pil_image = Image.fromarray(image_rgb)
+
+        # Get image dimensions for clipping boxes
+        img_height, img_width = image_bgr.shape[:2]
+
+        # Set image in processor ONCE (this is the expensive backbone pass)
+        # The state contains cached image features that we reuse for ALL prompt sets
+        state = self.processor.set_image(pil_image)
+
+        # Get frame metadata for ID tracking
+        frame_meta_orig = frame.data.get('meta', {})
+        frame_id_num = filter_frame_id if filter_frame_id is not None else frame_meta_orig.get('id', None)
+        frame_counter = self.frame_counter
+        self.frame_counter += 1
+
+        # Process each prompt set
+        for prompt_set in self.prompt_sets:
+            ps_name = prompt_set['name']
+            ps_prompts = prompt_set['prompts']
+            ps_topic = prompt_set.get('topic', 'main')
+            ps_threshold = prompt_set.get('confidence_threshold', self.confidence_threshold)
+            ps_max_detections = prompt_set.get('max_detections', self.max_detections)
+            ps_filter_name = prompt_set.get('filter_name', f"SAM3_{ps_name}")
+
+            # Collect detections for this prompt set
+            ps_detections = []
+
+            for prompt in ps_prompts:
+                # Encode text prompt and run grounding using cached image features
+                prompt_state = self.processor.set_text_prompt_no_grounding(prompt, state)
+                prompt_state = self.processor.forward_grounding(prompt_state)
+
+                # Extract detections for this prompt
+                prompt_detections = self._extract_detections_from_state(
+                    prompt_state, prompt, img_width, img_height, self.global_detection_id,
+                    confidence_threshold=ps_threshold,
+                    max_detections=ps_max_detections
+                )
+                ps_detections.extend(prompt_detections)
+                self.global_detection_id += len(prompt_detections)
+
+            # Apply max_detections limit to entire prompt set (sort by score, take top N)
+            if len(ps_detections) > ps_max_detections:
+                ps_detections.sort(key=lambda d: d.get('score', 0), reverse=True)
+                ps_detections = ps_detections[:ps_max_detections]
+
+            # Create output frame for this topic (deep copy to avoid shared state)
+            output_frame = copy.deepcopy(frame)
+            output_meta = output_frame.data.setdefault('meta', {})
+
+            # Store detections in frame metadata
+            output_meta[self.output_label] = ps_detections
+
+            # Add protege-compatible output
+            self._add_protege_compatible_output(output_meta, ps_detections)
+
+            # Add to output frames with the prompt set's topic
+            output_frames[ps_topic] = output_frame
+
+            # Write to JSONL if configured (one record per prompt set per frame)
+            if hasattr(self, 'jsonl_file') and self.jsonl_file is not None:
+                try:
+                    jsonl_meta = {}
+                    self._add_protege_compatible_output(jsonl_meta, ps_detections)
+                    output_frame_id = frame_id_num if frame_id_num is not None else frame_counter
+                    jsonl_meta['frame_id'] = output_frame_id
+
+                    event_record = {
+                        "filter_name": ps_filter_name,
+                        "topic": ps_topic,
+                        "data": {
+                            "id": output_frame_id,
+                            "meta": jsonl_meta
+                        }
+                    }
+                    self.jsonl_file.write(json.dumps(event_record) + '\n')
+                    self.jsonl_file.flush()
+                except Exception as e:
+                    logger.warning(f"Failed to save JSONL for prompt set {ps_name}: {e}")
+
+        return output_frames
+
     def _add_protege_compatible_output(self, frame_meta: dict, detections: list) -> None:
         """
         Add protege-compatible output format to frame metadata.
@@ -743,14 +888,13 @@ class FilterSAM3Detector(Filter):
         This enables SAM3 to work with downstream filters that expect protege-model format,
         such as the sweetgreen subject data aggregator.
 
-        Output format:
-        - meta.detections: list of {"id": int, "class": str, "score": float, "box": [x1,y1,x2,y2]}
-          Each detection has a globally unique ID across all frames.
+        Protege format expects:
+        - meta.detections: list of {"class": str, "rois": [[x1,y1,x2,y2], ...]}
         - meta.classification: {"classes": [...], "confidences": [...], "architecture": str}
 
         Args:
             frame_meta: Frame metadata dict to update
-            detections: List of SAM3 detection dicts with id, box, score, class fields
+            detections: List of SAM3 detection dicts with box, score, class fields
         """
         if not detections:
             # Even with no detections, add empty structures for consistency
@@ -762,13 +906,12 @@ class FilterSAM3Detector(Filter):
             }
             return
 
-        # Build unified detections list with IDs
-        # Each detection is a flat dict with id, class, score, box
-        unified_detections = []
-        class_scores: dict[str, float] = {}  # Track max score per class for classification
+        # Build protege-style detections list
+        # Group detections by class and collect ROIs
+        class_rois: dict[str, list] = {}
+        class_scores: dict[str, float] = {}  # Track max score per class
 
         for det in detections:
-            det_id = det.get('id')
             cls = det.get('class') or det.get('class_name') or 'object'
             box = det.get('box')  # [x1, y1, x2, y2] pixel coordinates
             score = det.get('score', 0.0)
@@ -776,21 +919,23 @@ class FilterSAM3Detector(Filter):
             if box is None:
                 continue
 
-            # Unified detection format with globally unique ID
-            unified_det = {
-                'id': det_id,
-                'class': cls,
-                'score': score,
-                'box': box,
-            }
-            unified_detections.append(unified_det)
-
-            # Track max score per class for classification summary
-            if cls not in class_scores:
+            if cls not in class_rois:
+                class_rois[cls] = []
                 class_scores[cls] = 0.0
+
+            # ROIs in protege format: list of [x1, y1, x2, y2] (can have multiple per class)
+            class_rois[cls].append(box)
             class_scores[cls] = max(class_scores[cls], score)
 
-        frame_meta['detections'] = unified_detections
+        # Build detections in protege format
+        protege_detections = []
+        for cls, rois in class_rois.items():
+            protege_detections.append({
+                'class': cls,
+                'rois': rois,
+            })
+
+        frame_meta['detections'] = protege_detections
 
         # Build classification block (classes with their confidence scores)
         # Sort by score descending for consistency
@@ -805,7 +950,8 @@ class FilterSAM3Detector(Filter):
         }
 
     def _extract_detections_from_state(
-        self, state: dict, class_name: str, img_width: int, img_height: int, id_offset: int = 0
+        self, state: dict, class_name: str, img_width: int, img_height: int, id_offset: int = 0,
+        confidence_threshold: Optional[float] = None, max_detections: Optional[int] = None
     ) -> list:
         """
         Extract detections from processor state with class labeling.
@@ -819,11 +965,17 @@ class FilterSAM3Detector(Filter):
             img_width: Image width for ROI normalization
             img_height: Image height for ROI normalization
             id_offset: Starting ID for detection numbering (for multi-prompt)
+            confidence_threshold: Override for minimum confidence (default: self.confidence_threshold)
+            max_detections: Override for max detections (default: self.max_detections)
 
         Returns:
             List of detection dictionaries
         """
         detections = []
+
+        # Use provided overrides or instance defaults
+        conf_thresh = confidence_threshold if confidence_threshold is not None else self.confidence_threshold
+        max_dets = max_detections if max_detections is not None else self.max_detections
 
         if "boxes" not in state or "scores" not in state:
             return detections
@@ -832,11 +984,27 @@ class FilterSAM3Detector(Filter):
         scores = state["scores"]
         masks = state.get("masks", None)
 
-        num_detections = min(len(boxes), self.max_detections)
+        num_detections = min(len(boxes), max_dets)
 
-        for i in range(num_detections):
+        actual_id = 0  # Track actual number of detections added
+        for i in range(len(boxes)):
+            # Apply confidence threshold filter
+            score = scores[i]
+            if hasattr(score, 'item'):
+                score_val = score.item()
+            else:
+                score_val = float(score)
+
+            if score_val < conf_thresh:
+                continue
+
+            # Stop if we've reached max detections
+            if actual_id >= max_dets:
+                break
+
             detection = {}
-            detection_id = id_offset + i + 1  # COCO annotation ID (1-indexed)
+            detection_id = id_offset + actual_id + 1  # COCO annotation ID (1-indexed)
+            actual_id += 1
 
             if self.output_boxes:
                 box = boxes[i]

@@ -1,23 +1,36 @@
 # SAM3 detector integration with Sweetgreen pipeline
-# Substitutes protege model filters with SAM3, keeps aggregator intact
+# Substitutes ALL protege detector filters with a single SAM3 instance using multi-output mode
 #
-# This tests that SAM3's protege-compatible output format works with the real
-# sweetgreen aggregator and downstream components. It's designed to "rhyme"
-# with the production topology in external-sweetgreen/scripts/docker-compose.prod.yaml
+# Multi-output mode runs ONE model instance that processes multiple "prompt sets",
+# each with its own prompts, confidence threshold, and output topic. This is memory-efficient
+# (single GPU, single model load) while matching the production topology's multi-detector structure.
 #
-# Architecture:
-#   SUBSTITUTED (protege models -> single SAM3):
-#     - filter-bowl-detector (bowl detection)
-#     - filter-chit-detector (chit detection)
-#     - filter_protege_bowl (ingredient classification)
-#     - filter_protege_dressing_cups (dressing detection)
-#     - filter_crop (not needed - SAM3 detects on full frame)
-#     - filter_sweetgreen_ocr (not needed for integration test)
+# Production topology (external-sweetgreen/scripts/docker-compose.prod.yaml):
+#   video_in
+#      ├── filter-bowl-detector ──────────┐
+#      └── filter-chit-detector ──┐       │
+#                                 ▼       ▼
+#                            filter_crop
+#                    ┌───────────┼───────────┐
+#                    ▼           ▼           ▼
+#          filter_sweetgreen_ocr  filter_protege_bowl  filter_protege_dressing_cups
+#                    │           │           │
+#                    └───────────┼───────────┘
+#                                ▼
+#                    filter_sweet_green_subject_data_aggregator
 #
-#   KEPT (real production components):
-#     - video_in (with _filter topic support for frame ID propagation)
-#     - filter_sweet_green_subject_data_aggregator <-- KEY: tests protege format compatibility
-#     - webvis
+# SAM3 multi-output mode (this file):
+#   video_in
+#      │
+#      └── sam3_detector (single instance, multi-output)
+#                │
+#                ├── main (bowl detection)
+#                ├── chit (chit detection)
+#                ├── bowl (ingredient classification)
+#                └── dressing_cups (dressing detection)
+#                │
+#                ▼
+#      filter_sweet_green_subject_data_aggregator
 #
 # Usage:
 #   1. Build local image:
@@ -28,7 +41,7 @@
 #      data/sample-video.mp4
 #
 #   3. Run pipeline:
-#      docker compose -f sweetgreen.yaml up --abort-on-container-exit
+#      SAM3_IMAGE=filter-sam3-detector:local docker compose -f sweetgreen.yaml up --abort-on-container-exit
 #
 #   4. View results:
 #      - Browser: http://localhost:8020 (aggregator visualization)
@@ -45,51 +58,24 @@ services:
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       FILTER_ID: VideoIn
-      # Use local video file with sync mode for single-pass processing
-      # !sync processes all frames without skipping, !loop=false stops at end
       FILTER_SOURCES: ${VIDEO_INPUT:-file:///video.mp4!sync!loop=false}
       FILTER_FPS: ${FILTER_FPS:-5}
       FILTER_OUTPUTS: "tcp://*:5550"
-      # Enable _filter topic emission for frame ID propagation (TI-130)
-      # This allows downstream filters to get globally unique frame IDs
       FILTER_OUTPUTS_FILTER: "true"
     volumes:
       - ./data/sample-video.mp4:/video.mp4:ro
     networks:
       - filter-network
 
-  # Single SAM3 instance detecting all classes (bowl, ingredients, dressing cups)
-  # Outputs protege-compatible format for aggregator consumption
-  # This substitutes: filter-bowl-detector, filter-chit-detector, filter_protege_bowl,
-  #                   filter_protege_dressing_cups, filter_crop
+  # Single SAM3 instance with multi-output mode
+  # Replaces 4 production detectors with one model, outputting to 4 topics:
+  #   main (bowl) -> aggregator main input
+  #   chit -> aggregator chit input
+  #   bowl (ingredients) -> aggregator bowl input
+  #   dressing_cups -> aggregator dressing_cups input
   sam3_detector:
     image: ${SAM3_IMAGE:-us-west1-docker.pkg.dev/plainsightai-dev/oci/filter-sam3-detector:0.2.0-dev}
     platform: linux/amd64
-    environment:
-      LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      FILTER_ID: SAM3Detector
-      # Subscribe to both main topic and _filter topic for frame ID (wildcard captures both)
-      # The _filter topic contains frame IDs from VideoIn per TI-130
-      FILTER_SOURCES: tcp://video_in:5550;*
-      FILTER_OUTPUTS: tcp://*:5551
-      # Enable _filter topic emission for downstream filters (event sink, etc.)
-      FILTER_OUTPUTS_FILTER: "true"
-
-      # Multi-class detection: bowl + ingredients + dressing cups
-      # Using prompts that match aggregator's expected class names
-      # Production uses: avocado, blackened_chicken, roasted_chicken, caramelized_garlic_steak,
-      #                  hard_boiled_egg, miso_glazed_steelhead, roasted_tofu, warm_portobello_mix
-      # SAM3 uses simpler prompts that get aliased by the aggregator
-      FILTER_TEXT_PROMPTS: ${FILTER_TEXT_PROMPTS:-bowl,avocado,chicken,blackened_chicken,steak,egg,tofu,portobello,dressing_cup}
-      FILTER_CONFIDENCE_THRESHOLD: ${FILTER_CONFIDENCE_THRESHOLD:-0.25}
-      FILTER_OUTPUT_LABEL: sam3_detections
-      FILTER_OUTPUT_BOXES: "true"
-      FILTER_VISUALIZE: "false"
-
-      # Frame-level output: write detections in event-sink format to NDJSON
-      # Format: {"filter_name": "SAM3Detector", "topic": "main", "data": {"id": frame_id, "meta": {...}}}
-      FILTER_OUTPUT_PATH: /output/detections.jsonl
-      FILTER_OUTPUT_FILTER_NAME: SAM3Detector
     deploy:
       resources:
         reservations:
@@ -97,22 +83,60 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      FILTER_ID: sam3_detector
+      FILTER_SOURCES: tcp://video_in:5550;*
+      FILTER_OUTPUTS: tcp://*:5551
+      FILTER_OUTPUTS_FILTER: "true"
+      FILTER_VISUALIZE: "false"
+      FILTER_OUTPUT_BOXES: "true"
+      # Write detections for debugging
+      FILTER_OUTPUT_PATH: /output/detections.jsonl
+      # Multi-output mode: each prompt set becomes a virtual detector
+      # The model runs inference ONCE per frame, then processes each prompt set
+      FILTER_PROMPT_SETS: |
+        [
+          {
+            "name": "bowl_detector",
+            "prompts": ["bowl"],
+            "topic": "main",
+            "confidence_threshold": 0.5,
+            "max_detections": 1,
+            "filter_name": "SAM3BowlDetector"
+          },
+          {
+            "name": "chit_detector",
+            "prompts": ["chit"],
+            "topic": "chit",
+            "confidence_threshold": 0.5,
+            "max_detections": 1,
+            "filter_name": "SAM3ChitDetector"
+          },
+          {
+            "name": "ingredient_classifier",
+            "prompts": ["avocado", "chicken", "blackened_chicken", "steak", "egg", "tofu", "portobello"],
+            "topic": "bowl",
+            "confidence_threshold": 0.25,
+            "max_detections": 100,
+            "filter_name": "SAM3IngredientClassifier"
+          },
+          {
+            "name": "dressing_detector",
+            "prompts": ["dressing_cup"],
+            "topic": "dressing_cups",
+            "confidence_threshold": 0.5,
+            "max_detections": 5,
+            "filter_name": "SAM3DressingDetector"
+          }
+        ]
     volumes:
       - ./output:/output
     networks:
       - filter-network
 
   # Real sweetgreen aggregator - NOT substituted
-  # This tests that SAM3's protege-compatible output format works with the real aggregator
-  #
-  # Production FILTER_SOURCES (for reference):
-  #   '["tcp://filter-bowl-detector:5620;main",
-  #     "tcp://filter_sweetgreen_ocr:6000;chit",
-  #     "tcp://filter_protege_bowl:6002;bowl",
-  #     "tcp://filter_protege_dressing_cups:6008;bowl>dressing_cups"]'
-  #
-  # SAM3 integration: SAM3 provides all detections in a single stream.
-  # We map main topic to multiple inputs the aggregator expects.
+  # Receives from SAM3's multi-output topics
   filter_sweet_green_subject_data_aggregator:
     image: us-west1-docker.pkg.dev/plainsightai-prod/oci/filter-sweet-green-subject-data-aggregator:v0.1.11
     environment:
@@ -120,15 +144,19 @@ services:
       FILTER_ID: filter_sweet_green_subject_data_aggregator
       FILTER_DEBUG: "true"
 
-      # SAM3 provides all detections in a single stream
-      # Map main topic to 'main' (bowl detection) and 'bowl' (ingredient classification)
-      # The aggregator extracts bowl detections and ingredient classifications from meta.detections
-      FILTER_SOURCES: '["tcp://sam3_detector:5551;main","tcp://sam3_detector:5551;main>bowl","tcp://sam3_detector:5551;main>dressing_cups"]'
+      # Production sources (for reference):
+      #   '["tcp://filter-bowl-detector:5620;main",
+      #     "tcp://filter_sweetgreen_ocr:6000;chit",
+      #     "tcp://filter_protege_bowl:6002;bowl",
+      #     "tcp://filter_protege_dressing_cups:6008;bowl>dressing_cups"]'
+      #
+      # SAM3 multi-output sources - single detector outputs to multiple topics:
+      FILTER_SOURCES: '["tcp://sam3_detector:5551;main","tcp://sam3_detector:5551;chit","tcp://sam3_detector:5551;bowl","tcp://sam3_detector:5551;dressing_cups"]'
       FILTER_REQUIRE_ALL: "false"
       FILTER_OUTPUTS: "tcp://*:6004"
       FILTER_OUTPUT_TOPIC: aggregated
 
-      FILTER_TOPICS: '["bowl","dressing_cups"]'
+      FILTER_TOPICS: '["chit","bowl","dressing_cups"]'
       FILTER_FORWARD_UPSTREAM_DATA: "true"
 
       FILTER_DRAW_LABELS: "true"
@@ -141,10 +169,9 @@ services:
       FILTER_DRAW_DRESSING_COUNT: "true"
       FILTER_DRAW_DRESSING_PREFIX: "DRESSING CUPS"
 
-      # Ingredients list - SAM3 uses simpler names that get aliased below
       FILTER_INGREDIENTS: '["avocado","blackened_chicken","roasted_chicken","caramelized_garlic_steak","hard_boiled_egg","roasted_tofu","warm_portobello_mix"]'
 
-      # Thresholds for SAM3 integration testing (lower than production to account for SAM3 calibration)
+      # Thresholds for SAM3 integration
       FILTER_THRESHOLDS__caramelized_garlic_steak: "0.25"
       FILTER_THRESHOLDS__roasted_chicken: "0.25"
       FILTER_THRESHOLDS__blackened_chicken: "0.25"
@@ -162,7 +189,6 @@ services:
       FILTER_DISPLAY_NAMES__warm_portobello_mix: "Warm Portobello Mix"
 
       # Global aliases: SAM3 class names -> aggregator canonical names
-      # SAM3 outputs exact prompt text as class name
       FILTER_ALIASES__avocado: "avocado"
       FILTER_ALIASES__chicken: "roasted_chicken"
       FILTER_ALIASES__blackened_chicken: "blackened_chicken"
@@ -181,10 +207,16 @@ services:
       FILTER_ALIASES_BOWL__tofu: "roasted_tofu"
       FILTER_ALIASES_BOWL__portobello: "warm_portobello_mix"
 
+      # Per-topic aliases (chit topic) - for SAM3 chit detection
+      FILTER_ALIASES_CHIT__chit: "chit"
+
       FILTER_CLASSIFIER_ALIASES__bowl: "sam3_classifier_metadata"
+      FILTER_CLASSIFIER_ALIASES__chit: "sam3_chit_classifier_metadata"
       FILTER_CLASSIFIER_VERSIONS__bowl: "sam3-integration-test"
+      FILTER_CLASSIFIER_VERSIONS__chit: "sam3-integration-test"
 
       FILTER_STABILIZATION_MODES__bowl: "mode"
+      FILTER_STABILIZATION_MODES__chit: "mode"
       FILTER_MODE_MIN_OBS: "5"
       FILTER_ANALYSIS_LOGGING_ENABLED: "false"
 
@@ -212,16 +244,11 @@ services:
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       FILTER_ID: SAM3EventSink
-      # Subscribe to aggregator output with _filter topic for frame IDs
       FILTER_SOURCES: tcp://filter_sweet_green_subject_data_aggregator:6004;*
       FILTER_MQ_LOG: ${FILTER_MQ_LOG:-pretty}
-
-      # CloudEvents API configuration (required when using event-sink profile)
-      FILTER_API_ENDPOINT: ${FILTER_API_ENDPOINT:?FILTER_API_ENDPOINT is required for event-sink profile}
-      FILTER_API_TOKEN: ${FILTER_API_TOKEN:?FILTER_API_TOKEN is required for event-sink profile}
+      FILTER_API_ENDPOINT: ${FILTER_API_ENDPOINT:-}
+      FILTER_API_TOKEN: ${FILTER_API_TOKEN:-}
       FILTER_API_CUSTOM_HEADERS: ${FILTER_API_CUSTOM_HEADERS:-}
-
-      # Event filtering and batching
       FILTER_EVENT_TOPICS: ${FILTER_EVENT_TOPICS:-*}
       FILTER_FLUSH_INTERVAL_SECONDS: ${FILTER_FLUSH_INTERVAL_SECONDS:-5.0}
       FILTER_MAX_BATCH_EVENTS: ${FILTER_MAX_BATCH_EVENTS:-5000}
