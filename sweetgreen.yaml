@@ -58,7 +58,8 @@ services:
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       FILTER_ID: VideoIn
-      FILTER_SOURCES: ${VIDEO_INPUT:-file:///video.mp4!sync!loop=false}
+      # Resize to 720p - balances quality vs inference speed
+      FILTER_SOURCES: ${VIDEO_INPUT:-file:///video.mp4!sync!loop=false!resize=1280x720}
       FILTER_FPS: ${FILTER_FPS:-5}
       FILTER_OUTPUTS: "tcp://*:5550"
       FILTER_OUTPUTS_FILTER: "true"
