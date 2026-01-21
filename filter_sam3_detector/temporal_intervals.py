@@ -282,6 +282,7 @@ class IntervalTracker:
         presence_threshold: EMA threshold for presence detection
         output_json_path: Optional path for JSON output (streaming)
         on_interval_closed: Optional callback(interval) when interval closes
+        streaming_mode: If True, emit intervals incrementally to JSON file
     """
 
     def __init__(
@@ -291,6 +292,7 @@ class IntervalTracker:
         presence_threshold: float = 0.5,
         output_json_path: Optional[str] = None,
         on_interval_closed: Optional[callable] = None,
+        streaming_mode: bool = False,
     ):
         self.tracker = EMATracker(
             half_life=half_life,
@@ -300,6 +302,7 @@ class IntervalTracker:
 
         self.output_json_path = Path(output_json_path) if output_json_path else None
         self.on_interval_closed = on_interval_closed
+        self.streaming_mode = streaming_mode
 
         # Interval tracking state
         self.frame_count = 0
@@ -309,7 +312,7 @@ class IntervalTracker:
         # Streaming file handle
         self._json_file = None
 
-        if self.output_json_path:
+        if self.output_json_path and self.streaming_mode:
             self._open_streaming_file()
 
     def _open_streaming_file(self):

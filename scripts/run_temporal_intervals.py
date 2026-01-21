@@ -5,6 +5,15 @@ Standalone script to run temporal interval detection on a video file.
 This script demonstrates the temporal interval detection system using SAM3
 for object detection and EMA-based temporal smoothing.
 
+EFFICIENT MULTI-PROMPT DETECTION:
+This script uses the `text_prompts` feature for efficient parallel detection
+of multiple classes. Instead of running the full SAM3 pipeline N times for
+N prompts (O(N) image encodings), it:
+  1. Encodes the image ONCE (expensive backbone pass)
+  2. For each prompt, encodes text and runs grounding (reusing cached image features)
+
+This provides significant speedup when detecting multiple classes.
+
 Usage:
     python scripts/run_temporal_intervals.py VIDEO_PATH [OPTIONS]
 
@@ -12,7 +21,7 @@ Examples:
     # Basic usage with default prompts
     python scripts/run_temporal_intervals.py video.mp4
 
-    # Custom prompts
+    # Custom prompts (all detected efficiently in single pass per frame)
     python scripts/run_temporal_intervals.py video.mp4 --prompts "person,car,dog"
 
     # Adjust detection parameters
@@ -83,10 +92,14 @@ def run_temporal_detection(
         print(f"EMA half_life: {half_life}, threshold: {presence_threshold}")
         print()
 
-    # Initialize SAM3 detector (single model, switch prompts per-frame)
+    # Initialize SAM3 detector with MULTIPLE PROMPTS
+    # This uses the new text_prompts feature for efficient parallel detection:
+    # - Image features are encoded ONCE
+    # - Each prompt runs text encoding + grounding (reusing cached image features)
+    # - Much faster than running the full pipeline N times for N prompts
     detector_config = FilterSAM3DetectorConfig()
     detector_config['model_size'] = 'large'
-    detector_config['text_prompt'] = prompts[0]
+    detector_config['text_prompts'] = prompts  # Use text_prompts (list) for parallel detection
     detector_config['confidence_threshold'] = confidence_threshold
     detector_config['output_label'] = 'sam3_detections'
 
@@ -101,7 +114,7 @@ def run_temporal_detection(
         "half_life": half_life,
         "presence_threshold": presence_threshold,
         "detection_key": "sam3_detections",
-        "label_field": "label",
+        "label_field": "class",  # Use 'class' field which is set by multi-prompt detection
         "score_field": "score",
         "output_json_path": temp_output,
         "emit_on_complete": True,
@@ -131,28 +144,23 @@ def run_temporal_detection(
 
         frames_processed += 1
 
-        # Run detector for each prompt
-        all_detections = []
-        for prompt in prompts:
-            detector.text_prompt = prompt
+        # Run detector ONCE for all prompts (efficient multi-prompt detection)
+        # The detector processes all prompts in a single call, reusing cached image features
+        detector_frame = Frame(
+            image=image.copy(),
+            data={"meta": {"id": frame_id, "ts": frame_id / fps}},
+            format="BGR"
+        )
 
-            detector_frame = Frame(
-                image=image.copy(),
-                data={"meta": {"id": frame_id, "ts": frame_id / fps}},
-                format="BGR"
-            )
+        detector_output = detector.process({"video": detector_frame})
+        detected_frame = detector_output.get("video", detector_frame)
 
-            detector_output = detector.process({"video": detector_frame})
-            detected_frame = detector_output.get("video", detector_frame)
+        # All detections from all prompts are returned with 'class' field set
+        all_detections = detected_frame.data.get("meta", {}).get("sam3_detections", [])
 
-            frame_detections = detected_frame.data.get("meta", {}).get("sam3_detections", [])
-            for det in frame_detections:
-                det['label'] = prompt
-                all_detections.append(det)
-
-        # Count detections
+        # Count detections by class (set by multi-prompt detection)
         for det in all_detections:
-            label = det.get("label", "unknown")
+            label = det.get("class", det.get("label", "unknown"))
             if label in detection_counts:
                 detection_counts[label] += 1
 

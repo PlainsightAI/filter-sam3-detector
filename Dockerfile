@@ -2,9 +2,14 @@
 # PyTorch 2.9.1 with CUDA 12.8 supports sm_120 (RTX 50-series / Blackwell)
 FROM pytorch/pytorch:2.9.1-cuda12.8-cudnn9-runtime
 
+# Install uv for fast, correct dependency resolution
+COPY --from=ghcr.io/astral-sh/uv:0.9.26 /uv /uvx /bin/
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+    UV_LINK_MODE=copy \
+    UV_COMPILE_BYTECODE=1 \
+    UV_PYTHON_DOWNLOADS=never
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
@@ -15,23 +20,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Copy vendorized sam3 first (needed for local install)
+# Copy vendorized sam3 first (needed for local install via tool.uv.sources)
 COPY sam3/ /app/sam3/
 
 # Copy project files
 COPY pyproject.toml VERSION README.md /app/
 COPY filter_sam3_detector/ /app/filter_sam3_detector/
 
-# Install dependencies
-RUN pip install --upgrade pip && \
-    pip install \
-    --index-url https://python.openfilter.io/simple \
-    --extra-index-url https://pypi.org/simple \
-    -e /app/sam3 && \
-    pip install \
-    --index-url https://python.openfilter.io/simple \
-    --extra-index-url https://pypi.org/simple \
-    -e .
+# Install dependencies using uv (respects tool.uv.sources for local sam3)
+RUN uv pip install --system -e .
 
 # Download SAM3 model weights during build and bake into image.
 # Uses HF_TOKEN secret for authentication with gated models.
