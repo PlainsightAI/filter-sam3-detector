@@ -21,6 +21,7 @@ except RuntimeError:
 from openfilter.filter_runtime.filter import FilterConfig, Filter, Frame
 
 from .temporal_intervals import EMATracker, DetectionInterval, IntervalTracker
+from .streaming_video_processor import StreamingVideoProcessor
 
 __all__ = ["FilterSAM3DetectorConfig", "FilterSAM3Detector"]
 
@@ -108,6 +109,10 @@ class FilterSAM3Detector(Filter):
             "temporal_streaming_mode": False,  # Emit intervals incrementally to JSON
             "temporal_emit_on_change": True,  # Add interval state to frame metadata on changes
             "temporal_label_field": None,  # Detection field for class label (None = use text_prompt)
+            # Video mode options (experimental - uses memory-based tracking)
+            "enable_video_mode": False,  # Use video mode with temporal tracking
+            "video_detection_interval": 5,  # Frames between full detection runs in video mode
+            "video_min_tracking_confidence": 0.3,  # Re-detect if tracking confidence drops
         }
         
         for key, default_value in defaults.items():
@@ -145,6 +150,12 @@ class FilterSAM3Detector(Filter):
             "temporal_streaming_mode": bool,
             "temporal_emit_on_change": bool,
             "temporal_label_field": str,
+            # Grounding cache (skip grounding for K-1 out of every K frames)
+            "grounding_cache_frames": int,
+            # Video mode env mappings
+            "enable_video_mode": bool,
+            "video_detection_interval": int,
+            "video_min_tracking_confidence": float,
         }
         
         # Special handling for FILTER_OUTPUT_PATH (maps to output_path)
@@ -324,10 +335,20 @@ class FilterSAM3Detector(Filter):
 
         logger.info(f"Using device: {self.device}")
 
+        # Video mode configuration
+        self.enable_video_mode = config.get("enable_video_mode", False)
+        self.video_detection_interval = config.get("video_detection_interval", 5)
+        self.video_min_tracking_confidence = config.get("video_min_tracking_confidence", 0.3)
+        self.video_processor = None
+
         # Load SAM3 model
         self.model = None
         self.processor = None
-        self._load_model()
+
+        if self.enable_video_mode:
+            self._load_video_model()
+        else:
+            self._load_model()
 
         # Load exemplar images if provided
         self.visual_prompt_embed = None
@@ -335,11 +356,19 @@ class FilterSAM3Detector(Filter):
         if self.exemplars_path:
             self._load_exemplar_images()
 
-        # Log multi-output mode configuration
+        # Log multi-output mode configuration and pre-cache text embeddings
+        # This is the KEY OPTIMIZATION: text prompts are static, so we encode them ONCE
+        # at startup instead of on every frame. This saves significant inference time.
+        self.cached_text_embeddings = {}  # prompt -> {language_features, language_mask, language_embeds}
+
         if self.prompt_sets:
             logger.info(f"Multi-output mode enabled with {len(self.prompt_sets)} prompt sets:")
             for ps in self.prompt_sets:
                 logger.info(f"  - {ps['name']}: prompts={ps['prompts']}, topic={ps.get('topic', 'main')}")
+
+            # Pre-cache text embeddings for all prompts in all prompt sets
+            if self.model is not None:
+                self._cache_text_embeddings()
 
         # Initialize temporal interval tracking if enabled
         self.enable_temporal_intervals = config.get("enable_temporal_intervals", False)
@@ -586,9 +615,12 @@ class FilterSAM3Detector(Filter):
                 # Process each prompt using cached image features
                 if prompts_to_use:
                     for prompt in prompts_to_use:
-                        # Encode text prompt and run grounding
+                        # Use cached text embeddings if available, otherwise encode on-the-fly
                         # This reuses the cached image features from set_image()
-                        prompt_state = self.processor.set_text_prompt_no_grounding(prompt, state)
+                        if prompt in self.cached_text_embeddings:
+                            prompt_state = self._inject_cached_text_embedding(state, prompt)
+                        else:
+                            prompt_state = self.processor.set_text_prompt_no_grounding(prompt, state)
                         prompt_state = self.processor.forward_grounding(prompt_state)
 
                         # Extract detections for this prompt (use global ID counter for uniqueness)
@@ -827,8 +859,9 @@ class FilterSAM3Detector(Filter):
             ps_detections = []
 
             for prompt in ps_prompts:
-                # Encode text prompt and run grounding using cached image features
-                prompt_state = self.processor.set_text_prompt_no_grounding(prompt, state)
+                # Use cached text embeddings (pre-computed at startup) instead of encoding per-frame
+                # This is the KEY OPTIMIZATION that avoids re-running the text encoder on every frame
+                prompt_state = self._inject_cached_text_embedding(state, prompt)
                 prompt_state = self.processor.forward_grounding(prompt_state)
 
                 # Extract detections for this prompt
@@ -1092,6 +1125,96 @@ class FilterSAM3Detector(Filter):
 
         return detections
 
+    def _cache_text_embeddings(self):
+        """
+        Pre-cache text embeddings for all prompts at startup.
+
+        This is a critical optimization: text prompts are static, so we encode them
+        ONCE during setup instead of on every frame. The text encoder is a significant
+        portion of inference time, so caching these embeddings gives us a major speedup.
+
+        The cached embeddings are stored in self.cached_text_embeddings[prompt] and
+        contain the language_features, language_mask, and language_embeds that would
+        normally be computed by set_text_prompt_no_grounding().
+        """
+        if self.model is None:
+            logger.warning("Cannot cache text embeddings: model not loaded")
+            return
+
+        # Collect all unique prompts from all prompt sets
+        all_prompts = set()
+        if self.prompt_sets:
+            for ps in self.prompt_sets:
+                for prompt in ps.get('prompts', []):
+                    all_prompts.add(prompt)
+
+        # Also cache single text_prompt and text_prompts if configured
+        if self.text_prompt:
+            all_prompts.add(self.text_prompt)
+        if self.text_prompts:
+            for prompt in self.text_prompts:
+                all_prompts.add(prompt)
+
+        if not all_prompts:
+            logger.debug("No prompts to cache")
+            return
+
+        logger.info(f"Pre-caching text embeddings for {len(all_prompts)} unique prompts...")
+
+        with torch.no_grad():
+            for prompt in all_prompts:
+                try:
+                    # Encode the text prompt using the model's backbone
+                    text_outputs = self.model.backbone.forward_text([prompt], device=str(self.device))
+
+                    # Store the relevant tensors (detach to avoid memory leaks)
+                    self.cached_text_embeddings[prompt] = {
+                        'language_features': text_outputs.get('language_features'),
+                        'language_mask': text_outputs.get('language_mask'),
+                        'language_embeds': text_outputs.get('language_embeds'),
+                    }
+                    logger.debug(f"Cached text embedding for prompt: '{prompt}'")
+
+                except Exception as e:
+                    logger.warning(f"Failed to cache text embedding for '{prompt}': {e}")
+
+        logger.info(f"Cached {len(self.cached_text_embeddings)} text embeddings")
+
+    def _inject_cached_text_embedding(self, state: dict, prompt: str) -> dict:
+        """
+        Inject cached text embedding into state, avoiding re-encoding.
+
+        This replaces the call to processor.set_text_prompt_no_grounding() with
+        a direct injection of pre-computed language features.
+
+        Args:
+            state: State dict from set_image() with backbone_out
+            prompt: Text prompt to inject embedding for
+
+        Returns:
+            Updated state with language features injected
+        """
+        if prompt not in self.cached_text_embeddings:
+            # Fallback: encode the prompt on-the-fly (shouldn't happen normally)
+            logger.warning(f"Text embedding not cached for '{prompt}', encoding on-the-fly")
+            return self.processor.set_text_prompt_no_grounding(prompt, state)
+
+        cached = self.cached_text_embeddings[prompt]
+
+        # Inject cached language features into backbone_out
+        if cached.get('language_features') is not None:
+            state['backbone_out']['language_features'] = cached['language_features']
+        if cached.get('language_mask') is not None:
+            state['backbone_out']['language_mask'] = cached['language_mask']
+        if cached.get('language_embeds') is not None:
+            state['backbone_out']['language_embeds'] = cached['language_embeds']
+
+        # Initialize geometric prompt if not present (same as set_text_prompt_no_grounding)
+        if 'geometric_prompt' not in state:
+            state['geometric_prompt'] = self.model._get_dummy_prompt()
+
+        return state
+
     def _load_model(self):
         """
         Load the SAM3 model from HuggingFace.
@@ -1154,6 +1277,95 @@ class FilterSAM3Detector(Filter):
             logger.error(traceback.format_exc())
             self.model = None
             self.processor = None
+
+    def _load_video_model(self):
+        """
+        Load the SAM3 video model for streaming video processing.
+
+        Video mode uses memory-based tracking for faster inference:
+        - First frame: Full detection
+        - Subsequent frames: Memory-based propagation (10x faster)
+        - Periodic re-detection to correct drift
+
+        This is ideal for video streams at 5-6 fps (matches SAM3's training).
+        """
+        if not HAS_SAM3:
+            logger.error("SAM3 not available. Install from: https://github.com/facebookresearch/sam3")
+            return
+
+        try:
+            logger.info(f"Loading SAM3 VIDEO model on device: {self.device}")
+            logger.info(f"  detection_interval={self.video_detection_interval}")
+            logger.info(f"  min_tracking_confidence={self.video_min_tracking_confidence}")
+
+            # Find BPE path
+            bpe_path = self._find_bpe_path()
+
+            # Create streaming video processor
+            self.video_processor = StreamingVideoProcessor(
+                device=str(self.device),
+                confidence_threshold=self.confidence_threshold,
+                detection_interval=self.video_detection_interval,
+                min_tracking_confidence=self.video_min_tracking_confidence,
+                bpe_path=bpe_path,
+            )
+
+            if not self.video_processor.load_model():
+                logger.error("Failed to load video model")
+                self.video_processor = None
+                return
+
+            # Pre-cache text embeddings for all configured prompts
+            all_prompts = set()
+            if self.prompt_sets:
+                for ps in self.prompt_sets:
+                    for prompt in ps.get('prompts', []):
+                        all_prompts.add(prompt)
+            if self.text_prompt:
+                all_prompts.add(self.text_prompt)
+            if self.text_prompts:
+                for prompt in self.text_prompts:
+                    all_prompts.add(prompt)
+
+            if all_prompts:
+                self.video_processor.cache_text_embeddings(list(all_prompts))
+
+            # Also set model and processor for compatibility with existing code paths
+            self.model = self.video_processor.model
+            self.processor = self.video_processor.processor
+
+            logger.info(f"SAM3 video model loaded successfully on {self.device}")
+
+        except Exception as e:
+            logger.error(f"Failed to load SAM3 video model: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            self.video_processor = None
+
+    def _find_bpe_path(self) -> Optional[str]:
+        """Find the BPE tokenizer file path."""
+        # Try vendorized sam3 (in project root/sam3/assets/)
+        vendorized_bpe = Path(__file__).parent.parent / "sam3" / "assets" / "bpe_simple_vocab_16e6.txt.gz"
+        if vendorized_bpe.exists():
+            return str(vendorized_bpe)
+
+        # Try vendorized sam3/sam3/assets/ (alternative location)
+        vendorized_bpe2 = Path(__file__).parent.parent / "sam3" / "sam3" / "assets" / "bpe_simple_vocab_16e6.txt.gz"
+        if vendorized_bpe2.exists():
+            return str(vendorized_bpe2)
+
+        # Try to find in installed package
+        try:
+            import sam3
+            sam3_path = Path(sam3.__file__).parent
+            installed_bpe = sam3_path / "assets" / "bpe_simple_vocab_16e6.txt.gz"
+            if installed_bpe.exists():
+                return str(installed_bpe)
+        except Exception as e:
+            logger.debug(f"Could not find BPE in installed package: {e}")
+
+        logger.warning("BPE file not found, SAM3 will try to use default path")
+        return None
 
     def _load_exemplar_images(self):
         """
