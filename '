@@ -1,0 +1,22 @@
+Consolidate Sweetgreen pipeline config and add integration testing
+
+- Rename TESTING.md to SWEETGREEN.md with expanded documentation
+- Delete sweetgreen.prod.yaml, fold event-sink into sweetgreen.yaml via profiles
+- Add FILTER_OUTPUTS_FILTER and FILTER_SOURCES config for _filter topic subscription
+- Implement _extract_filter_frame_id() in filter.py for TI-130 frame ID tracking
+- Add globally unique detection IDs across all frames (sequential 1, 2, 3...)
+- Include frame_id at both top level and in meta for filter-event-sink compatibility
+- Integrate real production aggregator with topic mapping (main, bowl, dressing_cups)
+- Update default image to us-west1-docker.pkg.dev/plainsightai-dev/oci/filter-sam3-detector:0.2.0-dev
+
+# Please enter the commit message for your changes. Lines starting
+# with '#' will be ignored, and an empty message aborts the commit.
+#
+# Date:      Tue Jan 20 13:22:56 2026 -0500
+#
+# On branch vk/8b66-rebase-onto-main
+# Changes to be committed:
+#	new file:   SWEETGREEN.md
+#	modified:   filter_sam3_detector/filter.py
+#	modified:   sweetgreen.yaml
+#
