@@ -1,0 +1,76 @@
+# SAM3 detector for Sweetgreen-style ingredient detection
+# Outputs event-sink compatible NDJSON for offline analysis
+#
+# Usage:
+#   1. Build local image: HF_TOKEN=$(gcloud secrets versions access latest --secret=sam3-hf-token --project=plainsightai-dev) \
+#                         docker build --secret id=hf_token,env=HF_TOKEN -t filter-sam3-detector:local .
+#   2. Place test video:  cp your-video.mp4 data/sample-video.mp4
+#   3. Run pipeline:      docker compose -f sweetgreen.yaml up --abort-on-container-exit
+#   4. View detections:   cat output/detections.jsonl
+
+services:
+  video_in:
+    image: containers.openfilter.io/plainsightai/openfilter-video-in:v0.1.10
+    platform: linux/amd64
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      FILTER_ID: VideoIn
+      # Use local video file with sync mode for single-pass processing
+      # !sync processes all frames without skipping, !loop=false stops at end
+      FILTER_SOURCES: ${VIDEO_INPUT:-file:///video.mp4!sync!loop=false}
+      FILTER_FPS: ${FILTER_FPS:-5}
+      FILTER_OUTPUTS: tcp://*:5550
+    volumes:
+      - ./data/sample-video.mp4:/video.mp4:ro
+    networks:
+      - filter-network
+
+  sam3_detector:
+    image: us-west1-docker.pkg.dev/plainsightai-dev/oci/filter-sam3-detector:0.2.0-dev
+    platform: linux/amd64
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      FILTER_ID: SAM3Detector
+      FILTER_SOURCES: tcp://video_in:5550
+      FILTER_OUTPUTS: tcp://*:5551
+
+      # SAM3 multi-class detection - sweetgreen ingredients
+      # Uses FILTER_TEXT_PROMPTS (list) for efficient parallel detection
+      # Includes bowl, chit, dressing_cup for SG aggregator compatibility
+      FILTER_TEXT_PROMPTS: ${FILTER_TEXT_PROMPTS:-bowl,chit,dressing_cup,salad,avocado,chicken,steak,egg,tofu,portobello}
+      FILTER_CONFIDENCE_THRESHOLD: ${FILTER_CONFIDENCE_THRESHOLD:-0.3}
+      FILTER_OUTPUT_LABEL: sam3_detections
+      FILTER_OUTPUT_BOXES: "true"
+      FILTER_VISUALIZE: "false"
+
+      # Frame-level output: write detections in event-sink format to NDJSON
+      FILTER_OUTPUT_PATH: /output/detections.jsonl
+      FILTER_OUTPUT_FILTER_NAME: SAM3Detector
+
+      # Disable temporal intervals for frame-level output
+      FILTER_ENABLE_TEMPORAL_INTERVALS: "false"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    volumes:
+      - ./output:/output
+    networks:
+      - filter-network
+
+  # Null sink to consume frames (required for pipeline to progress)
+  webvis:
+    image: containers.openfilter.io/plainsightai/openfilter-webvis:v0.1.10
+    platform: linux/amd64
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-WARNING}
+      FILTER_ID: Webvis
+      FILTER_SOURCES: tcp://sam3_detector:5551
+    networks:
+      - filter-network
+
+networks:
+  filter-network:

@@ -1,0 +1,10 @@
+# Development Dockerfile - extends existing local image with updated filter code
+FROM filter-sam3-detector:local
+
+WORKDIR /app
+
+# Copy updated filter code
+COPY filter_sam3_detector/ /app/filter_sam3_detector/
+
+# Default: run SAM3 detector filter
+CMD ["python", "-m", "filter_sam3_detector.filter"]

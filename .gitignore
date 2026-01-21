@@ -56,3 +56,5 @@ results*
 logs/*
 
 .env
+
+output/*
