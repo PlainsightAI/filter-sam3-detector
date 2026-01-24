@@ -922,7 +922,7 @@ class FilterSAM3Detector(Filter):
         such as the sweetgreen subject data aggregator.
 
         Protege format expects:
-        - meta.detections: list of {"class": str, "rois": [[x1,y1,x2,y2], ...]}
+        - meta.detections: list of {"class": str, "rois": [[x1,y1,x2,y2], ...], "confidences": [float, ...]}
         - meta.classification: {"classes": [...], "confidences": [...], "architecture": str}
 
         Args:
@@ -940,9 +940,10 @@ class FilterSAM3Detector(Filter):
             return
 
         # Build protege-style detections list
-        # Group detections by class and collect ROIs
+        # Group detections by class and collect ROIs with per-ROI confidences
         class_rois: dict[str, list] = {}
-        class_scores: dict[str, float] = {}  # Track max score per class
+        class_confidences: dict[str, list] = {}  # Per-ROI confidence scores
+        class_max_scores: dict[str, float] = {}  # Track max score per class for classification block
 
         for det in detections:
             cls = det.get('class') or det.get('class_name') or 'object'
@@ -954,25 +955,28 @@ class FilterSAM3Detector(Filter):
 
             if cls not in class_rois:
                 class_rois[cls] = []
-                class_scores[cls] = 0.0
+                class_confidences[cls] = []
+                class_max_scores[cls] = 0.0
 
             # ROIs in protege format: list of [x1, y1, x2, y2] (can have multiple per class)
             class_rois[cls].append(box)
-            class_scores[cls] = max(class_scores[cls], score)
+            class_confidences[cls].append(score)
+            class_max_scores[cls] = max(class_max_scores[cls], score)
 
-        # Build detections in protege format
+        # Build detections in protege format with per-ROI confidences
         protege_detections = []
         for cls, rois in class_rois.items():
             protege_detections.append({
                 'class': cls,
                 'rois': rois,
+                'confidences': class_confidences[cls],
             })
 
         frame_meta['detections'] = protege_detections
 
         # Build classification block (classes with their confidence scores)
         # Sort by score descending for consistency
-        sorted_classes = sorted(class_scores.items(), key=lambda x: x[1], reverse=True)
+        sorted_classes = sorted(class_max_scores.items(), key=lambda x: x[1], reverse=True)
         classes = [cls for cls, _ in sorted_classes]
         confidences = [score for _, score in sorted_classes]
 
