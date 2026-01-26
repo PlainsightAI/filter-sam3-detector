@@ -31,16 +31,14 @@ COPY filter_sam3_detector/ /app/filter_sam3_detector/
 RUN uv pip install --system -e .
 
 # Download SAM3 model weights during build and bake into image.
-# Uses HF_TOKEN secret for authentication with gated models.
+# Uses BuildKit secret mount for secure authentication with gated models.
 # The model is cached at /root/.cache/huggingface/hub (default HF cache location).
 # At runtime, no HF_TOKEN is needed since model is already in the image.
-RUN --mount=type=secret,id=hf_token \
-    if [ -f /run/secrets/hf_token ]; then \
-      export HF_TOKEN=$(cat /run/secrets/hf_token); \
-    fi && \
-    python -c "\
+RUN --mount=type=secret,id=hf_token python -c "\
 from huggingface_hub import snapshot_download; \
-snapshot_download(repo_id='facebook/sam3'); \
+token = open('/run/secrets/hf_token').read().strip(); \
+print(f'Token present: {bool(token)}'); \
+snapshot_download(repo_id='facebook/sam3', token=token); \
 print('SAM3 model weights baked into container')"
 
 # Default: run SAM3 detector filter
