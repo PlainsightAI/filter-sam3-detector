@@ -79,7 +79,7 @@ class FilterSAM3Detector(Filter):
         
         # Set defaults if not present
         defaults = {
-            "model_id": "facebook/sam2-hiera-large",
+            "model_id": "facebook/sam3",
             "device": "cuda",
             "text_prompt": None,  # Single prompt (backward compatible)
             "text_prompts": None,  # Multiple prompts for parallel detection
@@ -268,7 +268,7 @@ class FilterSAM3Detector(Filter):
         self.jsonl_file = None
 
         # Store configuration (access as dict since FilterConfig is dict-like)
-        self.model_id = config.get("model_id", "facebook/sam2-hiera-large")
+        self.model_id = config.get("model_id", "facebook/sam3")
         self.text_prompt = config.get("text_prompt")  # Single prompt (backward compatible)
         self.text_prompts = config.get("text_prompts")  # Multiple prompts for parallel detection
         self.prompt_sets = config.get("prompt_sets")  # Multi-output mode
@@ -854,6 +854,8 @@ class FilterSAM3Detector(Filter):
             ps_threshold = prompt_set.get('confidence_threshold', self.confidence_threshold)
             ps_max_detections = prompt_set.get('max_detections', self.max_detections)
             ps_filter_name = prompt_set.get('filter_name', f"SAM3_{ps_name}")
+            # Optional label aliases: maps prompt -> output label (e.g., "printed order ticket" -> "chit")
+            ps_label_aliases = prompt_set.get('label_aliases', {})
 
             # Collect detections for this prompt set
             ps_detections = []
@@ -864,9 +866,12 @@ class FilterSAM3Detector(Filter):
                 prompt_state = self._inject_cached_text_embedding(state, prompt)
                 prompt_state = self.processor.forward_grounding(prompt_state)
 
+                # Determine output label: use alias if defined, otherwise use prompt
+                output_label = ps_label_aliases.get(prompt, prompt)
+
                 # Extract detections for this prompt
                 prompt_detections = self._extract_detections_from_state(
-                    prompt_state, prompt, img_width, img_height, self.global_detection_id,
+                    prompt_state, output_label, img_width, img_height, self.global_detection_id,
                     confidence_threshold=ps_threshold,
                     max_detections=ps_max_detections
                 )
@@ -887,6 +892,10 @@ class FilterSAM3Detector(Filter):
 
             # Add protege-compatible output
             self._add_protege_compatible_output(output_meta, ps_detections)
+
+            # Also add detections at top-level for aggregator compatibility
+            # (aggregator looks for frame.data['detections'] not frame.data['meta']['detections'])
+            output_frame.data['detections'] = output_meta.get('detections', [])
 
             # Add to output frames with the prompt set's topic
             output_frames[ps_topic] = output_frame
@@ -919,11 +928,15 @@ class FilterSAM3Detector(Filter):
         Add protege-compatible output format to frame metadata.
 
         This enables SAM3 to work with downstream filters that expect protege-model format,
-        such as the sweetgreen subject data aggregator.
+        such as the sweetgreen subject data aggregator and the golden truth comparison engine
+        (PR 355 frame-level format).
 
-        Protege format expects:
-        - meta.detections: list of {"class": str, "rois": [[x1,y1,x2,y2], ...], "confidences": [float, ...]}
+        Output format (per detection):
+        - meta.detections: list of {"label": str, "confidence": float, "bbox": {x, y, width, height}}
         - meta.classification: {"classes": [...], "confidences": [...], "architecture": str}
+
+        Each detection has ONE box with ONE confidence score.
+        Uses "label" and "bbox" format for PR 355 comparator compatibility.
 
         Args:
             frame_meta: Frame metadata dict to update
@@ -939,40 +952,45 @@ class FilterSAM3Detector(Filter):
             }
             return
 
-        # Build protege-style detections list
-        # Group detections by class and collect ROIs with per-ROI confidences
-        class_rois: dict[str, list] = {}
-        class_confidences: dict[str, list] = {}  # Per-ROI confidence scores
+        # Build detections list - one per object with individual confidence
+        # Uses "label" and "bbox" format for PR 355 comparator compatibility
+        output_detections = []
         class_max_scores: dict[str, float] = {}  # Track max score per class for classification block
 
         for det in detections:
-            cls = det.get('class') or det.get('class_name') or 'object'
+            label = det.get('class') or det.get('class_name') or 'object'
             box = det.get('box')  # [x1, y1, x2, y2] pixel coordinates
             score = det.get('score', 0.0)
 
             if box is None:
                 continue
 
-            if cls not in class_rois:
-                class_rois[cls] = []
-                class_confidences[cls] = []
-                class_max_scores[cls] = 0.0
+            # Track max score per class for classification block
+            if label not in class_max_scores:
+                class_max_scores[label] = 0.0
+            class_max_scores[label] = max(class_max_scores[label], score)
 
-            # ROIs in protege format: list of [x1, y1, x2, y2] (can have multiple per class)
-            class_rois[cls].append(box)
-            class_confidences[cls].append(score)
-            class_max_scores[cls] = max(class_max_scores[cls], score)
+            # Convert [x1, y1, x2, y2] to {x, y, width, height} format
+            x1, y1, x2, y2 = box
+            bbox = {
+                'x': x1,
+                'y': y1,
+                'width': x2 - x1,
+                'height': y2 - y1,
+            }
 
-        # Build detections in protege format with per-ROI confidences
-        protege_detections = []
-        for cls, rois in class_rois.items():
-            protege_detections.append({
-                'class': cls,
-                'rois': rois,
-                'confidences': class_confidences[cls],
+            # Include both PR 355 format (label, confidence, bbox) AND
+            # aggregator-compatible format (class, rois) in same detection
+            output_detections.append({
+                'label': label,
+                'confidence': score,
+                'bbox': bbox,
+                # Aggregator-compatible fields:
+                'class': label,
+                'rois': [[int(x1), int(y1), int(x2), int(y2)]],
             })
 
-        frame_meta['detections'] = protege_detections
+        frame_meta['detections'] = output_detections
 
         # Build classification block (classes with their confidence scores)
         # Sort by score descending for consistency
@@ -1074,6 +1092,8 @@ class FilterSAM3Detector(Filter):
                 if hasattr(score, 'item'):
                     score = score.item()
                 detection['score'] = float(score)
+                # Also add 'confidence' for protege compatibility
+                detection['confidence'] = float(score)
 
             if self.output_masks and masks is not None and i < len(masks):
                 mask = masks[i]
@@ -1109,17 +1129,11 @@ class FilterSAM3Detector(Filter):
                 detection['class_name'] = class_name
                 detection['category_name'] = class_name
 
-                # Add normalized rois [x1, y1, x2, y2] (values between 0 and 1)
-                if 'box' in detection and img_width > 0 and img_height > 0:
+                # Add rois with pixel coordinates [x1, y1, x2, y2]
+                # This matches protege detection model output format for aggregator compatibility
+                if 'box' in detection:
                     x1, y1, x2, y2 = detection['box']
-                    # Normalize coordinates to [0, 1]
-                    roi_normalized = [
-                        float(x1) / img_width,
-                        float(y1) / img_height,
-                        float(x2) / img_width,
-                        float(y2) / img_height
-                    ]
-                    detection['rois'] = [roi_normalized]
+                    detection['rois'] = [[int(x1), int(y1), int(x2), int(y2)]]
 
                 # Add category_id if not already set (for COCO compatibility)
                 if 'category_id' not in detection:
