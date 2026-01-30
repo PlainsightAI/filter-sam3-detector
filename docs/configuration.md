@@ -158,6 +158,31 @@ cup_examples/
   - Crowded scenes: `50-100`
   - Performance optimization: Lower values process faster
 
+### Non-Maximum Suppression (NMS)
+
+NMS is used to suppress overlapping bounding boxes, keeping only the highest-confidence detection for each object.
+
+#### `nms_enabled`
+
+- **Type**: `bool`
+- **Default**: `True`
+- **Description**: Enable Non-Maximum Suppression to filter overlapping detections
+- **Note**: Highly recommended to keep enabled; without NMS, SAM3 may return ~100+ overlapping boxes per frame
+
+#### `nms_threshold`
+
+- **Type**: `float`
+- **Default**: `0.5`
+- **Range**: `0.0` to `1.0`
+- **Description**: IoU (Intersection over Union) threshold for NMS
+- **Behavior**:
+  - Lower values = more aggressive suppression (fewer boxes kept)
+  - Higher values = less aggressive suppression (more boxes kept)
+- **Recommendations**:
+  - `0.3`: Very aggressive - use when objects are well-separated
+  - `0.5`: Moderate (default) - good balance for most use cases
+  - `0.7`: Conservative - use when objects may legitimately overlap
+
 ### Output Configuration
 
 #### `output_masks`
@@ -263,6 +288,7 @@ The filter validates configuration parameters:
 - **Device**: Must be one of `"cuda"`, `"cpu"`, `"mps"`
 - **Confidence threshold**: Must be between 0.0 and 1.0
 - **Mask threshold**: Must be between 0.0 and 1.0
+- **NMS threshold**: Must be between 0.0 and 1.0
 - **Max detections**: Must be >= 1
 - **Prompts**: At least one of `text_prompt` or `exemplars_path` must be provided
 

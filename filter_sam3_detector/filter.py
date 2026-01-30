@@ -95,6 +95,9 @@ class FilterSAM3Detector(Filter):
             "output_label": "sam3_detections",
             "output_path": None,  # Path to save JSONL annotations
             "output_filter_name": "SAM3Detector",  # Filter name for event sink format
+            # NMS (Non-Maximum Suppression) options
+            "nms_enabled": True,  # Enable NMS to suppress overlapping detections
+            "nms_threshold": 0.5,  # IoU threshold for NMS (higher = more boxes kept)
             "frames_output_dir": None,  # Directory to save original frames
             "annotated_frames_output_dir": None,  # Directory to save annotated frames (separate from original)
             "save_annotated_frames": False,  # Save frames with visual annotations (boxes, scores, masks)
@@ -136,6 +139,8 @@ class FilterSAM3Detector(Filter):
             "output_scores": bool,
             "output_label": str,
             "output_path": str,
+            "nms_enabled": bool,
+            "nms_threshold": float,
             "frames_output_dir": str,
             "annotated_frames_output_dir": str,
             "save_annotated_frames": bool,
@@ -213,6 +218,10 @@ class FilterSAM3Detector(Filter):
         if max_detections < 1:
             raise ValueError(f"max_detections must be >= 1, got {max_detections}")
 
+        nms_threshold = config.get("nms_threshold", 0.5)
+        if not (0.0 <= nms_threshold <= 1.0):
+            raise ValueError(f"nms_threshold must be between 0 and 1, got {nms_threshold}")
+
         # Parse text_prompts from comma-separated string to list
         text_prompts = config.get("text_prompts")
         if isinstance(text_prompts, str):
@@ -282,6 +291,8 @@ class FilterSAM3Detector(Filter):
         self.output_label = config.get("output_label", "sam3_detections")
         self.output_path = config.get("output_path", None)
         self.output_filter_name = config.get("output_filter_name", "SAM3Detector")
+        self.nms_enabled = config.get("nms_enabled", True)
+        self.nms_threshold = config.get("nms_threshold", 0.5)
         self.frames_output_dir = config.get("frames_output_dir", None)
         self.annotated_frames_output_dir = config.get("annotated_frames_output_dir", None)
         self.save_annotated_frames = config.get("save_annotated_frames", False)
@@ -334,6 +345,7 @@ class FilterSAM3Detector(Filter):
             self.device = torch.device("cpu")
 
         logger.info(f"Using device: {self.device}")
+        logger.info(f"NMS enabled: {self.nms_enabled}, threshold: {self.nms_threshold}")
 
         # Video mode configuration
         self.enable_video_mode = config.get("enable_video_mode", False)
@@ -1039,6 +1051,10 @@ class FilterSAM3Detector(Filter):
         scores = state["scores"]
         masks = state.get("masks", None)
 
+        # Apply NMS if enabled to suppress overlapping detections
+        if self.nms_enabled and len(boxes) > 0:
+            boxes, scores, masks = self._apply_nms(boxes, scores, masks)
+
         num_detections = min(len(boxes), max_dets)
 
         actual_id = 0  # Track actual number of detections added
@@ -1539,6 +1555,57 @@ class FilterSAM3Detector(Filter):
         state["boxes"] = boxes
         state["scores"] = out_probs
         return state
+
+    def _apply_nms(self, boxes: torch.Tensor, scores: torch.Tensor, masks: torch.Tensor = None) -> tuple:
+        """
+        Apply Non-Maximum Suppression (NMS) to filter overlapping detections.
+
+        Uses torchvision.ops.nms which iteratively removes lower-scoring boxes
+        that have IoU greater than the threshold with a higher-scoring box.
+
+        Args:
+            boxes: Tensor of shape [N, 4] with boxes in (x1, y1, x2, y2) format
+            scores: Tensor of shape [N] with confidence scores
+            masks: Optional tensor of masks, shape [N, ...]
+
+        Returns:
+            Tuple of (filtered_boxes, filtered_scores, filtered_masks)
+            where filtered_masks is None if input masks is None
+        """
+        try:
+            from torchvision.ops import nms
+        except ImportError:
+            logger.warning("torchvision.ops.nms not available, skipping NMS")
+            return boxes, scores, masks
+
+        if len(boxes) == 0:
+            return boxes, scores, masks
+
+        # Ensure tensors are on the same device and have correct dtype
+        device = boxes.device
+        if not isinstance(scores, torch.Tensor):
+            scores = torch.tensor(scores, device=device)
+        if scores.device != device:
+            scores = scores.to(device)
+
+        # torchvision.ops.nms expects boxes as float and scores as 1D tensor
+        boxes_float = boxes.float()
+        scores_1d = scores.flatten() if scores.dim() > 1 else scores
+
+        # Apply NMS - returns indices of boxes to keep, sorted by score (descending)
+        keep_indices = nms(boxes_float, scores_1d, self.nms_threshold)
+
+        # Filter boxes, scores, and masks
+        filtered_boxes = boxes[keep_indices]
+        filtered_scores = scores[keep_indices]
+        filtered_masks = masks[keep_indices] if masks is not None else None
+
+        num_before = len(boxes)
+        num_after = len(keep_indices)
+        if num_before > num_after:
+            logger.debug(f"NMS: {num_before} -> {num_after} detections (IoU threshold={self.nms_threshold})")
+
+        return filtered_boxes, filtered_scores, filtered_masks
 
     def _visualize_detections(self, frame: Frame, detections: list) -> Frame:
         """
