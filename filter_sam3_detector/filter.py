@@ -551,6 +551,7 @@ class FilterSAM3Detector(Filter):
 
         return None
 
+    @torch.no_grad()
     def process(self, frames: dict[str, Frame]) -> dict[str, Frame]:
         """
         Process input frames and detect objects.
