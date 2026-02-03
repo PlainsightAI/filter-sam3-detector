@@ -202,8 +202,7 @@ filters = [
     }),
 ]
 
-runner = Filter.Runner(filters)
-runner.join()
+Filter.run_multi(filters)
 ```
 
 ### With Exemplars

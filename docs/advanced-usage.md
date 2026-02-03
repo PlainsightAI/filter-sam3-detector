@@ -10,23 +10,27 @@ Combine SAM3 detector with other OpenFilter filters:
 
 ```python
 from openfilter.filter_runtime.filter import Filter
+from openfilter.filter_runtime.filters.video_in import VideoIn
+from openfilter.filter_runtime.filters.resize import Resize
+from openfilter.filter_runtime.filters.filter_by_score import FilterByScore
+from openfilter.filter_runtime.filters.recorder import Recorder
 from filter_sam3_detector import FilterSAM3Detector
 
 filters = [
     # Input: Stream video frames
-    ("VideoIn", {
+    (VideoIn, {
         "sources": "file://input.mp4",
         "outputs": ["tcp://127.0.0.1:5555"],
     }),
-    
+
     # Pre-processing: Resize for performance
-    ("Resize", {
+    (Resize, {
         "sources": "tcp://127.0.0.1:5555",
         "outputs": ["tcp://127.0.0.1:5556"],
         "width": 640,
         "height": 480,
     }),
-    
+
     # Detection: SAM3 detector
     (FilterSAM3Detector, {
         "sources": "tcp://127.0.0.1:5556",
@@ -34,24 +38,23 @@ filters = [
         "text_prompt": "person",
         "confidence_threshold": 0.5,
     }),
-    
+
     # Post-processing: Filter by confidence
-    ("FilterByScore", {
+    (FilterByScore, {
         "sources": "tcp://127.0.0.1:5557",
         "outputs": ["tcp://127.0.0.1:5558"],
         "min_score": 0.7,
     }),
-    
+
     # Output: Save results
-    ("Recorder", {
+    (Recorder, {
         "sources": "tcp://127.0.0.1:5558",
         "path": "detections.jsonl",
         "format": "jsonl",
     }),
 ]
 
-runner = Filter.Runner(filters)
-runner.join()
+Filter.run_multi(filters)
 ```
 
 ### Topic Forwarding
@@ -59,26 +62,27 @@ runner.join()
 Preserve original frames while adding detections:
 
 ```python
+# Using same imports from above example
 filters = [
-    ("VideoIn", {
+    (VideoIn, {
         "sources": "file://input.mp4",
         "outputs": ["tcp://127.0.0.1:5555", "tcp://127.0.0.1:5559"],  # Split output
     }),
-    
+
     # Detection branch
     (FilterSAM3Detector, {
         "sources": "tcp://127.0.0.1:5555",
         "outputs": ["tcp://127.0.0.1:5556"],
         "text_prompt": "person",
     }),
-    
-    ("Recorder", {
+
+    (Recorder, {
         "sources": "tcp://127.0.0.1:5556",
         "path": "detections.jsonl",
     }),
-    
+
     # Original frames branch (preserved)
-    ("Recorder", {
+    (Recorder, {
         "sources": "tcp://127.0.0.1:5559",
         "path": "original_frames.jsonl",
     }),
@@ -164,7 +168,7 @@ video_files = [
 
 for video in video_files:
     filters = [
-        ("VideoIn", {
+        (VideoIn, {
             "sources": f"file://{Path(video).absolute()}",
             "outputs": ["tcp://127.0.0.1:5555"],
         }),
@@ -173,14 +177,13 @@ for video in video_files:
             "outputs": ["tcp://127.0.0.1:5556"],
             "text_prompt": "person",
         }),
-        ("Recorder", {
+        (Recorder, {
             "sources": "tcp://127.0.0.1:5556",
             "path": f"output_{Path(video).stem}.jsonl",
         }),
     ]
-    
-    runner = Filter.Runner(filters)
-    runner.join()
+
+    Filter.run_multi(filters)
 ```
 
 ## Dynamic Configuration
@@ -225,12 +228,11 @@ async def process_video_async(video_path, prompt):
     
     def run_pipeline():
         filters = [
-            ("VideoIn", {"sources": f"file://{video_path}"}),
+            (VideoIn, {"sources": f"file://{video_path}"}),
             (FilterSAM3Detector, {"text_prompt": prompt}),
-            ("Recorder", {"path": f"output_{video_path}.jsonl"}),
+            (Recorder, {"path": f"output_{video_path}.jsonl"}),
         ]
-        runner = Filter.Runner(filters)
-        return runner.join()
+        Filter.run_multi(filters)
     
     return await loop.run_in_executor(executor, run_pipeline)
 

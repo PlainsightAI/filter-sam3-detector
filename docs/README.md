@@ -95,14 +95,16 @@ filter.setup(filter.normalize_config(config))
 
 ```python
 from openfilter.filter_runtime.filter import Filter
+from openfilter.filter_runtime.filters.video_in import VideoIn
+from openfilter.filter_runtime.filters.recorder import Recorder
 
 filters = [
-    ("VideoIn", {"sources": "file://input.mp4"}),
+    (VideoIn, {"sources": "file://input.mp4"}),
     (FilterSAM3Detector, {"text_prompt": "person"}),
-    ("Recorder", {"path": "output.jsonl"}),
+    (Recorder, {"path": "output.jsonl"}),
 ]
 
-Filter.Runner(filters).join()
+Filter.run_multi(filters)
 ```
 
 See [advanced-usage.md](advanced-usage.md) for more examples.

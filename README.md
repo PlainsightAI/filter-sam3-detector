@@ -258,10 +258,12 @@ filter-sam3-detector
 ```python
 from filter_sam3_detector import FilterSAM3Detector
 from openfilter.filter_runtime.filter import Filter
+from openfilter.filter_runtime.filters.video_in import VideoIn
+from openfilter.filter_runtime.filters.recorder import Recorder
 
 # Define pipeline
 filters = [
-    ("VideoIn", {
+    (VideoIn, {
         "sources": "file://input.mp4",
         "outputs": ["tcp://127.0.0.1:5555"],
     }),
@@ -272,7 +274,7 @@ filters = [
         "confidence_threshold": 0.5,
         "device": "cuda",
     }),
-    ("Recorder", {
+    (Recorder, {
         "sources": "tcp://127.0.0.1:5556",
         "path": "detections.jsonl",
         "format": "jsonl",
@@ -280,8 +282,7 @@ filters = [
 ]
 
 # Run pipeline
-runner = Filter.Runner(filters)
-runner.join()
+Filter.run_multi(filters)
 ```
 
 ## Temporal Interval Detection
@@ -426,16 +427,19 @@ Combine with other OpenFilter filters:
 
 ```python
 from openfilter.filter_runtime.filter import Filter
+from openfilter.filter_runtime.filters.video_in import VideoIn
+from openfilter.filter_runtime.filters.resize import Resize
+from openfilter.filter_runtime.filters.recorder import Recorder
 from filter_sam3_detector import FilterSAM3Detector
 
 filters = [
-    ("VideoIn", {"sources": "file://input.mp4"}),
-    ("Resize", {"width": 640, "height": 480}),  # Pre-processing
+    (VideoIn, {"sources": "file://input.mp4"}),
+    (Resize, {"width": 640, "height": 480}),  # Pre-processing
     (FilterSAM3Detector, {"text_prompt": "person"}),
-    ("Recorder", {"path": "output.jsonl"}),
+    (Recorder, {"path": "output.jsonl"}),
 ]
 
-Filter.Runner(filters).join()
+Filter.run_multi(filters)
 ```
 
 ## Output Format
