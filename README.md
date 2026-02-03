@@ -148,12 +148,24 @@ python scripts/filter_object_detection.py \
 
 #### Exemplar-Based Detection (Few-Shot Learning)
 
-```bash
-# Prepare exemplar images first
-mkdir -p cup_examples
-# Add cropped images of cups to cup_examples/
+> ⚠️ **Note**: This feature is currently experimental. See [Known Issues](#known-issues) below.
 
-# Run detection
+Exemplar-based detection allows you to detect objects by providing example images instead of text descriptions. This is useful for objects that are hard to describe in text or domain-specific items.
+
+**Preparing Exemplar Images:**
+
+Exemplar images should be **pre-cropped** images showing exactly one instance of the target object. No JSON annotations are required - the images themselves serve as the visual reference.
+
+```bash
+# 1. Extract frames from a reference video
+ffmpeg -i reference_video.mp4 -vf "select='not(mod(n,30))'" -vsync vfr frames/frame_%04d.jpg
+
+# 2. Manually crop regions containing your target object
+# Use any image editor to crop tightly around the object
+mkdir -p cup_examples
+# Save cropped images to cup_examples/
+
+# 3. Run detection
 python scripts/filter_exemplar_detection.py \
     --video input.mp4 \
     --exemplars ./cup_examples/ \
@@ -164,13 +176,17 @@ python scripts/filter_exemplar_detection.py \
 **Exemplar Directory Structure:**
 ```
 cup_examples/
-├── cup1.jpg
-├── cup2.jpg
-├── cup3.png
+├── cup1.jpg    # Cropped image of target object
+├── cup2.jpg    # Different angle/lighting
+├── cup3.png    # Another example
 └── ...
 ```
 
-Each image should show exactly one instance of the object you want to detect.
+**Best Practices:**
+- Crop images tightly around the object (minimal background)
+- Use 3-5 exemplar images with varied angles and lighting
+- Ensure the object fills most of the image
+- Use lower confidence threshold (0.2-0.3) for exemplar-based detection
 
 ### Method 2: Docker Pipeline
 
@@ -525,6 +541,24 @@ make lint
 # Format code
 make format
 ```
+
+## Known Issues
+
+### Exemplar-Based Detection Not Working
+
+**Status**: Bug in `_load_exemplar_images()` - backbone output format handling is incorrect.
+
+**Symptoms**: When using `exemplars_path`, you may see warnings like:
+```
+WARNING  Failed to load exemplar example.jpg: 'NoneType' object is not subscriptable
+ERROR    No exemplar images could be loaded
+```
+
+**Root Cause**: The code at `filter.py:853-858` doesn't properly handle the SAM3 backbone output format. The backbone returns features in a different structure than expected.
+
+**Workaround**: Use text prompts (`text_prompt`) instead of exemplar images until this is fixed.
+
+**Tracking**: This issue affects the few-shot learning functionality. Text-based detection works correctly.
 
 ## Troubleshooting
 
