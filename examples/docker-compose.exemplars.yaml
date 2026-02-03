@@ -1,0 +1,73 @@
+# Exemplar-based detection example
+# Uses visual exemplar images instead of text prompts for few-shot detection
+#
+# Usage:
+#   1. Place your exemplar images in ./exemplars/ directory
+#   2. Place your input video as ./data/input.mp4
+#   3. Run: docker compose -f examples/docker-compose.exemplars.yaml up
+#   4. View results at http://localhost:8001
+#
+# Example with avocado detection:
+#   mkdir -p exemplars
+#   # Add clean avocado images to exemplars/
+#   docker compose -f examples/docker-compose.exemplars.yaml up
+
+services:
+  video_in:
+    image: containers.openfilter.io/plainsightai/openfilter-video-in:v0.1.10
+    platform: linux/amd64
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      FILTER_ID: VideoIn
+      FILTER_SOURCES: file:///video.mp4!loop!sync
+      FILTER_OUTPUTS: tcp://*:5550
+    volumes:
+      - ${VIDEO_PATH:-./data/input.mp4}:/video.mp4:ro
+    networks:
+      - filter-network
+
+  sam3_detector:
+    # Use GAR dev image or Docker Hub release
+    image: ${SAM3_IMAGE:-us-west1-docker.pkg.dev/plainsightai-dev/oci/filter-sam3-detector:latest}
+    platform: linux/amd64
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      FILTER_ID: SAM3Detector
+      FILTER_SOURCES: tcp://video_in:5550
+      FILTER_OUTPUTS: tcp://*:5551
+      # Exemplar-based detection config
+      FILTER_EXEMPLARS_PATH: /exemplars
+      FILTER_CONFIDENCE_THRESHOLD: ${CONFIDENCE_THRESHOLD:-0.5}
+      FILTER_NMS_THRESHOLD: ${NMS_THRESHOLD:-0.1}
+      FILTER_OUTPUT_LABEL: ${OUTPUT_LABEL:-exemplar_detections}
+      FILTER_OUTPUT_BOXES: "true"
+      FILTER_OUTPUT_SCORES: "true"
+      # Optional: save detections to JSONL
+      FILTER_OUTPUT_PATH: ${OUTPUT_PATH:-/output/detections.jsonl}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    volumes:
+      - ${EXEMPLARS_PATH:-./exemplars}:/exemplars:ro
+      - ${OUTPUT_DIR:-./output}:/output
+    networks:
+      - filter-network
+
+  webvis:
+    image: containers.openfilter.io/plainsightai/openfilter-webvis:v0.1.10
+    platform: linux/amd64
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      FILTER_ID: Webvis
+      FILTER_SOURCES: tcp://sam3_detector:5551
+    ports:
+      - "${WEBVIS_PORT:-8001}:8000"
+    networks:
+      - filter-network
+
+networks:
+  filter-network:
