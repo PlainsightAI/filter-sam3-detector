@@ -88,6 +88,7 @@ class FilterSAM3Detector(Filter):
             "exemplar_embeddings_cache": None,
             "confidence_threshold": 0.5,
             "mask_threshold": 0.5,
+            "nms_threshold": 0.5,  # IoU threshold for NMS (0 = disabled, lower = more aggressive)
             "max_detections": 100,
             "output_masks": False,  # Don't save masks by default (can be large)
             "output_boxes": True,
@@ -133,6 +134,7 @@ class FilterSAM3Detector(Filter):
             "exemplar_embeddings_cache": str,
             "confidence_threshold": float,
             "mask_threshold": float,
+            "nms_threshold": float,
             "max_detections": int,
             "output_masks": bool,
             "output_boxes": bool,
@@ -284,6 +286,7 @@ class FilterSAM3Detector(Filter):
         self.exemplars_path = config.get("exemplars_path")
         self.confidence_threshold = config.get("confidence_threshold", 0.5)
         self.mask_threshold = config.get("mask_threshold", 0.5)
+        self.nms_threshold = config.get("nms_threshold", 0.5)
         self.max_detections = config.get("max_detections", 100)
         self.output_masks = config.get("output_masks", True)
         self.output_boxes = config.get("output_boxes", True)
@@ -656,6 +659,12 @@ class FilterSAM3Detector(Filter):
                         dummy_text_outputs = self.model.backbone.forward_text(
                             ["visual"], device=str(self.device)
                         )
+                        # Move all dummy text outputs to match the backbone output device
+                        # (the model may have weights on a different device than self.device)
+                        target_device = state["backbone_out"]["vision_features"].device
+                        for key, value in dummy_text_outputs.items():
+                            if hasattr(value, 'to'):
+                                dummy_text_outputs[key] = value.to(target_device)
                         state["backbone_out"].update(dummy_text_outputs)
 
                     # Initialize geometric prompt if not present
@@ -1460,12 +1469,19 @@ class FilterSAM3Detector(Filter):
 
                         # Extract the main image embedding and pool it
                         # The backbone_out contains multi-scale features; we use the highest level
-                        if "sam2_backbone_out" in backbone_out:
+                        # Note: sam2_backbone_out key may exist but be None, so check value not just key
+                        sam2_out = backbone_out.get("sam2_backbone_out")
+                        if sam2_out is not None and "backbone_fpn" in sam2_out:
                             # Use SAM2 backbone features
-                            feats = backbone_out["sam2_backbone_out"]["backbone_fpn"][-1]
+                            feats = sam2_out["backbone_fpn"][-1]
+                        elif "backbone_fpn" in backbone_out and backbone_out["backbone_fpn"]:
+                            # Use direct backbone_fpn features (SAM3 format)
+                            feats = backbone_out["backbone_fpn"][-1]
+                        elif "vision_features" in backbone_out:
+                            # Fallback to vision_features
+                            feats = backbone_out["vision_features"]
                         else:
-                            # Fallback to other feature format
-                            feats = backbone_out.get("backbone_fpn", [backbone_out.get("image_embed")])[- 1]
+                            raise ValueError(f"Cannot extract features from backbone output. Keys: {backbone_out.keys()}")
 
                         # Global average pooling to get a single embedding per image
                         # Shape: [1, C, H, W] -> [1, C]
@@ -1482,19 +1498,20 @@ class FilterSAM3Detector(Filter):
                 logger.error("No exemplar images could be loaded")
                 return
 
-            # Average all embeddings to create the visual prompt
-            # Stack and average: [N, 1, C] -> [1, C]
+            # Stack all embeddings as separate visual tokens (no averaging)
+            # This allows each exemplar to contribute independently to detection
+            # The model will see all exemplars and can match against any of them
             stacked = torch.cat(all_embeddings, dim=0)  # [N, C]
-            averaged = stacked.mean(dim=0, keepdim=True)  # [1, C]
 
             # Format for SAM3's visual prompt: [seq_len, batch, hidden_dim]
-            # We treat the averaged embedding as a single visual token
-            self.visual_prompt_embed = averaged.unsqueeze(0)  # [1, 1, C]
+            # Each exemplar becomes a separate visual token in the prompt sequence
+            num_exemplars = len(all_embeddings)
+            self.visual_prompt_embed = stacked.unsqueeze(1)  # [N, 1, C]
             self.visual_prompt_mask = torch.zeros(
-                (1, 1), device=self.device, dtype=torch.bool
-            )  # No masking
+                (1, num_exemplars), device=self.device, dtype=torch.bool
+            )  # No masking for any exemplar
 
-            logger.info(f"Created visual prompt embedding from {len(all_embeddings)} exemplar images")
+            logger.info(f"Created visual prompt with {num_exemplars} exemplar tokens (shape: {self.visual_prompt_embed.shape})")
 
         except Exception as e:
             logger.error(f"Failed to load exemplar images: {e}")
@@ -1507,21 +1524,73 @@ class FilterSAM3Detector(Filter):
         """
         Run SAM3 grounding with visual prompt embeddings from exemplar images.
 
-        This is similar to the processor's _forward_grounding but includes
-        visual prompt embeddings.
+        This manually calls the model's internal methods to inject visual prompts,
+        since forward_grounding doesn't accept visual_prompt_embed directly.
         """
+        import torch
         from sam3.model import box_ops
         from sam3.model.data_misc import interpolate
 
-        # Run the model's forward_grounding with visual prompt
-        outputs = self.model.forward_grounding(
-            backbone_out=state["backbone_out"],
-            find_input=self.processor.find_stage,
-            geometric_prompt=state["geometric_prompt"],
-            find_target=None,
-            visual_prompt_embed=self.visual_prompt_embed,
-            visual_prompt_mask=self.visual_prompt_mask,
-        )
+        backbone_out = state["backbone_out"]
+        find_input = self.processor.find_stage
+        geometric_prompt = state["geometric_prompt"]
+
+        # Ensure visual prompt is on the correct device (match backbone output)
+        # Get the device from the backbone output
+        target_device = backbone_out.get("vision_features", self.visual_prompt_embed).device
+        visual_embed = self.visual_prompt_embed.to(target_device)
+        visual_mask = self.visual_prompt_mask.to(target_device)
+
+        # Encode prompt with visual embeddings - call internal method directly
+        with torch.profiler.record_function("SAM3Image._encode_prompt"):
+            prompt, prompt_mask, backbone_out = self.model._encode_prompt(
+                backbone_out,
+                find_input,
+                geometric_prompt,
+                visual_prompt_embed=visual_embed,
+                visual_prompt_mask=visual_mask,
+            )
+
+        # Run the encoder
+        with torch.profiler.record_function("SAM3Image._run_encoder"):
+            backbone_out, encoder_out, _ = self.model._run_encoder(
+                backbone_out, find_input, prompt, prompt_mask
+            )
+
+        out = {
+            "encoder_hidden_states": encoder_out["encoder_hidden_states"],
+            "prev_encoder_out": {
+                "encoder_out": encoder_out,
+                "backbone_out": backbone_out,
+            },
+        }
+
+        # Run the decoder
+        with torch.profiler.record_function("SAM3Image._run_decoder"):
+            out, hs = self.model._run_decoder(
+                memory=out["encoder_hidden_states"],
+                pos_embed=encoder_out["pos_embed"],
+                src_mask=encoder_out["padding_mask"],
+                out=out,
+                prompt=prompt,
+                prompt_mask=prompt_mask,
+                encoder_out=encoder_out,
+            )
+
+        # Run segmentation heads
+        with torch.profiler.record_function("SAM3Image._run_segmentation_heads"):
+            self.model._run_segmentation_heads(
+                out=out,
+                backbone_out=backbone_out,
+                img_ids=find_input.img_ids,
+                vis_feat_sizes=encoder_out["vis_feat_sizes"],
+                encoder_hidden_states=out["encoder_hidden_states"],
+                prompt=prompt,
+                prompt_mask=prompt_mask,
+                hs=hs,
+            )
+
+        outputs = out
 
         out_bbox = outputs["pred_boxes"]
         out_logits = outputs["pred_logits"]
@@ -1540,8 +1609,16 @@ class FilterSAM3Detector(Filter):
 
         img_h = state["original_height"]
         img_w = state["original_width"]
-        scale_fct = torch.tensor([img_w, img_h, img_w, img_h]).to(self.device)
+        scale_fct = torch.tensor([img_w, img_h, img_w, img_h]).to(boxes.device)
         boxes = boxes * scale_fct[None, :]
+
+        # Apply NMS to reduce overlapping detections
+        if len(boxes) > 0 and self.nms_threshold > 0:
+            from torchvision.ops import nms
+            nms_keep = nms(boxes, out_probs, self.nms_threshold)
+            boxes = boxes[nms_keep]
+            out_probs = out_probs[nms_keep]
+            out_masks = out_masks[nms_keep]
 
         out_masks = interpolate(
             out_masks.unsqueeze(1),
