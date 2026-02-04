@@ -19,13 +19,16 @@ The filter's performance is affected by:
 Reduce input resolution for faster processing:
 
 ```python
+from openfilter.filter_runtime.filters.video_in import VideoIn
+from openfilter.filter_runtime.filters.resize import Resize
+
 # In pipeline, resize before detection
 filters = [
-    ("VideoIn", {
+    (VideoIn, {
         "sources": "file://input.mp4",
         "outputs": ["tcp://127.0.0.1:5555"],
     }),
-    ("Resize", {
+    (Resize, {
         "sources": "tcp://127.0.0.1:5555",
         "outputs": ["tcp://127.0.0.1:5556"],
         "width": 640,
@@ -192,8 +195,10 @@ Process videos in smaller batches:
 
 ```python
 def process_in_batches(video_path, batch_size=100):
+    from openfilter.filter_runtime.filters.video_in import VideoIn
+
     filters = [
-        ("VideoIn", {
+        (VideoIn, {
             "sources": f"file://{video_path}",
             "outputs": ["tcp://127.0.0.1:5555"],
             "max_frames": batch_size,  # Process in batches
@@ -203,9 +208,8 @@ def process_in_batches(video_path, batch_size=100):
             "text_prompt": "person",
         }),
     ]
-    
-    runner = Filter.Runner(filters)
-    runner.join()
+
+    Filter.run_multi(filters)
 ```
 
 ## Model Selection
@@ -232,18 +236,19 @@ config = {
 import os
 
 def process_on_gpu(video_path, gpu_id):
+    from openfilter.filter_runtime.filters.video_in import VideoIn
+
     os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
-    
+
     filters = [
-        ("VideoIn", {"sources": f"file://{video_path}"}),
+        (VideoIn, {"sources": f"file://{video_path}"}),
         (FilterSAM3Detector, {
             "text_prompt": "person",
             "device": "cuda",
         }),
     ]
-    
-    runner = Filter.Runner(filters)
-    runner.join()
+
+    Filter.run_multi(filters)
 
 # Process multiple videos in parallel
 from multiprocessing import Process
@@ -274,13 +279,12 @@ def profile_pipeline():
             "text_prompt": "person",
         }),
     ]
-    
+
     profiler = cProfile.Profile()
     profiler.enable()
-    
-    runner = Filter.Runner(filters)
-    runner.join()
-    
+
+    Filter.run_multi(filters)
+
     profiler.disable()
     stats = pstats.Stats(profiler)
     stats.sort_stats('cumulative')

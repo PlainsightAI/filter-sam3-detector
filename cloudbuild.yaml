@@ -2,7 +2,7 @@
 # Triggers: tag v*, tag *-dev
 #
 # - Version tags (v*): Push to Docker Hub as release images
-# - Dev tags (v*-dev): Push to GAR for development/testing
+# - Dev tags (v*-dev): Push to GAR (prod) for development/testing
 #
 # Secrets required in GCP Secret Manager:
 #   - dockerhub-username
@@ -11,7 +11,7 @@
 
 substitutions:
   _DOCKERHUB_REPO: plainsightai/openfilter-sam3-detector
-  _GAR_REPO: us-west1-docker.pkg.dev/plainsightai-dev/oci/filter-sam3-detector
+  _GAR_REPO: us-west1-docker.pkg.dev/plainsightai-prod/oci/filter-sam3-detector
 
 availableSecrets:
   secretManager:

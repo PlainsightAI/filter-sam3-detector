@@ -3,6 +3,17 @@ SAM3 Detector filter release notes
 
 ## [Unreleased]
 
+## v0.1.2 - 2026-01-23
+
+### Added
+- Streaming video processor with detection throttling
+- Text embedding caching and backbone sharing optimization
+- Frame ID extraction and protege-compatible output
+- SAM3 multi-output mode with `prompt_sets` configuration
+
+### Changed
+- Dev builds now push to prod registry
+
 ## v0.1.1 - 2026-01-16
 
 ### Fixed

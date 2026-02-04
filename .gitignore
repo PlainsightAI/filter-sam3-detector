@@ -36,6 +36,7 @@ Thumbs.db
 # Project specific
 *.mkv
 *.mp4
+*.jpg
 uv.lock
 
 
@@ -56,3 +57,6 @@ results*
 logs/*
 
 .env
+
+output/*
+examples/output/

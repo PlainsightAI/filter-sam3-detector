@@ -38,6 +38,10 @@ FILTER_DEVICE=cuda                           # Device: cuda, cpu, or mps
 FILTER_CONFIDENCE_THRESHOLD=0.5              # Minimum confidence (0.0-1.0)
 FILTER_MASK_THRESHOLD=0.5                    # Mask binarization threshold
 FILTER_MAX_DETECTIONS=100                    # Maximum detections per frame
+
+# NMS (Non-Maximum Suppression)
+FILTER_NMS_ENABLED=true                      # Enable NMS (default: true)
+FILTER_NMS_THRESHOLD=0.5                     # IoU threshold (0.0-1.0, lower = more aggressive)
 ```
 
 ### Output Configuration
@@ -239,6 +243,8 @@ Configuration is applied in this order (later overrides earlier):
 | `FILTER_CONFIDENCE_THRESHOLD` | float | 0.5 | Confidence threshold |
 | `FILTER_MASK_THRESHOLD` | float | 0.5 | Mask binarization threshold |
 | `FILTER_MAX_DETECTIONS` | int | 100 | Max detections per frame |
+| `FILTER_NMS_ENABLED` | bool | true | Enable Non-Maximum Suppression |
+| `FILTER_NMS_THRESHOLD` | float | 0.5 | IoU threshold for NMS (lower = more aggressive) |
 | `FILTER_OUTPUT_MASKS` | bool | true | Output masks |
 | `FILTER_OUTPUT_BOXES` | bool | true | Output boxes |
 | `FILTER_OUTPUT_SCORES` | bool | true | Output scores |

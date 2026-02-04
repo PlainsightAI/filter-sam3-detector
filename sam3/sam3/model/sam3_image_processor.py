@@ -125,6 +125,47 @@ class Sam3Processor:
         return self._forward_grounding(state)
 
     @torch.inference_mode()
+    def set_text_prompt_no_grounding(self, prompt: str, state: Dict):
+        """Sets the text prompt without running grounding.
+
+        Use this when you need to run grounding separately (e.g., for multi-prompt detection).
+        The state will have language features updated but no detection results.
+
+        Args:
+            prompt: Text prompt for detection
+            state: State dict from set_image()
+
+        Returns:
+            Updated state with language features
+        """
+        if "backbone_out" not in state:
+            raise ValueError("You must call set_image before set_text_prompt_no_grounding")
+
+        text_outputs = self.model.backbone.forward_text([prompt], device=self.device)
+        # will erase the previous text prompt if any
+        state["backbone_out"].update(text_outputs)
+        if "geometric_prompt" not in state:
+            state["geometric_prompt"] = self.model._get_dummy_prompt()
+
+        return state
+
+    @torch.inference_mode()
+    def forward_grounding(self, state: Dict):
+        """Run grounding on state that already has language features.
+
+        This is the public interface for running grounding separately from
+        text prompt encoding, useful for multi-prompt detection where we
+        want to reuse cached image features.
+
+        Args:
+            state: State dict with backbone_out containing language_features
+
+        Returns:
+            Updated state with detection results (boxes, masks, scores)
+        """
+        return self._forward_grounding(state)
+
+    @torch.inference_mode()
     def add_geometric_prompt(self, box: List, label: bool, state: Dict):
         """Adds a box prompt and run the inference.
         The image needs to be set, but not necessarily the text prompt.

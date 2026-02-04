@@ -108,23 +108,38 @@ filter_instance = FilterSAM3Detector(config)
 
 - **Type**: `str | None`
 - **Default**: `None`
-- **Description**: Path to directory containing exemplar images
+- **Description**: Path to directory containing exemplar images for few-shot detection
 - **Format**: Directory path with JPG/PNG images
-- **Requirements**:
-  - Each image should show exactly one instance
-  - Supported formats: JPG, JPEG, PNG, BMP, WEBP
-  - More exemplars generally improve accuracy
+- **Status**: ⚠️ **Experimental** - This feature is currently broken due to a bug in backbone output handling
+
+**Requirements:**
+- Each image should be a **pre-cropped** image showing exactly one instance of the target object
+- Images should be tightly cropped around the object (no annotations needed)
+- Supported formats: JPG, JPEG, PNG, BMP, WEBP
+- More exemplars (3-5) generally improve accuracy
+
+**How It Works:**
+1. Each exemplar image is loaded and encoded through SAM3's backbone
+2. The backbone features are globally averaged to create a single embedding per image
+3. All exemplar embeddings are averaged together to create a visual prompt embedding
+4. This visual prompt guides detection alongside or instead of text prompts
 
 **Example Structure:**
 ```
 cup_examples/
-├── cup1.jpg
-├── cup2.jpg
-├── cup3.png
+├── cup1.jpg    # Cropped image of a cup
+├── cup2.jpg    # Another cropped cup image
+├── cup3.png    # Different angle/lighting
 └── ...
 ```
 
-**Note**: Either `text_prompt` or `exemplars_path` must be provided (or both).
+**Preparing Exemplar Images:**
+1. Extract frames from a reference video or use reference images
+2. Manually crop regions containing the target object
+3. Ensure crops are clean (minimal background, object fills most of the image)
+4. Use multiple exemplars with different angles/lighting for better generalization
+
+**Note**: Either `text_prompt` or `exemplars_path` must be provided (or both). When using exemplars, a lower `confidence_threshold` (0.2-0.3) is recommended.
 
 ### Detection Parameters
 
@@ -157,6 +172,31 @@ cup_examples/
   - Single object scenes: `10-20`
   - Crowded scenes: `50-100`
   - Performance optimization: Lower values process faster
+
+### Non-Maximum Suppression (NMS)
+
+NMS is used to suppress overlapping bounding boxes, keeping only the highest-confidence detection for each object.
+
+#### `nms_enabled`
+
+- **Type**: `bool`
+- **Default**: `True`
+- **Description**: Enable Non-Maximum Suppression to filter overlapping detections
+- **Note**: Highly recommended to keep enabled; without NMS, SAM3 may return ~100+ overlapping boxes per frame
+
+#### `nms_threshold`
+
+- **Type**: `float`
+- **Default**: `0.5`
+- **Range**: `0.0` to `1.0`
+- **Description**: IoU (Intersection over Union) threshold for NMS
+- **Behavior**:
+  - Lower values = more aggressive suppression (fewer boxes kept)
+  - Higher values = less aggressive suppression (more boxes kept)
+- **Recommendations**:
+  - `0.3`: Very aggressive - use when objects are well-separated
+  - `0.5`: Moderate (default) - good balance for most use cases
+  - `0.7`: Conservative - use when objects may legitimately overlap
 
 ### Output Configuration
 
@@ -263,6 +303,7 @@ The filter validates configuration parameters:
 - **Device**: Must be one of `"cuda"`, `"cpu"`, `"mps"`
 - **Confidence threshold**: Must be between 0.0 and 1.0
 - **Mask threshold**: Must be between 0.0 and 1.0
+- **NMS threshold**: Must be between 0.0 and 1.0
 - **Max detections**: Must be >= 1
 - **Prompts**: At least one of `text_prompt` or `exemplars_path` must be provided
 
