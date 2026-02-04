@@ -3,6 +3,11 @@ SAM3 Detector filter release notes
 
 ## [Unreleased]
 
+## v0.1.3 - 2026-02-04
+
+### Added
+- Reference image prompts: `FILTER_REF_IMAGES` and `FILTER_REF_IMAGES_NEGATIVE` for positive exemplars (pasted bottom-left) and negative exemplars (pasted bottom-right); text prompt required when using ref images. Optional `ref_margin` and `ref_gap` for positioning (env: `FILTER_REF_MARGIN`, `FILTER_REF_GAP`).
+
 ## v0.1.2 - 2026-01-23
 
 ### Added

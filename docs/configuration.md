@@ -21,6 +21,13 @@ export FILTER_TEXT_PROMPT="person"
 # Exemplar images (alternative to text prompt)
 export FILTER_EXEMPLARS_PATH="./cup_examples/"
 
+# Reference image prompts (comma-separated paths; requires text prompt)
+# Positive refs pasted bottom-left, negative bottom-right
+# export FILTER_REF_IMAGES="/path/pos1.png,/path/pos2.png"
+# export FILTER_REF_IMAGES_NEGATIVE="/path/neg1.png"
+# export FILTER_REF_MARGIN=10   # optional, default 10
+# export FILTER_REF_GAP=5       # optional, default 5
+
 # Model configuration
 export FILTER_MODEL_ID=facebook/sam2-hiera-large
 export FILTER_DEVICE=cuda

@@ -32,9 +32,13 @@ logger.setLevel(logging.INFO)
 try:
     from sam3.model_builder import build_sam3_image_model
     from sam3.model.sam3_image_processor import Sam3Processor
+    from sam3.model.box_ops import box_xywh_to_cxcywh
+    from sam3.visualization_utils import normalize_bbox
     HAS_SAM3 = True
 except ImportError:
     HAS_SAM3 = False
+    box_xywh_to_cxcywh = None
+    normalize_bbox = None
     logger.warning("SAM3 not available. Install from: https://github.com/facebookresearch/sam3")
 
 
@@ -117,6 +121,11 @@ class FilterSAM3Detector(Filter):
             "enable_video_mode": False,  # Use video mode with temporal tracking
             "video_detection_interval": 5,  # Frames between full detection runs in video mode
             "video_min_tracking_confidence": 0.3,  # Re-detect if tracking confidence drops
+            # Reference image prompts (positive = bottom-left, negative = bottom-right)
+            "ref_images": None,
+            "ref_images_negative": None,
+            "ref_margin": 10,
+            "ref_gap": 5,
         }
         
         for key, default_value in defaults.items():
@@ -163,8 +172,21 @@ class FilterSAM3Detector(Filter):
             "enable_video_mode": bool,
             "video_detection_interval": int,
             "video_min_tracking_confidence": float,
+            # Ref images (margin/gap; ref path lists handled below)
+            "ref_margin": int,
+            "ref_gap": int,
         }
         
+        # Special handling for FILTER_REF_IMAGES (comma-separated paths -> list)
+        env_ref_images = os.getenv("FILTER_REF_IMAGES")
+        if env_ref_images is not None:
+            config["ref_images"] = [p.strip() for p in env_ref_images.split(",") if p.strip()] or None
+
+        # Special handling for FILTER_REF_IMAGES_NEGATIVE (comma-separated paths -> list)
+        env_ref_images_neg = os.getenv("FILTER_REF_IMAGES_NEGATIVE")
+        if env_ref_images_neg is not None:
+            config["ref_images_negative"] = [p.strip() for p in env_ref_images_neg.split(",") if p.strip()] or None
+
         # Special handling for FILTER_OUTPUT_PATH (maps to output_path)
         env_output_path = os.getenv("FILTER_OUTPUT_PATH")
         if env_output_path is not None:
@@ -284,6 +306,13 @@ class FilterSAM3Detector(Filter):
         self.text_prompts = config.get("text_prompts")  # Multiple prompts for parallel detection
         self.prompt_sets = config.get("prompt_sets")  # Multi-output mode
         self.exemplars_path = config.get("exemplars_path")
+        # Reference image paths (positive = bottom-left, negative = bottom-right on composite)
+        _ref_images = config.get("ref_images")
+        self.ref_images = [_ref_images] if isinstance(_ref_images, (str, Path)) else (_ref_images if _ref_images else None)
+        _ref_neg = config.get("ref_images_negative")
+        self.ref_images_negative = [_ref_neg] if isinstance(_ref_neg, (str, Path)) else (_ref_neg if _ref_neg else None)
+        self.ref_margin = config.get("ref_margin", 10)
+        self.ref_gap = config.get("ref_gap", 5)
         self.confidence_threshold = config.get("confidence_threshold", 0.5)
         self.mask_threshold = config.get("mask_threshold", 0.5)
         self.nms_threshold = config.get("nms_threshold", 0.5)
@@ -370,6 +399,14 @@ class FilterSAM3Detector(Filter):
         self.visual_prompt_mask = None
         if self.exemplars_path:
             self._load_exemplar_images()
+
+        # Optional: validate ref image paths exist (log only, do not block)
+        for attr in ("ref_images", "ref_images_negative"):
+            paths = getattr(self, attr, None)
+            if paths:
+                for p in paths:
+                    if not Path(p).exists():
+                        logger.warning(f"Ref image path does not exist: {p}")
 
         # Log multi-output mode configuration and pre-cache text embeddings
         # This is the KEY OPTIMIZATION: text prompts are static, so we encode them ONCE
@@ -611,6 +648,12 @@ class FilterSAM3Detector(Filter):
                 output_frames[topic] = frame
                 continue
 
+            # When using ref images, a text prompt is required
+            if (self.ref_images or self.ref_images_negative) and not prompts_to_use:
+                logger.warning("ref_images or ref_images_negative set but no text prompt; forwarding frame unchanged")
+                output_frames[topic] = frame
+                continue
+
             try:
                 # Extract image from frame (convert BGR to RGB PIL)
                 image_bgr = frame.rw_bgr.image
@@ -620,74 +663,97 @@ class FilterSAM3Detector(Filter):
                 # Get image dimensions for clipping boxes
                 img_height, img_width = image_bgr.shape[:2]
 
-                # Set image in processor ONCE (this is the expensive backbone pass)
-                # The state contains cached image features that we reuse for all prompts
-                state = self.processor.set_image(pil_image)
-
                 # Collect all detections across all prompts
                 detections = []
                 all_scores = []  # Track all scores for detection_confidence calculation
 
-                # Process each prompt using cached image features
-                if prompts_to_use:
-                    for prompt in prompts_to_use:
-                        # Use cached text embeddings if available, otherwise encode on-the-fly
-                        # This reuses the cached image features from set_image()
-                        if prompt in self.cached_text_embeddings:
-                            prompt_state = self._inject_cached_text_embedding(state, prompt)
-                        else:
-                            prompt_state = self.processor.set_text_prompt_no_grounding(prompt, state)
-                        prompt_state = self.processor.forward_grounding(prompt_state)
+                has_refs = bool(self.ref_images or self.ref_images_negative)
 
-                        # Extract detections for this prompt (use global ID counter for uniqueness)
-                        prompt_detections = self._extract_detections_from_state(
-                            prompt_state, prompt, img_width, img_height, self.global_detection_id
-                        )
-                        detections.extend(prompt_detections)
-                        self.global_detection_id += len(prompt_detections)
-
-                        # Track scores
-                        if "scores" in prompt_state:
-                            all_scores.extend(
-                                float(s.item() if hasattr(s, 'item') else s)
-                                for s in prompt_state["scores"]
-                            )
-
-                # If we have visual embeddings from exemplar images, run grounding with them
-                if self.visual_prompt_embed is not None:
-                    # Ensure we have language features (use "visual" as placeholder if no text prompt)
-                    if "language_features" not in state["backbone_out"]:
-                        dummy_text_outputs = self.model.backbone.forward_text(
-                            ["visual"], device=str(self.device)
-                        )
-                        # Move all dummy text outputs to match the backbone output device
-                        # (the model may have weights on a different device than self.device)
-                        target_device = state["backbone_out"]["vision_features"].device
-                        for key, value in dummy_text_outputs.items():
-                            if hasattr(value, 'to'):
-                                dummy_text_outputs[key] = value.to(target_device)
-                        state["backbone_out"].update(dummy_text_outputs)
-
-                    # Initialize geometric prompt if not present
-                    if "geometric_prompt" not in state:
-                        state["geometric_prompt"] = self.model._get_dummy_prompt()
-
-                    # Run grounding with visual prompt embeddings
-                    visual_state = self._forward_grounding_with_visual_prompt(state)
-
-                    # Extract detections for visual prompt (use global ID counter)
-                    visual_detections = self._extract_detections_from_state(
-                        visual_state, "visual", img_width, img_height, self.global_detection_id
+                if has_refs and prompts_to_use:
+                    # Reference-image mode: composite with pasted refs + geometric prompts
+                    composite, all_norm_labels = self._build_composite_with_refs(pil_image)
+                    state = self.processor.set_image(composite)
+                    self.processor.reset_all_prompts(state)
+                    prompt = prompts_to_use[0]
+                    if prompt in self.cached_text_embeddings:
+                        state = self._inject_cached_text_embedding(state, prompt)
+                    else:
+                        state = self.processor.set_text_prompt_no_grounding(prompt, state)
+                    for (norm_box, label) in all_norm_labels:
+                        state = self.processor.add_geometric_prompt(norm_box, label, state)
+                    detections = self._extract_detections_from_state(
+                        state, prompt, img_width, img_height, self.global_detection_id
                     )
-                    detections.extend(visual_detections)
-                    self.global_detection_id += len(visual_detections)
-
-                    # Track scores
-                    if "scores" in visual_state:
+                    self.global_detection_id += len(detections)
+                    if "scores" in state:
                         all_scores.extend(
                             float(s.item() if hasattr(s, 'item') else s)
-                            for s in visual_state["scores"]
+                            for s in state["scores"]
                         )
+                else:
+                    # Standard mode: set image once, then loop over prompts (and optionally visual exemplars)
+                    state = self.processor.set_image(pil_image)
+
+                    # Process each prompt using cached image features
+                    if prompts_to_use:
+                        for prompt in prompts_to_use:
+                            # Use cached text embeddings if available, otherwise encode on-the-fly
+                            # This reuses the cached image features from set_image()
+                            if prompt in self.cached_text_embeddings:
+                                prompt_state = self._inject_cached_text_embedding(state, prompt)
+                            else:
+                                prompt_state = self.processor.set_text_prompt_no_grounding(prompt, state)
+                            prompt_state = self.processor.forward_grounding(prompt_state)
+
+                            # Extract detections for this prompt (use global ID counter for uniqueness)
+                            prompt_detections = self._extract_detections_from_state(
+                                prompt_state, prompt, img_width, img_height, self.global_detection_id
+                            )
+                            detections.extend(prompt_detections)
+                            self.global_detection_id += len(prompt_detections)
+
+                            # Track scores
+                            if "scores" in prompt_state:
+                                all_scores.extend(
+                                    float(s.item() if hasattr(s, 'item') else s)
+                                    for s in prompt_state["scores"]
+                                )
+
+                    # If we have visual embeddings from exemplar images, run grounding with them
+                    if self.visual_prompt_embed is not None:
+                        # Ensure we have language features (use "visual" as placeholder if no text prompt)
+                        if "language_features" not in state["backbone_out"]:
+                            dummy_text_outputs = self.model.backbone.forward_text(
+                                ["visual"], device=str(self.device)
+                            )
+                            # Move all dummy text outputs to match the backbone output device
+                            # (the model may have weights on a different device than self.device)
+                            target_device = state["backbone_out"]["vision_features"].device
+                            for key, value in dummy_text_outputs.items():
+                                if hasattr(value, 'to'):
+                                    dummy_text_outputs[key] = value.to(target_device)
+                            state["backbone_out"].update(dummy_text_outputs)
+
+                        # Initialize geometric prompt if not present
+                        if "geometric_prompt" not in state:
+                            state["geometric_prompt"] = self.model._get_dummy_prompt()
+
+                        # Run grounding with visual prompt embeddings
+                        visual_state = self._forward_grounding_with_visual_prompt(state)
+
+                        # Extract detections for visual prompt (use global ID counter)
+                        visual_detections = self._extract_detections_from_state(
+                            visual_state, "visual", img_width, img_height, self.global_detection_id
+                        )
+                        detections.extend(visual_detections)
+                        self.global_detection_id += len(visual_detections)
+
+                        # Track scores
+                        if "scores" in visual_state:
+                            all_scores.extend(
+                                float(s.item() if hasattr(s, 'item') else s)
+                                for s in visual_state["scores"]
+                            )
 
                 # Set scores variable for detection_confidence calculation
                 scores = all_scores if all_scores else None
@@ -1520,6 +1586,56 @@ class FilterSAM3Detector(Filter):
             logger.error(traceback.format_exc())
             self.visual_prompt_embed = None
             self.visual_prompt_mask = None
+
+    def _build_composite_with_refs(self, pil_image: Image.Image):
+        """
+        Paste reference images onto the frame (positive bottom-left, negative bottom-right)
+        and return the composite image plus normalized box labels for geometric prompts.
+
+        Returns:
+            (composite_pil, all_norm_labels) where all_norm_labels is a list of
+            (norm_box, label) with norm_box as [cx, cy, w, h] normalized in [0, 1].
+        """
+        ref_paths_pos = self.ref_images or []
+        ref_paths_neg = self.ref_images_negative or []
+        if not ref_paths_pos and not ref_paths_neg:
+            return pil_image, []
+
+        composite = pil_image.copy()
+        width, height = composite.size
+        margin = self.ref_margin
+        gap = self.ref_gap
+        all_norm_labels = []
+
+        def paste_refs(ref_paths: list, is_positive: bool):
+            y_next = height - margin
+            paste_x_base = margin if is_positive else None
+            for ref_path in ref_paths:
+                ref_path = Path(ref_path)
+                try:
+                    ref_img = Image.open(ref_path).convert("RGB")
+                except Exception as e:
+                    logger.warning(f"Failed to open ref image {ref_path}: {e}")
+                    continue
+                sw, sh = ref_img.size
+                paste_y = y_next - sh
+                if is_positive:
+                    paste_x_cur = paste_x_base
+                else:
+                    paste_x_cur = width - margin - sw
+                composite.paste(ref_img, (int(paste_x_cur), int(paste_y)))
+                box_xywh = [float(paste_x_cur), float(paste_y), float(sw), float(sh)]
+                box_t = torch.tensor(box_xywh, device=self.device, dtype=torch.float32).view(1, 4)
+                box_cxcywh = box_xywh_to_cxcywh(box_t)
+                norm = normalize_bbox(box_cxcywh, width, height)
+                norm_list = norm.flatten().tolist()
+                all_norm_labels.append((norm_list, is_positive))
+                y_next = paste_y - gap
+
+        paste_refs(ref_paths_pos, is_positive=True)
+        paste_refs(ref_paths_neg, is_positive=False)
+
+        return composite, all_norm_labels
 
     def _forward_grounding_with_visual_prompt(self, state):
         """

@@ -8,6 +8,7 @@ OpenFilter implementation for SAM3 (Segment Anything Model 3) object detection w
 
 - **Open-Set Detection**: Detect objects not in standard training datasets
 - **Dual Prompting Modes**: Text prompts or exemplar images (few-shot learning)
+- **Reference Image Prompts**: Positive/negative exemplar images pasted on frame with geometric prompts (single-output mode; requires text prompt)
 - **Flexible Output**: Bounding boxes, segmentation masks, and confidence scores
 - **GPU Acceleration**: CUDA, CPU, and MPS (Apple Silicon) support
 - **Real-time Processing**: Processes video streams in real-time
@@ -76,6 +77,8 @@ cp env.example .env
 # Prompt configuration (choose one)
 FILTER_TEXT_PROMPT=person                    # Text prompt for detection
 FILTER_EXEMPLARS_PATH=./exemplars/           # Path to exemplar images directory
+# FILTER_REF_IMAGES=path1.png,path2.png      # Positive exemplars (bottom-left), requires text prompt
+# FILTER_REF_IMAGES_NEGATIVE=path3.png       # Negative exemplars (bottom-right)
 
 # Model configuration
 FILTER_MODEL_ID=facebook/sam2-hiera-large    # HuggingFace model ID
@@ -115,7 +118,11 @@ FILTER_DEBUG=false                           # Enable debug logging
 | `visualize` | bool | false | No | Draw detections on output frames |
 | `debug` | bool | false | No | Enable debug logging |
 
-\* Either `text_prompt` or `exemplars_path` must be provided.
+\* When using `ref_images` or `ref_images_negative`, `text_prompt` (or `text_prompts`) is required. Otherwise either `text_prompt` or `exemplars_path` must be provided.
+
+### Reference image prompts
+
+In single-output mode you can add reference images as geometric prompts: set `FILTER_REF_IMAGES` and/or `FILTER_REF_IMAGES_NEGATIVE` to comma-separated image paths. Positive refs are pasted at the bottom-left of each frame, negative refs at the bottom-right; the model uses them together with the text prompt. A text prompt is required when using ref images.
 
 ## Usage
 

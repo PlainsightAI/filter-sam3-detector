@@ -1,0 +1,182 @@
+#!/usr/bin/env python
+"""
+Generate detection annotations for sg_samples dataset using FilterSAM3Detector.
+
+Expected input structure:
+    SG_SAMPLES_ROOT/
+        avocado/pos/, avocado/neg/
+        roasted_chicken/pos/, roasted_chicken/neg/
+        ... (one folder per ingredient, each with pos/ and neg/)
+
+For each ingredient, runs SAM3 with the configured prompt on pos and neg folders
+and writes annotations into separate output folders, e.g.:
+    OUTPUT_ROOT/
+        avocado/pos/
+            detections.jsonl
+            frames/           # original images
+            frames_annotated/ # images with bounding boxes drawn
+        avocado/neg/
+            detections.jsonl, frames/, frames_annotated/
+        roasted_chicken/pos/
+            ...
+
+Usage:
+    # Default paths (override with env if needed)
+    python scripts/generate_sg_annotations.py
+
+    # Custom paths
+    SG_SAMPLES_ROOT=/path/to/sg_samples OUTPUT_ROOT=/path/to/out python scripts/generate_sg_annotations.py
+"""
+
+import os
+import json
+from pathlib import Path
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
+import cv2
+from openfilter.filter_runtime.frame import Frame
+
+from filter_sam3_detector.filter import FilterSAM3Detector, FilterSAM3DetectorConfig
+
+
+# Ingredient folder name -> (text_prompt, confidence_threshold)
+INGREDIENT_CONFIG = {
+    "avocado": ("avocado in salad or avocado slices", 0.5),
+    "roasted_chicken": ("chunks of cooked chicken (white meat)", 0.5),
+    "miso_glazed_steelhead": ("cooked salmon fillet", 0.5),
+    "hard_boiled_egg": ("boiled egg", 0.5),
+    "caramelized_garlic_steak": ("blackened steak bites or diced steak or steak cubes", 0.5),
+    "blackened_chicken": (
+        "small chunks of cooked chicken breast (light beige), bite-sized pieces",
+        0.65,
+    ),
+    "roasted_tofu": (
+        "small beige-to-light-brown roasted tofu cubes with straight edges and porous texture",
+        0.5,
+    ),
+    "warm_portobello_mix": ("dark mushroom mix", 0.5),
+}
+
+# Project root (parent of scripts/)
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+SG_SAMPLES_ROOT = Path(os.getenv("SG_SAMPLES_ROOT", "/home/leandrobmarinho/datasets/sg_samples"))
+OUTPUT_ROOT = Path(os.getenv("OUTPUT_ROOT", str(_PROJECT_ROOT / "sg_samples_annotations")))
+DEVICE = os.getenv("FILTER_DEVICE", "cuda")
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+
+
+def draw_detections_on_image(image, detections):
+    """Draw bounding boxes and scores on a BGR image. Returns a new image."""
+    out = image.copy()
+    for det in detections:
+        if "box" not in det:
+            continue
+        x1, y1, x2, y2 = det["box"]
+        color = (0, 255, 0)
+        cv2.rectangle(out, (int(x1), int(y1)), (int(x2), int(y2)), color, 2)
+        if "score" in det:
+            label = f"{det['score']:.2f}"
+            cv2.putText(out, label, (int(x1), int(y1) - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+    return out
+
+
+def collect_image_paths(folder: Path):
+    paths = []
+    for p in folder.iterdir():
+        if p.suffix.lower() in IMAGE_EXTENSIONS:
+            paths.append(p)
+    return sorted(paths)
+
+
+def run_detector_on_folder(detector, folder: Path, output_dir: Path, ingredient: str, split: str):
+    """Run detector on all images; save detections.jsonl, frames/, and frames_annotated/."""
+    paths = collect_image_paths(folder)
+    if not paths:
+        print(f"    No images in {folder}")
+        return 0
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    frames_dir = output_dir / "frames"
+    frames_annotated_dir = output_dir / "frames_annotated"
+    frames_dir.mkdir(exist_ok=True)
+    frames_annotated_dir.mkdir(exist_ok=True)
+    records = []
+
+    for i, img_path in enumerate(paths):
+        img = cv2.imread(str(img_path))
+        if img is None:
+            print(f"    Skip (not readable): {img_path.name}")
+            continue
+        frame = Frame(
+            image=img,
+            data={"meta": {"id": i, "path": str(img_path), "ingredient": ingredient, "split": split}},
+            format="BGR",
+        )
+        out = detector.process({"main": frame})
+        detections = out["main"].data.get("meta", {}).get("sam3_detections", [])
+        records.append({
+            "image": img_path.name,
+            "path": str(img_path),
+            "ingredient": ingredient,
+            "split": split,
+            "detections": detections,
+        })
+        # Save original frame
+        frame_path = frames_dir / img_path.name
+        cv2.imwrite(str(frame_path), img)
+        # Save annotated frame (with boxes)
+        img_annotated = draw_detections_on_image(img, detections)
+        cv2.imwrite(str(frames_annotated_dir / img_path.name), img_annotated)
+
+    out_jsonl = output_dir / "detections.jsonl"
+    with open(out_jsonl, "w") as f:
+        for rec in records:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    print(f"    {split}: {len(records)} images -> {output_dir}")
+    print(f"      detections.jsonl, frames/, frames_annotated/")
+    return len(records)
+
+
+def main():
+    total_images = 0
+
+    for ingredient, (prompt, conf) in INGREDIENT_CONFIG.items():
+        ingredient_path = SG_SAMPLES_ROOT / ingredient
+        if not ingredient_path.exists():
+            print(f"Skipping (missing): {ingredient_path}")
+            continue
+
+        config = FilterSAM3DetectorConfig(
+            text_prompt=prompt,
+            confidence_threshold=conf,
+            device=DEVICE,
+            output_boxes=True,
+            output_scores=True,
+            output_masks=False,
+        )
+        detector = FilterSAM3Detector(config)
+        detector.setup(config)
+
+        print(f"\n{ingredient} (prompt={prompt[:50]}..., conf={conf})")
+        for split in ("pos", "neg"):
+            folder = ingredient_path / split
+            if not folder.is_dir():
+                print(f"  Skip (no dir): {folder}")
+                continue
+            out_dir = OUTPUT_ROOT / ingredient / split
+            n = run_detector_on_folder(detector, folder, out_dir, ingredient, split)
+            total_images += n
+
+        detector.shutdown()
+
+    print(f"\nTotal images annotated: {total_images}")
+    print(f"Output root: {OUTPUT_ROOT}")
+
+
+if __name__ == "__main__":
+    main()
