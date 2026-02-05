@@ -28,6 +28,9 @@ __all__ = ["FilterSAM3DetectorConfig", "FilterSAM3Detector"]
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
+# Image file extensions for ref_images and exemplars (first-level directory listing)
+REF_IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.bmp', '.webp'}
+
 # Try to import SAM3 from facebookresearch/sam3
 try:
     from sam3.model_builder import build_sam3_image_model

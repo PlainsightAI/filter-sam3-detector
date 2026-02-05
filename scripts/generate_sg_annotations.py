@@ -7,6 +7,8 @@ Expected input structure:
         avocado/pos/, avocado/neg/
         roasted_chicken/pos/, roasted_chicken/neg/
         ... (one folder per ingredient, each with pos/ and neg/)
+        ref_images/           # optional: positive exemplar images (e.g. tofu_example.png)
+        ref_images_negative/  # optional: negative exemplar images (e.g. carrot_1.png, ...)
 
 For each ingredient, runs SAM3 with the configured prompt on pos and neg folders
 and writes annotations into separate output folders, e.g.:
@@ -19,6 +21,10 @@ and writes annotations into separate output folders, e.g.:
             detections.jsonl, frames/, frames_annotated/
         roasted_chicken/pos/
             ...
+
+Some ingredients (e.g. roasted_tofu, blackened_chicken) use ref_images and
+ref_images_negative from SG_SAMPLES_ROOT/ref_images/ and
+SG_SAMPLES_ROOT/ref_images_negative/ for exemplar-based detection.
 
 Usage:
     # Default paths (override with env if needed)
@@ -52,13 +58,10 @@ INGREDIENT_CONFIG = {
     "hard_boiled_egg": ("boiled egg", 0.5),
     "caramelized_garlic_steak": ("blackened steak bites or diced steak or steak cubes", 0.5),
     "blackened_chicken": (
-        "small chunks of cooked chicken breast (light beige), bite-sized pieces",
-        0.65,
+        "small chunks of chicken (light beige), bite-sized pieces",
+        0.55,
     ),
-    "roasted_tofu": (
-        "small beige-to-light-brown roasted tofu cubes with straight edges and porous texture",
-        0.5,
-    ),
+    "roasted_tofu": ("tofu", 0.4),
     "warm_portobello_mix": ("dark mushroom mix", 0.5),
 }
 
@@ -68,6 +71,20 @@ SG_SAMPLES_ROOT = Path(os.getenv("SG_SAMPLES_ROOT", str(_PROJECT_ROOT / "sg_samp
 OUTPUT_ROOT = Path(os.getenv("OUTPUT_ROOT", str(_PROJECT_ROOT / "sg_samples_annotations")))
 DEVICE = os.getenv("FILTER_DEVICE", "cuda")
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+REF_IMAGES_DIR = SG_SAMPLES_ROOT / "ref_images"
+REF_IMAGES_NEGATIVE_DIR = SG_SAMPLES_ROOT / "ref_images_negative"
+
+# Ingredient -> (ref_images_list, ref_images_negative_list) for exemplar-based detection
+REF_IMAGES_BY_INGREDIENT = {
+    "roasted_tofu": (
+        [REF_IMAGES_DIR / "tofu_example.png"],
+        [REF_IMAGES_NEGATIVE_DIR / f"carrot_{i}.png" for i in (1, 2, 3)],
+    ),
+    "blackened_chicken": (
+        [REF_IMAGES_DIR / "blackened_chicken_example.png"],
+        [REF_IMAGES_NEGATIVE_DIR / f"carrot_{i}.png" for i in (1, 2, 3)],
+    ),
+}
 
 
 def draw_detections_on_image(image, detections):
@@ -151,7 +168,7 @@ def main():
             print(f"Skipping (missing): {ingredient_path}")
             continue
 
-        config = FilterSAM3DetectorConfig(
+        config_kw = dict(
             text_prompt=prompt,
             confidence_threshold=conf,
             device=DEVICE,
@@ -159,10 +176,26 @@ def main():
             output_scores=True,
             output_masks=False,
         )
+        if ingredient in REF_IMAGES_BY_INGREDIENT:
+            ref_images, ref_images_negative = REF_IMAGES_BY_INGREDIENT[ingredient]
+            config_kw["ref_images"] = [str(p) for p in ref_images]
+            config_kw["ref_images_negative"] = [str(p) for p in ref_images_negative]
+        config = FilterSAM3DetectorConfig(**config_kw)
+        config = FilterSAM3Detector.normalize_config(config)
+        if ingredient in REF_IMAGES_BY_INGREDIENT:
+            ref_images, ref_images_negative = REF_IMAGES_BY_INGREDIENT[ingredient]
+            config["ref_images"] = [str(p) for p in ref_images]
+            config["ref_images_negative"] = [str(p) for p in ref_images_negative]
+        else:
+            # Do not use ref_images from .env for other ingredients (text-only detection)
+            config["ref_images"] = None
+            config["ref_images_negative"] = None
         detector = FilterSAM3Detector(config)
         detector.setup(config)
 
         print(f"\n{ingredient} (prompt={prompt[:50]}..., conf={conf})")
+        if ingredient in REF_IMAGES_BY_INGREDIENT:
+            print("  using ref_images / ref_images_negative")
         for split in ("pos", "neg"):
             folder = ingredient_path / split
             if not folder.is_dir():
