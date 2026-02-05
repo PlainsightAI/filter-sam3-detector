@@ -64,7 +64,7 @@ INGREDIENT_CONFIG = {
 
 # Project root (parent of scripts/)
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
-SG_SAMPLES_ROOT = Path(os.getenv("SG_SAMPLES_ROOT", "/home/leandrobmarinho/datasets/sg_samples"))
+SG_SAMPLES_ROOT = Path(os.getenv("SG_SAMPLES_ROOT", str(_PROJECT_ROOT / "sg_samples")))
 OUTPUT_ROOT = Path(os.getenv("OUTPUT_ROOT", str(_PROJECT_ROOT / "sg_samples_annotations")))
 DEVICE = os.getenv("FILTER_DEVICE", "cuda")
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
