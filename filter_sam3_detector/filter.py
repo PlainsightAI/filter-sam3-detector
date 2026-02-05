@@ -307,10 +307,13 @@ class FilterSAM3Detector(Filter):
         self.prompt_sets = config.get("prompt_sets")  # Multi-output mode
         self.exemplars_path = config.get("exemplars_path")
         # Reference image paths (positive = bottom-left, negative = bottom-right on composite)
+        # Accept files or directories; directories are expanded to sorted list of images
         _ref_images = config.get("ref_images")
         self.ref_images = [_ref_images] if isinstance(_ref_images, (str, Path)) else (_ref_images if _ref_images else None)
         _ref_neg = config.get("ref_images_negative")
         self.ref_images_negative = [_ref_neg] if isinstance(_ref_neg, (str, Path)) else (_ref_neg if _ref_neg else None)
+        self.ref_images = self._expand_ref_paths(self.ref_images)
+        self.ref_images_negative = self._expand_ref_paths(self.ref_images_negative)
         self.ref_margin = config.get("ref_margin", 10)
         self.ref_gap = config.get("ref_gap", 5)
         self.confidence_threshold = config.get("confidence_threshold", 0.5)
@@ -1499,7 +1502,6 @@ class FilterSAM3Detector(Filter):
                 return
 
             # Find all image files
-            image_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.webp'}
             if exemplars_path.is_file():
                 # Single image file
                 image_files = [exemplars_path]
@@ -1507,7 +1509,7 @@ class FilterSAM3Detector(Filter):
                 # Directory of images
                 image_files = [
                     f for f in exemplars_path.iterdir()
-                    if f.suffix.lower() in image_extensions
+                    if f.suffix.lower() in REF_IMAGE_EXTENSIONS
                 ]
 
             if not image_files:
@@ -1586,6 +1588,31 @@ class FilterSAM3Detector(Filter):
             logger.error(traceback.format_exc())
             self.visual_prompt_embed = None
             self.visual_prompt_mask = None
+
+    def _expand_ref_paths(self, paths):
+        """
+        Expand ref path list: directories become sorted list of image files; files kept as-is.
+        Returns None if input is None/empty or if expansion yields no files.
+        """
+        if not paths:
+            return None
+        result = []
+        for p in paths:
+            p = Path(p)
+            if not p.exists():
+                logger.warning(f"Ref path does not exist: {p}")
+                continue
+            if p.is_dir():
+                files = sorted(
+                    f for f in p.iterdir()
+                    if f.is_file() and f.suffix.lower() in REF_IMAGE_EXTENSIONS
+                )
+                if not files:
+                    logger.warning(f"No image files found in ref directory: {p}")
+                result.extend(files)
+            else:
+                result.append(p)
+        return result if result else None
 
     def _build_composite_with_refs(self, pil_image: Image.Image):
         """

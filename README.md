@@ -77,7 +77,7 @@ cp env.example .env
 # Prompt configuration (choose one)
 FILTER_TEXT_PROMPT=person                    # Text prompt for detection
 FILTER_EXEMPLARS_PATH=./exemplars/           # Path to exemplar images directory
-# FILTER_REF_IMAGES=path1.png,path2.png      # Positive exemplars (bottom-left), requires text prompt
+# FILTER_REF_IMAGES=path1.png,folder/        # Positive exemplars (files or folders), requires text prompt
 # FILTER_REF_IMAGES_NEGATIVE=path3.png       # Negative exemplars (bottom-right)
 
 # Model configuration
@@ -122,7 +122,7 @@ FILTER_DEBUG=false                           # Enable debug logging
 
 ### Reference image prompts
 
-In single-output mode you can add reference images as geometric prompts: set `FILTER_REF_IMAGES` and/or `FILTER_REF_IMAGES_NEGATIVE` to comma-separated image paths. Positive refs are pasted at the bottom-left of each frame, negative refs at the bottom-right; the model uses them together with the text prompt. A text prompt is required when using ref images.
+In single-output mode you can add reference images as geometric prompts: set `FILTER_REF_IMAGES` and/or `FILTER_REF_IMAGES_NEGATIVE` to comma-separated paths (files or folders; folders are expanded to all images inside). Positive refs are pasted at the bottom-left of each frame, negative refs at the bottom-right; the model uses them together with the text prompt. A text prompt is required when using ref images.
 
 ## Usage
 
