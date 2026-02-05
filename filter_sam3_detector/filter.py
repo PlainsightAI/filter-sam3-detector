@@ -31,14 +31,38 @@ logger.setLevel(logging.INFO)
 # Image file extensions for ref_images and exemplars (first-level directory listing)
 REF_IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.bmp', '.webp'}
 
-# Try to import SAM3 from facebookresearch/sam3
+# Local normalize_bbox (cxcywh) to avoid importing sam3.visualization_utils, which pulls in matplotlib.
+def _normalize_bbox_cxcywh(bbox_cxcywh, img_w, img_h):
+    """Normalize bbox [cx, cy, w, h] by image size. Same contract as sam3.visualization_utils.normalize_bbox."""
+    if isinstance(bbox_cxcywh, torch.Tensor):
+        out = bbox_cxcywh.clone()
+        out[..., 0] /= img_w
+        out[..., 1] /= img_h
+        out[..., 2] /= img_w
+        out[..., 3] /= img_h
+        return out
+    out = list(bbox_cxcywh)
+    out[0] /= img_w
+    out[1] /= img_h
+    out[2] /= img_w
+    out[3] /= img_h
+    return out
+
+# Try to import SAM3 from facebookresearch/sam3 (no matplotlib: we use local _normalize_bbox_cxcywh)
+HAS_SAM3 = False
+box_xywh_to_cxcywh = None
+normalize_bbox = None
 try:
     from sam3.model_builder import build_sam3_image_model
     from sam3.model.sam3_image_processor import Sam3Processor
     from sam3.model.box_ops import box_xywh_to_cxcywh
-    from sam3.visualization_utils import normalize_bbox
+    normalize_bbox = _normalize_bbox_cxcywh
     HAS_SAM3 = True
 except ImportError:
+    box_xywh_to_cxcywh = None
+    normalize_bbox = None
+    logger.warning("SAM3 not available. Install from: https://github.com/facebookresearch/sam3")
+except Exception:
     HAS_SAM3 = False
     box_xywh_to_cxcywh = None
     normalize_bbox = None
