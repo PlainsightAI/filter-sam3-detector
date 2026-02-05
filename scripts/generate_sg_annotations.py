@@ -30,6 +30,9 @@ Usage:
     # Default paths (override with env if needed)
     python scripts/generate_sg_annotations.py
 
+    # Run only one ingredient (quick test)
+    INGREDIENT=roasted_tofu python scripts/generate_sg_annotations.py
+
     # Custom paths
     SG_SAMPLES_ROOT=/path/to/sg_samples OUTPUT_ROOT=/path/to/out python scripts/generate_sg_annotations.py
 """
@@ -161,8 +164,17 @@ def run_detector_on_folder(detector, folder: Path, output_dir: Path, ingredient:
 
 def main():
     total_images = 0
+    single_ingredient = os.getenv("INGREDIENT", "").strip()
+    if single_ingredient and single_ingredient not in INGREDIENT_CONFIG:
+        print(f"Unknown INGREDIENT={single_ingredient}, running all. Valid: {list(INGREDIENT_CONFIG.keys())}")
+        single_ingredient = None
+    items_to_run = (
+        [(single_ingredient, INGREDIENT_CONFIG[single_ingredient])]
+        if single_ingredient
+        else list(INGREDIENT_CONFIG.items())
+    )
 
-    for ingredient, (prompt, conf) in INGREDIENT_CONFIG.items():
+    for ingredient, (prompt, conf) in items_to_run:
         ingredient_path = SG_SAMPLES_ROOT / ingredient
         if not ingredient_path.exists():
             print(f"Skipping (missing): {ingredient_path}")

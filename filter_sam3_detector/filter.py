@@ -701,7 +701,7 @@ class FilterSAM3Detector(Filter):
 
                 if has_refs and prompts_to_use:
                     # Reference-image mode: composite with pasted refs + geometric prompts
-                    composite, all_norm_labels = self._build_composite_with_refs(pil_image)
+                    composite, all_norm_labels, ref_regions_pixel = self._build_composite_with_refs(pil_image)
                     state = self.processor.set_image(composite)
                     self.processor.reset_all_prompts(state)
                     prompt = prompts_to_use[0]
@@ -711,15 +711,27 @@ class FilterSAM3Detector(Filter):
                         state = self.processor.set_text_prompt_no_grounding(prompt, state)
                     for (norm_box, label) in all_norm_labels:
                         state = self.processor.add_geometric_prompt(norm_box, label, state)
+                    state = self.processor.forward_grounding(state)
                     detections = self._extract_detections_from_state(
                         state, prompt, img_width, img_height, self.global_detection_id
                     )
-                    self.global_detection_id += len(detections)
-                    if "scores" in state:
+                    num_extracted = len(detections)
+                    # Remove detections whose box overlaps any pasted ref region
+                    if ref_regions_pixel:
+                        detections = [
+                            d for d in detections
+                            if not (d.get("box") and self._box_overlaps_ref_regions(d["box"], ref_regions_pixel))
+                        ]
                         all_scores.extend(
-                            float(s.item() if hasattr(s, 'item') else s)
-                            for s in state["scores"]
+                            float(d["score"]) for d in detections if "score" in d
                         )
+                    else:
+                        if "scores" in state:
+                            all_scores.extend(
+                                float(s.item() if hasattr(s, 'item') else s)
+                                for s in state["scores"]
+                            )
+                    self.global_detection_id += num_extracted
                 else:
                     # Standard mode: set image once, then loop over prompts (and optionally visual exemplars)
                     state = self.processor.set_image(pil_image)
@@ -1641,25 +1653,38 @@ class FilterSAM3Detector(Filter):
                 result.append(p)
         return result if result else None
 
+    @staticmethod
+    def _box_overlaps_ref_regions(box, ref_regions_pixel):
+        """Return True if box [x1, y1, x2, y2] overlaps any region in ref_regions_pixel [(x1,y1,x2,y2), ...]."""
+        if not box or not ref_regions_pixel:
+            return False
+        x1, y1, x2, y2 = float(box[0]), float(box[1]), float(box[2]), float(box[3])
+        for (rx1, ry1, rx2, ry2) in ref_regions_pixel:
+            if not (x2 <= rx1 or x1 >= rx2 or y2 <= ry1 or y1 >= ry2):
+                return True
+        return False
+
     def _build_composite_with_refs(self, pil_image: Image.Image):
         """
         Paste reference images onto the frame (positive bottom-left, negative bottom-right)
         and return the composite image plus normalized box labels for geometric prompts.
 
         Returns:
-            (composite_pil, all_norm_labels) where all_norm_labels is a list of
-            (norm_box, label) with norm_box as [cx, cy, w, h] normalized in [0, 1].
+            (composite_pil, all_norm_labels, ref_regions_pixel) where all_norm_labels is a list of
+            (norm_box, label) with norm_box as [cx, cy, w, h] normalized in [0, 1], and
+            ref_regions_pixel is a list of (x1, y1, x2, y2) in image coordinates for each pasted ref.
         """
         ref_paths_pos = self.ref_images or []
         ref_paths_neg = self.ref_images_negative or []
         if not ref_paths_pos and not ref_paths_neg:
-            return pil_image, []
+            return pil_image, [], []
 
         composite = pil_image.copy()
         width, height = composite.size
         margin = self.ref_margin
         gap = self.ref_gap
         all_norm_labels = []
+        ref_regions_pixel = []
 
         def paste_refs(ref_paths: list, is_positive: bool):
             y_next = height - margin
@@ -1678,6 +1703,7 @@ class FilterSAM3Detector(Filter):
                 else:
                     paste_x_cur = width - margin - sw
                 composite.paste(ref_img, (int(paste_x_cur), int(paste_y)))
+                ref_regions_pixel.append((paste_x_cur, paste_y, paste_x_cur + sw, paste_y + sh))
                 box_xywh = [float(paste_x_cur), float(paste_y), float(sw), float(sh)]
                 box_t = torch.tensor(box_xywh, device=self.device, dtype=torch.float32).view(1, 4)
                 box_cxcywh = box_xywh_to_cxcywh(box_t)
@@ -1689,7 +1715,7 @@ class FilterSAM3Detector(Filter):
         paste_refs(ref_paths_pos, is_positive=True)
         paste_refs(ref_paths_neg, is_positive=False)
 
-        return composite, all_norm_labels
+        return composite, all_norm_labels, ref_regions_pixel
 
     def _forward_grounding_with_visual_prompt(self, state):
         """
