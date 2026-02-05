@@ -1,0 +1,62 @@
+# Exemplar-based detection: VideoIn -> SAM3Detector -> Webvis (no Recorder, no loop).
+# Basic params from .env: VIDEO_PATH, FILTER_EXEMPLARS_PATH, FILTER_DEVICE, FILTER_CONFIDENCE_THRESHOLD, FILTER_OUTPUT_DIR.
+# Docker creates ./exemplars and ./results on the host if they do not exist.
+
+services:
+  video_in:
+    image: containers.openfilter.io/plainsightai/openfilter-video-in:v0.1.10
+    platform: linux/amd64
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      FILTER_ID: VideoIn
+      FILTER_SOURCES: file:///video.mp4!no-loop!sync
+      FILTER_OUTPUTS: tcp://*:5550
+    volumes:
+      - ${VIDEO_PATH:-./data/sample-video.mp4}:/video.mp4:ro
+    networks:
+      - filter-network
+
+  sam3_detector:
+    image: plainsightai/openfilter-sam3-detector:${SAM3_DETECTOR_VERSION:-latest}
+    platform: linux/amd64
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      FILTER_ID: filter_sam3_detector
+      FILTER_SOURCES: tcp://video_in:5550
+      FILTER_OUTPUTS: tcp://*:5552
+      FILTER_TEXT_PROMPT: ${FILTER_TEXT_PROMPT:-}
+      FILTER_EXEMPLARS_PATH: /exemplars
+      FILTER_DEVICE: ${FILTER_DEVICE:-cuda}
+      FILTER_CONFIDENCE_THRESHOLD: ${FILTER_CONFIDENCE_THRESHOLD:-0.5}
+      FILTER_OUTPUT_LABEL: detections
+      FILTER_OUTPUT_PATH: /output/detections.jsonl
+      FILTER_FRAMES_OUTPUT_DIR: /output/frames
+      FILTER_ENABLE_TEMPORAL_INTERVALS: "false"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    volumes:
+      # Docker creates host dir (e.g. ./exemplars) if missing
+      - ${FILTER_EXEMPLARS_PATH:-./exemplars}:/exemplars:ro
+      - ${FILTER_OUTPUT_DIR:-./results}:/output
+    networks:
+      - filter-network
+
+  webvis:
+    image: containers.openfilter.io/plainsightai/openfilter-webvis:v0.1.10
+    platform: linux/amd64
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      FILTER_ID: Webvis
+      FILTER_SOURCES: tcp://sam3_detector:5552
+    ports:
+      - "8002:8000"
+    networks:
+      - filter-network
+
+networks:
+  filter-network:
