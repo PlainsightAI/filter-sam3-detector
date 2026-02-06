@@ -113,7 +113,25 @@ def collect_image_paths(folder: Path):
     return sorted(paths)
 
 
-def run_detector_on_folder(detector, folder: Path, output_dir: Path, ingredient: str, split: str):
+def _detection_to_standard(d: dict, class_name: str) -> dict:
+    """One detection: only class, confidence, bbox {x,y,width,height}, rois (same as results/detections.jsonl)."""
+    score = d.get("score") if d.get("score") is not None else d.get("confidence")
+    box = d.get("box")
+    if box and len(box) >= 4:
+        x1, y1, x2, y2 = int(box[0]), int(box[1]), int(box[2]), int(box[3])
+        bbox = {"x": x1, "y": y1, "width": x2 - x1, "height": y2 - y1}
+    else:
+        bbox = {"x": 0, "y": 0, "width": 0, "height": 0}
+    rois = d.get("rois") or ([list(d["box"])] if d.get("box") else [])
+    return {"class": class_name, "confidence": score, "bbox": bbox, "rois": rois}
+
+
+def _normalize_detections_to_standard(detections: list, class_name: str):
+    """Convert each detection to standard format: class, confidence, bbox, rois only."""
+    return [_detection_to_standard(d, class_name) for d in detections]
+
+
+def run_detector_on_folder(detector, folder: Path, output_dir: Path, class_name: str, split: str, prompt: str):
     """Run detector on all images; save detections.jsonl, frames/, and frames_annotated/."""
     paths = collect_image_paths(folder)
     if not paths:
@@ -134,23 +152,30 @@ def run_detector_on_folder(detector, folder: Path, output_dir: Path, ingredient:
             continue
         frame = Frame(
             image=img,
-            data={"meta": {"id": i, "path": str(img_path), "ingredient": ingredient, "split": split}},
+            data={"meta": {"id": i, "path": str(img_path)}},
             format="BGR",
         )
         out = detector.process({"main": frame})
-        detections = out["main"].data.get("meta", {}).get("sam3_detections", [])
+        raw = out["main"].data.get("meta", {}).get("sam3_detections", [])
+        raw_list = list(raw)
+        detections_standard = _normalize_detections_to_standard(raw_list, class_name)
+        score = max((d.get("confidence") for d in detections_standard if d.get("confidence") is not None), default=None)
+        h, w = img.shape[:2]
         records.append({
             "image": img_path.name,
             "path": str(img_path),
-            "ingredient": ingredient,
-            "split": split,
-            "detections": detections,
+            "class": class_name,
+            "prompt": prompt,
+            "score": score,
+            "width": w,
+            "height": h,
+            "detections": detections_standard,
         })
         # Save original frame
         frame_path = frames_dir / img_path.name
         cv2.imwrite(str(frame_path), img)
-        # Save annotated frame (with boxes)
-        img_annotated = draw_detections_on_image(img, detections)
+        # Save annotated frame (with boxes; draw uses raw detections with box/score)
+        img_annotated = draw_detections_on_image(img, raw_list)
         cv2.imwrite(str(frames_annotated_dir / img_path.name), img_annotated)
 
     out_jsonl = output_dir / "detections.jsonl"
@@ -214,7 +239,7 @@ def main():
                 print(f"  Skip (no dir): {folder}")
                 continue
             out_dir = OUTPUT_ROOT / ingredient / split
-            n = run_detector_on_folder(detector, folder, out_dir, ingredient, split)
+            n = run_detector_on_folder(detector, folder, out_dir, ingredient, split, prompt)
             total_images += n
 
         detector.shutdown()
