@@ -814,6 +814,8 @@ class FilterSAM3Detector(Filter):
                 # Store results in frame metadata
                 frame_meta = frame.data.setdefault('meta', {})
                 frame_meta[self.output_label] = detections
+                frame_meta['width'] = img_width
+                frame_meta['height'] = img_height
 
                 # Add detection_confidence to meta
                 if detection_confidence is not None:
@@ -909,6 +911,8 @@ class FilterSAM3Detector(Filter):
                         # Include frame_id in meta (from _filter topic or VideoIn's meta['id'])
                         output_frame_id = frame_id_num if frame_id_num is not None else frame_counter
                         jsonl_meta['frame_id'] = output_frame_id
+                        jsonl_meta['width'] = img_width
+                        jsonl_meta['height'] = img_height
 
                         # Event sink format: {'filter_name': ..., 'topic': ..., 'data': {'id': ..., 'meta': ...}}
                         # This matches what filter-event-sink outputs - frame id is merged into data
@@ -1019,6 +1023,8 @@ class FilterSAM3Detector(Filter):
 
             # Store detections in frame metadata
             output_meta[self.output_label] = ps_detections
+            output_meta['width'] = img_width
+            output_meta['height'] = img_height
 
             # Add protege-compatible output
             self._add_protege_compatible_output(output_meta, ps_detections)
@@ -1037,6 +1043,8 @@ class FilterSAM3Detector(Filter):
                     self._add_protege_compatible_output(jsonl_meta, ps_detections)
                     output_frame_id = frame_id_num if frame_id_num is not None else frame_counter
                     jsonl_meta['frame_id'] = output_frame_id
+                    jsonl_meta['width'] = img_width
+                    jsonl_meta['height'] = img_height
 
                     event_record = {
                         "filter_name": ps_filter_name,

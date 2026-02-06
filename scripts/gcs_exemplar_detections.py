@@ -44,7 +44,7 @@ MAX_IMAGES = int(os.getenv("MAX_IMAGES", "0"))
 
 # Class name -> (text_prompt, confidence_threshold). Override via CLASS_CONFIG_JSON env (JSON object) if needed.
 CLASS_CONFIG = {
-    "avocado": ("avocado in salad or avocado slices", 0.5),
+    "avocado": ("avocado in salad or avocado slices", 0.4),
     "roasted_chicken": ("chunks of cooked chicken (white meat)", 0.5),
     "miso_glazed_steelhead": ("cooked salmon fillet", 0.5),
     "hard_boiled_egg": ("boiled egg", 0.5),
@@ -61,14 +61,14 @@ REF_IMAGES_DIR = REF_IMAGES_ROOT / "ref_images"
 REF_IMAGES_NEGATIVE_DIR = REF_IMAGES_ROOT / "ref_images_negative"
 # Class name -> (list of positive ref image paths, list of negative ref image paths). Optional.
 REF_IMAGES_BY_CLASS = {
-    # "avocado": (
-    #     [],
-    #     [
-    #         REF_IMAGES_NEGATIVE_DIR / "cucumber_1.png",
-    #         # REF_IMAGES_NEGATIVE_DIR / "cucumber_2.png",
-    #         # REF_IMAGES_NEGATIVE_DIR / "lime.png",
-    #     ],
-    # ),
+    "avocado": (
+        [],
+        [
+            REF_IMAGES_NEGATIVE_DIR / "cucumber_1.png",
+            # REF_IMAGES_NEGATIVE_DIR / "cucumber_2.png",
+            # REF_IMAGES_NEGATIVE_DIR / "lime.png",
+        ],
+    ),
     "roasted_tofu": (
         [REF_IMAGES_DIR / "tofu_example.png"],
         [REF_IMAGES_NEGATIVE_DIR / f"carrot_{i}.png" for i in (1, 2, 3)],
