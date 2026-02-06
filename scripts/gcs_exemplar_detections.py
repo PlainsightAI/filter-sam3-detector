@@ -35,8 +35,10 @@ from filter_sam3_detector.filter import FilterSAM3Detector, FilterSAM3DetectorCo
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DATA_PATH = os.getenv("DATA_PATH", "")
-OUTPUT_ROOT = Path(os.getenv("OUTPUT_ROOT", str(_PROJECT_ROOT / "sg_samples_annotations")))
-REF_IMAGES_ROOT = Path(os.getenv("REF_IMAGES_ROOT", str(_PROJECT_ROOT / "sg_samples")))
+OUTPUT_ROOT = Path(os.getenv("OUTPUT_ROOT", str(_PROJECT_ROOT / "results_gcp")))
+REF_IMAGES_ROOT = Path(os.getenv("REF_IMAGES_ROOT", str(Path.home() / "datasets" / "sg_samples")))
+# Labels file: filename, path under DATA_PATH, or full GCS URI (gs://bucket/path/labels.jsonl)
+LABELS_FILENAME = os.getenv("LABELS_FILENAME", "labels.jsonl").strip()
 DEVICE = os.getenv("FILTER_DEVICE", "cuda")
 MAX_IMAGES = int(os.getenv("MAX_IMAGES", "0"))
 
@@ -59,6 +61,14 @@ REF_IMAGES_DIR = REF_IMAGES_ROOT / "ref_images"
 REF_IMAGES_NEGATIVE_DIR = REF_IMAGES_ROOT / "ref_images_negative"
 # Class name -> (list of positive ref image paths, list of negative ref image paths). Optional.
 REF_IMAGES_BY_CLASS = {
+    # "avocado": (
+    #     [],
+    #     [
+    #         REF_IMAGES_NEGATIVE_DIR / "cucumber_1.png",
+    #         # REF_IMAGES_NEGATIVE_DIR / "cucumber_2.png",
+    #         # REF_IMAGES_NEGATIVE_DIR / "lime.png",
+    #     ],
+    # ),
     "roasted_tofu": (
         [REF_IMAGES_DIR / "tofu_example.png"],
         [REF_IMAGES_NEGATIVE_DIR / f"carrot_{i}.png" for i in (1, 2, 3)],
@@ -71,20 +81,38 @@ REF_IMAGES_BY_CLASS = {
 
 
 def load_labels_jsonl(data_path: str, is_gcs: bool):
-    """Load labels.jsonl and return list of (image_filename, list_of_present_classes)."""
+    """Load labels file and return list of (image_filename, list_of_present_classes). For GCS: use LABELS_FILENAME as gs:// URI, or as path under DATA_PATH."""
     entries = []
     if is_gcs:
         try:
             from google.cloud import storage
             from urllib.parse import urlparse
-            parsed = urlparse(data_path)
-            bucket_name = parsed.netloc
-            prefix = (parsed.path or "").lstrip("/")
-            blob_path = f"{prefix}/labels.jsonl" if prefix else "labels.jsonl"
             client = storage.Client()
+
+            if LABELS_FILENAME.startswith("gs://"):
+                # Full GCS URI: gs://bucket/path/labels.jsonl
+                parsed = urlparse(LABELS_FILENAME)
+                bucket_name = parsed.netloc
+                blob_path = (parsed.path or "").lstrip("/")
+            else:
+                # Labels under DATA_PATH
+                parsed = urlparse(data_path)
+                bucket_name = parsed.netloc
+                prefix = (parsed.path or "").lstrip("/")
+                labels_rel = os.path.basename(LABELS_FILENAME) if os.path.isabs(LABELS_FILENAME) else LABELS_FILENAME.lstrip("/")
+                blob_path = f"{prefix}/{labels_rel}" if prefix else labels_rel
+
             bucket = client.bucket(bucket_name)
             blob = bucket.blob(blob_path)
-            content = blob.download_as_text()
+            try:
+                content = blob.download_as_text()
+            except Exception as e:
+                if "404" in str(e) or "NotFound" in type(e).__name__:
+                    raise FileNotFoundError(
+                        f"Labels file not found in GCS: gs://{bucket_name}/{blob_path}\n"
+                        f"Check that the file exists (and LABELS_FILENAME if using gs:// URI)."
+                    ) from e
+                raise
             for line in content.strip().split("\n"):
                 if not line:
                     continue
@@ -95,12 +123,12 @@ def load_labels_jsonl(data_path: str, is_gcs: bool):
         except ImportError:
             raise RuntimeError("GCS path used but google-cloud-storage not installed. pip install google-cloud-storage")
     else:
-        path = Path(data_path) / "labels.jsonl"
+        path = Path(data_path) / LABELS_FILENAME
         if not path.exists():
-            path = Path(data_path) / ".." / "labels.jsonl"
+            path = Path(data_path) / ".." / LABELS_FILENAME
             path = path.resolve()
         if not path.exists():
-            raise FileNotFoundError(f"labels.jsonl not found under {data_path}")
+            raise FileNotFoundError(f"{LABELS_FILENAME} not found under {data_path}")
         with open(path) as f:
             for line in f:
                 line = line.strip()
@@ -167,35 +195,35 @@ def normalize_detections_to_standard(detections: list, class_name: str):
     return [_detection_to_standard(d, class_name) for d in detections]
 
 
-def build_detectors():
-    """Create one FilterSAM3Detector per class from CLASS_CONFIG."""
-    detectors = {}
-    for class_name, (prompt, conf) in CLASS_CONFIG.items():
-        config_kw = dict(
-            text_prompt=prompt,
-            confidence_threshold=conf,
-            device=DEVICE,
-            output_boxes=True,
-            output_scores=True,
-            output_masks=False,
-        )
-        if class_name in REF_IMAGES_BY_CLASS:
-            ref_images, ref_images_negative = REF_IMAGES_BY_CLASS[class_name]
-            config_kw["ref_images"] = [str(p) for p in ref_images]
-            config_kw["ref_images_negative"] = [str(p) for p in ref_images_negative]
-        config = FilterSAM3DetectorConfig(**config_kw)
-        config = FilterSAM3Detector.normalize_config(config)
-        if class_name in REF_IMAGES_BY_CLASS:
-            ref_images, ref_images_negative = REF_IMAGES_BY_CLASS[class_name]
-            config["ref_images"] = [str(p) for p in ref_images]
-            config["ref_images_negative"] = [str(p) for p in ref_images_negative]
-        else:
-            config["ref_images"] = None
-            config["ref_images_negative"] = None
-        det = FilterSAM3Detector(config)
-        det.setup(config)
-        detectors[class_name] = det
-    return detectors
+def build_one_detector(class_name: str) -> FilterSAM3Detector:
+    """Create and setup one FilterSAM3Detector for the given class (frees GPU after shutdown)."""
+    if class_name not in CLASS_CONFIG:
+        raise ValueError(f"Unknown class: {class_name}")
+    prompt, conf = CLASS_CONFIG[class_name]
+    config_kw = dict(
+        text_prompt=prompt,
+        confidence_threshold=conf,
+        device=DEVICE,
+        output_boxes=True,
+        output_scores=True,
+        output_masks=False,
+    )
+    if class_name in REF_IMAGES_BY_CLASS:
+        ref_images, ref_images_negative = REF_IMAGES_BY_CLASS[class_name]
+        config_kw["ref_images"] = [str(p) for p in ref_images]
+        config_kw["ref_images_negative"] = [str(p) for p in ref_images_negative]
+    config = FilterSAM3DetectorConfig(**config_kw)
+    config = FilterSAM3Detector.normalize_config(config)
+    if class_name in REF_IMAGES_BY_CLASS:
+        ref_images, ref_images_negative = REF_IMAGES_BY_CLASS[class_name]
+        config["ref_images"] = [str(p) for p in ref_images]
+        config["ref_images_negative"] = [str(p) for p in ref_images_negative]
+    else:
+        config["ref_images"] = None
+        config["ref_images_negative"] = None
+    det = FilterSAM3Detector(config)
+    det.setup(config)
+    return det
 
 
 def main():
@@ -213,53 +241,56 @@ def main():
         return 0
     print(f"Loaded {len(entries)} image entries from labels.jsonl")
 
-    detectors = build_detectors()
-    # Open one jsonl file per class
-    out_handles = {}
-    for class_name in detectors:
+    # Which classes appear in at least one entry
+    classes_needed = set()
+    for _, present_classes in entries:
+        classes_needed.update(c for c in present_classes if c in CLASS_CONFIG)
+
+    # Process one class at a time: create detector -> process all images for that class -> shutdown (free GPU)
+    for class_name in sorted(classes_needed):
+        print(f"\n--- {class_name} (loading model, then processing images) ---")
+        detector = build_one_detector(class_name)
         out_dir = OUTPUT_ROOT / class_name
         out_dir.mkdir(parents=True, exist_ok=True)
-        out_handles[class_name] = open(out_dir / "detections.jsonl", "w")
-
-    try:
-        for idx, (image_filename, present_classes) in enumerate(entries):
-            img = load_image(DATA_PATH, image_filename, is_gcs)
-            if img is None:
-                print(f"  Skip (could not load): {image_filename}")
-                continue
-            image_path_or_uri = f"{DATA_PATH}/{image_filename}" if is_gcs else str(Path(DATA_PATH) / image_filename)
-            frame = Frame(
-                image=img,
-                data={"meta": {"id": idx, "path": image_path_or_uri}},
-                format="BGR",
-            )
-            for class_name in present_classes:
-                if class_name not in detectors:
-                    continue
-                prompt_used = CLASS_CONFIG[class_name][0]
-                out = detectors[class_name].process({"main": frame})
-                raw = out["main"].data.get("meta", {}).get("sam3_detections", [])
-                detections = normalize_detections_to_standard(list(raw), class_name)
-                score = max((d.get("confidence") for d in detections if d.get("confidence") is not None), default=None)
-                h, w = img.shape[:2]
-                rec = {
-                    "image": image_filename,
-                    "path": image_path_or_uri,
-                    "class": class_name,
-                    "prompt": prompt_used,
-                    "score": score,
-                    "width": w,
-                    "height": h,
-                    "detections": detections,
-                }
-                out_handles[class_name].write(json.dumps(rec, ensure_ascii=False) + "\n")
-            if (idx + 1) % 10 == 0 or idx == 0:
-                print(f"  Processed {idx + 1}/{len(entries)} images")
-    finally:
-        for f in out_handles.values():
-            f.close()
-        for det in detectors.values():
-            det.shutdown()
+        prompt_used = CLASS_CONFIG[class_name][0]
+        count = 0
+        try:
+            with open(out_dir / "detections.jsonl", "w") as out_f:
+                for idx, (image_filename, present_classes) in enumerate(entries):
+                    if class_name not in present_classes:
+                        continue
+                    img = load_image(DATA_PATH, image_filename, is_gcs)
+                    if img is None:
+                        print(f"  Skip (could not load): {image_filename}")
+                        continue
+                    image_path_or_uri = f"{DATA_PATH}/{image_filename}" if is_gcs else str(Path(DATA_PATH) / image_filename)
+                    frame = Frame(
+                        image=img,
+                        data={"meta": {"id": idx, "path": image_path_or_uri}},
+                        format="BGR",
+                    )
+                    out = detector.process({"main": frame})
+                    raw = out["main"].data.get("meta", {}).get("sam3_detections", [])
+                    detections = normalize_detections_to_standard(list(raw), class_name)
+                    score = max((d.get("confidence") for d in detections if d.get("confidence") is not None), default=None)
+                    h, w = img.shape[:2]
+                    rec = {
+                        "image": image_filename,
+                        "path": image_path_or_uri,
+                        "class": class_name,
+                        "prompt": prompt_used,
+                        "score": score,
+                        "width": w,
+                        "height": h,
+                        "detections": detections,
+                    }
+                    out_f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+                    count += 1
+                    if count % 10 == 0 or count == 1:
+                        print(f"  {class_name}: {count} images written")
+        finally:
+            detector.shutdown()
+        print(f"  {class_name}: done ({count} records), detector shut down (GPU freed)")
 
     print(f"\nDone. Output: {OUTPUT_ROOT}")
     print("  One detections.jsonl per class under <class>/")

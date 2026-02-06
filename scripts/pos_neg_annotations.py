@@ -79,6 +79,15 @@ REF_IMAGES_NEGATIVE_DIR = SG_SAMPLES_ROOT / "ref_images_negative"
 
 # Ingredient -> (ref_images_list, ref_images_negative_list) for exemplar-based detection
 REF_IMAGES_BY_INGREDIENT = {
+    "avocado": (
+        [],
+        [
+            # REF_IMAGES_NEGATIVE_DIR / "lime.png",
+            REF_IMAGES_NEGATIVE_DIR / "cucumber_1.png",
+            # REF_IMAGES_NEGATIVE_DIR / "cucumber_2.png",
+            
+        ],
+    ),
     "roasted_tofu": (
         [REF_IMAGES_DIR / "tofu_example.png"],
         [REF_IMAGES_NEGATIVE_DIR / f"carrot_{i}.png" for i in (1, 2, 3)],
