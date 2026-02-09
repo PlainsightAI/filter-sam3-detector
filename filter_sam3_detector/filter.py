@@ -153,6 +153,8 @@ class FilterSAM3Detector(Filter):
             "ref_images_negative": None,
             "ref_margin": 10,
             "ref_gap": 5,
+            "refs_outside": True,  # Paste refs in side columns (base in center); if False, paste on same image
+            "ref_max_h": 160,  # Max height for ref images when refs_outside (thumbnail)
         }
         
         for key, default_value in defaults.items():
@@ -202,6 +204,8 @@ class FilterSAM3Detector(Filter):
             # Ref images (margin/gap; ref path lists handled below)
             "ref_margin": int,
             "ref_gap": int,
+            "refs_outside": bool,
+            "ref_max_h": int,
         }
         
         # Special handling for FILTER_REF_IMAGES (comma-separated paths -> list)
@@ -343,6 +347,8 @@ class FilterSAM3Detector(Filter):
         self.ref_images_negative = self._expand_ref_paths(self.ref_images_negative)
         self.ref_margin = config.get("ref_margin", 10)
         self.ref_gap = config.get("ref_gap", 5)
+        self.refs_outside = config.get("refs_outside", True)
+        self.ref_max_h = config.get("ref_max_h", 160)
         self.confidence_threshold = config.get("confidence_threshold", 0.5)
         self.mask_threshold = config.get("mask_threshold", 0.5)
         self.nms_threshold = config.get("nms_threshold", 0.5)
@@ -700,8 +706,8 @@ class FilterSAM3Detector(Filter):
                 has_refs = bool(self.ref_images or self.ref_images_negative)
 
                 if has_refs and prompts_to_use:
-                    # Reference-image mode: composite with pasted refs + geometric prompts
-                    composite, all_norm_labels, ref_regions_pixel = self._build_composite_with_refs(pil_image)
+                    # Reference-image mode: composite with refs in side columns (base in center)
+                    composite, all_norm_labels, base_bbox = self._build_composite_with_refs(pil_image)
                     state = self.processor.set_image(composite)
                     self.processor.reset_all_prompts(state)
                     prompt = prompts_to_use[0]
@@ -712,25 +718,20 @@ class FilterSAM3Detector(Filter):
                     for (norm_box, label) in all_norm_labels:
                         state = self.processor.add_geometric_prompt(norm_box, label, state)
                     state = self.processor.forward_grounding(state)
-                    detections = self._extract_detections_from_state(
-                        state, prompt, img_width, img_height, self.global_detection_id
-                    )
-                    num_extracted = len(detections)
-                    # Remove detections whose box overlaps any pasted ref region
-                    if ref_regions_pixel:
-                        detections = [
-                            d for d in detections
-                            if not (d.get("box") and self._box_overlaps_ref_regions(d["box"], ref_regions_pixel))
-                        ]
-                        all_scores.extend(
-                            float(d["score"]) for d in detections if "score" in d
+                    if base_bbox is not None:
+                        state = self._filter_state_to_base_region(
+                            state, base_bbox, composite.size[0], composite.size[1]
+                        )
+                        base_w, base_h = base_bbox[2], base_bbox[3]
+                        detections = self._extract_detections_from_state(
+                            state, prompt, base_w, base_h, self.global_detection_id
                         )
                     else:
-                        if "scores" in state:
-                            all_scores.extend(
-                                float(s.item() if hasattr(s, 'item') else s)
-                                for s in state["scores"]
-                            )
+                        detections = self._extract_detections_from_state(
+                            state, prompt, img_width, img_height, self.global_detection_id
+                        )
+                    num_extracted = len(detections)
+                    all_scores.extend(float(d["score"]) for d in detections if "score" in d)
                     self.global_detection_id += num_extracted
                 else:
                     # Standard mode: set image once, then loop over prompts (and optionally visual exemplars)
@@ -1672,31 +1673,33 @@ class FilterSAM3Detector(Filter):
                 return True
         return False
 
+    def _resize_ref(self, ref_img: Image.Image) -> Image.Image:
+        """Resize ref image to max height ref_max_h for side-column layout."""
+        if ref_img.height <= self.ref_max_h:
+            return ref_img
+        ratio = self.ref_max_h / ref_img.height
+        new_w = max(1, int(ref_img.width * ratio))
+        return ref_img.resize((new_w, self.ref_max_h), Image.Resampling.LANCZOS)
+
     def _build_composite_with_refs(self, pil_image: Image.Image):
         """
-        Paste reference images onto the frame (positive bottom-left, negative bottom-right)
-        and return the composite image plus normalized box labels for geometric prompts.
-
-        Returns:
-            (composite_pil, all_norm_labels, ref_regions_pixel) where all_norm_labels is a list of
-            (norm_box, label) with norm_box as [cx, cy, w, h] normalized in [0, 1], and
-            ref_regions_pixel is a list of (x1, y1, x2, y2) in image coordinates for each pasted ref.
+        Build composite with base image in center and refs in side columns (refs outside).
+        Returns (composite_pil, all_norm_labels, base_bbox) with base_bbox = (base_x, base_y, base_w, base_h)
+        in composite coordinates, or (pil_image, [], None) when no refs.
         """
         ref_paths_pos = self.ref_images or []
         ref_paths_neg = self.ref_images_negative or []
         if not ref_paths_pos and not ref_paths_neg:
-            return pil_image, [], []
+            return pil_image, [], None
 
-        composite = pil_image.copy()
-        width, height = composite.size
+        base_w, base_h = pil_image.size
         margin = self.ref_margin
         gap = self.ref_gap
-        all_norm_labels = []
-        ref_regions_pixel = []
+        ref_max_h = getattr(self, "ref_max_h", 160)
 
-        def paste_refs(ref_paths: list, is_positive: bool):
-            y_next = height - margin
-            paste_x_base = margin if is_positive else None
+        def load_and_size_refs(ref_paths: list):
+            widths = []
+            images = []
             for ref_path in ref_paths:
                 ref_path = Path(ref_path)
                 try:
@@ -1704,26 +1707,106 @@ class FilterSAM3Detector(Filter):
                 except Exception as e:
                     logger.warning(f"Failed to open ref image {ref_path}: {e}")
                     continue
+                ref_img = self._resize_ref(ref_img)
                 sw, sh = ref_img.size
-                paste_y = y_next - sh
-                if is_positive:
-                    paste_x_cur = paste_x_base
-                else:
-                    paste_x_cur = width - margin - sw
-                composite.paste(ref_img, (int(paste_x_cur), int(paste_y)))
-                ref_regions_pixel.append((paste_x_cur, paste_y, paste_x_cur + sw, paste_y + sh))
-                box_xywh = [float(paste_x_cur), float(paste_y), float(sw), float(sh)]
+                widths.append(sw)
+                images.append((ref_img, sw, sh))
+            return (max(widths) + 2 * margin if widths else 0, images)
+
+        left_w, pos_imgs = load_and_size_refs(ref_paths_pos)
+        right_w, neg_imgs = load_and_size_refs(ref_paths_neg)
+
+        composite_w = left_w + base_w + right_w
+        composite_h = base_h
+        composite = Image.new("RGB", (composite_w, composite_h), (255, 255, 255))
+        base_x, base_y = left_w, 0
+        composite.paste(pil_image, (base_x, base_y))
+        base_bbox = (base_x, base_y, base_w, base_h)
+
+        all_norm_labels = []
+
+        def paste_refs(imgs_with_size: list, is_positive: bool):
+            y_next = composite_h - margin
+            for (ref_img, sw, sh) in imgs_with_size:
+                x = margin if is_positive else (composite_w - margin - sw)
+                y = y_next - sh
+                composite.paste(ref_img, (int(x), int(y)))
+                box_xywh = [float(x), float(y), float(sw), float(sh)]
                 box_t = torch.tensor(box_xywh, device=self.device, dtype=torch.float32).view(1, 4)
                 box_cxcywh = box_xywh_to_cxcywh(box_t)
-                norm = normalize_bbox(box_cxcywh, width, height)
+                norm = normalize_bbox(box_cxcywh, composite_w, composite_h)
                 norm_list = norm.flatten().tolist()
                 all_norm_labels.append((norm_list, is_positive))
-                y_next = paste_y - gap
+                y_next = y - gap
 
-        paste_refs(ref_paths_pos, is_positive=True)
-        paste_refs(ref_paths_neg, is_positive=False)
+        paste_refs(pos_imgs, is_positive=True)
+        paste_refs(neg_imgs, is_positive=False)
 
-        return composite, all_norm_labels, ref_regions_pixel
+        return composite, all_norm_labels, base_bbox
+
+    def _filter_state_to_base_region(self, state: dict, base_bbox: tuple, composite_w: int, composite_h: int) -> dict:
+        """
+        Keep only boxes whose center is inside base_bbox; convert box coords to base-image space.
+        base_bbox = (base_x, base_y, base_w, base_h). Returns new state with filtered boxes, scores, masks.
+        """
+        if "boxes" not in state or state["boxes"] is None:
+            return state
+        base_x, base_y, base_w, base_h = base_bbox
+        boxes = state["boxes"]
+        scores = state.get("scores")
+        masks = state.get("masks")
+
+        if hasattr(boxes, "device"):
+            boxes_np = boxes.detach().cpu().numpy()
+        else:
+            boxes_np = np.asarray(boxes, dtype=np.float32)
+        if boxes_np.ndim == 1:
+            boxes_np = boxes_np.reshape(1, -1)
+        if len(boxes_np) == 0:
+            return state
+
+        cx = (boxes_np[:, 0] + boxes_np[:, 2]) * 0.5
+        cy = (boxes_np[:, 1] + boxes_np[:, 3]) * 0.5
+        keep = (
+            (cx >= base_x) & (cx <= base_x + base_w) &
+            (cy >= base_y) & (cy <= base_y + base_h)
+        )
+        if not np.any(keep):
+            out = dict(state)
+            if hasattr(boxes, "new_zeros"):
+                out["boxes"] = boxes.new_zeros((0, 4))
+            else:
+                out["boxes"] = np.zeros((0, 4), dtype=np.float32)
+            if scores is not None:
+                if hasattr(scores, "new_zeros"):
+                    out["scores"] = scores.new_zeros((0,))
+                else:
+                    out["scores"] = np.zeros((0,), dtype=np.float32)
+            if masks is not None:
+                out["masks"] = masks[keep]
+            return out
+
+        boxes_kept = boxes_np[keep].copy()
+        boxes_kept[:, [0, 2]] -= base_x
+        boxes_kept[:, [1, 3]] -= base_y
+
+        out = dict(state)
+        if hasattr(boxes, "device"):
+            out["boxes"] = torch.from_numpy(boxes_kept).to(boxes.device)
+        else:
+            out["boxes"] = boxes_kept
+        if scores is not None:
+            keep_idx = np.where(keep)[0]
+            if hasattr(scores, "device"):
+                out["scores"] = scores[torch.as_tensor(keep_idx, device=scores.device)]
+            else:
+                out["scores"] = np.asarray(scores)[keep_idx]
+        if masks is not None:
+            if hasattr(masks, "device"):
+                out["masks"] = masks[torch.as_tensor(keep_idx, device=masks.device)]
+            else:
+                out["masks"] = masks[keep_idx]
+        return out
 
     def _forward_grounding_with_visual_prompt(self, state):
         """

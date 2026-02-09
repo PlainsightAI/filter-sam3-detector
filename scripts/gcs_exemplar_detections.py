@@ -1,24 +1,24 @@
 #!/usr/bin/env python
 """
-Generate detection annotations for multilabel dataset (labels.jsonl + images).
+Generate detection annotations for all images in DATA_PATH.
 
-Reads DATA_PATH (local or gs://) containing labels.jsonl and images. For each image,
-runs FilterSAM3Detector only for classes with present=true, and writes one
-detections.jsonl per class to OUTPUT_ROOT/<class>/ (no frames or frames_annotated).
-Config: CLASS_CONFIG (text_prompt, confidence per class) and optional REF_IMAGES_BY_CLASS.
+Lists all images in DATA_PATH (and DATA_PATH/images/), runs FilterSAM3Detector for each
+CLASS_CONFIG class on every image, and writes one detections.jsonl per class to
+OUTPUT_ROOT/<class>/ (no frames or frames_annotated). Config: CLASS_CONFIG and optional
+REF_IMAGES_BY_CLASS. Only local files are supported; gs:// is not allowed.
 
 Usage:
     DATA_PATH=/path/to/data OUTPUT_ROOT=./out \\
-        REF_IMAGES_ROOT=/path/to/refs python scripts/exemplar_detections.py
+        REF_IMAGES_ROOT=/path/to/refs python scripts/gcs_exemplar_detections.py
 
-    MAX_IMAGES=5 DATA_PATH=/path/to/data ... python scripts/exemplar_detections.py
-
-    DATA_PATH=gs://bucket/path/to/data ... python scripts/exemplar_detections.py
+    MAX_IMAGES=5 DATA_PATH=/path/to/data ... python scripts/gcs_exemplar_detections.py
 """
 
 import os
 import json
 from pathlib import Path
+
+import numpy as np
 
 try:
     from dotenv import load_dotenv
@@ -27,7 +27,6 @@ except ImportError:
     pass
 
 import cv2
-import numpy as np
 from openfilter.filter_runtime.frame import Frame
 
 from filter_sam3_detector.filter import FilterSAM3Detector, FilterSAM3DetectorConfig
@@ -37,14 +36,27 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DATA_PATH = os.getenv("DATA_PATH", "")
 OUTPUT_ROOT = Path(os.getenv("OUTPUT_ROOT", str(_PROJECT_ROOT / "results_gcp")))
 REF_IMAGES_ROOT = Path(os.getenv("REF_IMAGES_ROOT", str(Path.home() / "datasets" / "sg_samples")))
-# Labels file: filename, path under DATA_PATH, or full GCS URI (gs://bucket/path/labels.jsonl)
+# Labels file: path relative to DATA_PATH (e.g. labels.jsonl) or absolute path
 LABELS_FILENAME = os.getenv("LABELS_FILENAME", "labels.jsonl").strip()
 DEVICE = os.getenv("FILTER_DEVICE", "cuda")
 MAX_IMAGES = int(os.getenv("MAX_IMAGES", "0"))
 
+# Postprocess: area fraction, aspect ratio, NMS, top-k (env: POST_MIN_AREA_FRAC, etc.)
+POST_MIN_AREA_FRAC = float(os.getenv("POST_MIN_AREA_FRAC", "0.003"))
+POST_MAX_AREA_FRAC = float(os.getenv("POST_MAX_AREA_FRAC", "0.35"))
+POST_MIN_AR = float(os.getenv("POST_MIN_AR", "0.25"))
+POST_MAX_AR = float(os.getenv("POST_MAX_AR", "4.0"))
+POST_NMS_IOU = float(os.getenv("POST_NMS_IOU", "0.5"))
+POST_TOP_K = int(os.getenv("POST_TOP_K", "20"))
+
+# Per-class postprocess overrides (e.g. min_area_frac for avocado). Keys: min_area_frac, max_area_frac, min_ar, max_ar, nms_iou, top_k.
+POSTPROCESS_BY_CLASS = {
+    "avocado": {"min_area_frac": 0.02},
+}
+
 # Class name -> (text_prompt, confidence_threshold). Override via CLASS_CONFIG_JSON env (JSON object) if needed.
 CLASS_CONFIG = {
-    "avocado": ("avocado in salad or avocado slices", 0.4),
+    "avocado": ("avocado in salad or avocado slices", 0.2),
     "roasted_chicken": ("chunks of cooked chicken (white meat)", 0.5),
     "miso_glazed_steelhead": ("cooked salmon fillet", 0.5),
     "hard_boiled_egg": ("boiled egg", 0.5),
@@ -62,9 +74,9 @@ REF_IMAGES_NEGATIVE_DIR = REF_IMAGES_ROOT / "ref_images_negative"
 # Class name -> (list of positive ref image paths, list of negative ref image paths). Optional.
 REF_IMAGES_BY_CLASS = {
     "avocado": (
-        [],
+        [REF_IMAGES_DIR / "avocado2.png"],
         [
-            REF_IMAGES_NEGATIVE_DIR / "cucumber_1.png",
+            # REF_IMAGES_NEGATIVE_DIR / "cucumber_1.png",
             # REF_IMAGES_NEGATIVE_DIR / "cucumber_2.png",
             # REF_IMAGES_NEGATIVE_DIR / "lime.png",
         ],
@@ -80,101 +92,31 @@ REF_IMAGES_BY_CLASS = {
 }
 
 
-def load_labels_jsonl(data_path: str, is_gcs: bool):
-    """Load labels file and return list of (image_filename, list_of_present_classes). For GCS: use LABELS_FILENAME as gs:// URI, or as path under DATA_PATH."""
-    entries = []
-    if is_gcs:
-        try:
-            from google.cloud import storage
-            from urllib.parse import urlparse
-            client = storage.Client()
-
-            if LABELS_FILENAME.startswith("gs://"):
-                # Full GCS URI: gs://bucket/path/labels.jsonl
-                parsed = urlparse(LABELS_FILENAME)
-                bucket_name = parsed.netloc
-                blob_path = (parsed.path or "").lstrip("/")
-            else:
-                # Labels under DATA_PATH
-                parsed = urlparse(data_path)
-                bucket_name = parsed.netloc
-                prefix = (parsed.path or "").lstrip("/")
-                labels_rel = os.path.basename(LABELS_FILENAME) if os.path.isabs(LABELS_FILENAME) else LABELS_FILENAME.lstrip("/")
-                blob_path = f"{prefix}/{labels_rel}" if prefix else labels_rel
-
-            bucket = client.bucket(bucket_name)
-            blob = bucket.blob(blob_path)
-            try:
-                content = blob.download_as_text()
-            except Exception as e:
-                if "404" in str(e) or "NotFound" in type(e).__name__:
-                    raise FileNotFoundError(
-                        f"Labels file not found in GCS: gs://{bucket_name}/{blob_path}\n"
-                        f"Check that the file exists (and LABELS_FILENAME if using gs:// URI)."
-                    ) from e
-                raise
-            for line in content.strip().split("\n"):
-                if not line:
-                    continue
-                obj = json.loads(line)
-                present = [k for k, v in (obj.get("labels") or {}).items() if v.get("present")]
-                if present and obj.get("image"):
-                    entries.append((obj["image"], present))
-        except ImportError:
-            raise RuntimeError("GCS path used but google-cloud-storage not installed. pip install google-cloud-storage")
-    else:
-        path = Path(data_path) / LABELS_FILENAME
-        if not path.exists():
-            path = Path(data_path) / ".." / LABELS_FILENAME
-            path = path.resolve()
-        if not path.exists():
-            raise FileNotFoundError(f"{LABELS_FILENAME} not found under {data_path}")
-        with open(path) as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                obj = json.loads(line)
-                present = [k for k, v in (obj.get("labels") or {}).items() if v.get("present")]
-                if present and obj.get("image"):
-                    entries.append((obj["image"], present))
+def list_all_images(data_path: str):
+    """List all image filenames (basenames) in data_path and data_path/images/. Returns sorted unique list."""
+    base = Path(data_path)
+    seen = set()
+    for subdir in (base, base / "images"):
+        if not subdir.is_dir():
+            continue
+        for ext in ("*.png", "*.jpg", "*.jpeg", "*.PNG", "*.JPG", "*.JPEG"):
+            for p in subdir.glob(ext):
+                seen.add(p.name)
+    out = sorted(seen)
     if MAX_IMAGES > 0:
-        entries = entries[:MAX_IMAGES]
+        out = out[:MAX_IMAGES]
         print(f"Limited to first {MAX_IMAGES} images (MAX_IMAGES={MAX_IMAGES})")
-    return entries
+    return out
 
 
-def load_image_bytes_gcs(data_path: str, image_filename: str):
-    """Download image from GCS and return bytes."""
-    from google.cloud import storage
-    from urllib.parse import urlparse
-    parsed = urlparse(data_path)
-    bucket_name = parsed.netloc
-    prefix = (parsed.path or "").lstrip("/")
-    # Try data_path/images/<image> then data_path/<image>
-    for blob_path in (f"{prefix}/images/{image_filename}", f"{prefix}/{image_filename}") if prefix else (f"images/{image_filename}", image_filename):
-        client = storage.Client()
-        bucket = client.bucket(bucket_name)
-        blob = bucket.blob(blob_path)
-        if blob.exists():
-            return blob.download_as_bytes()
-    raise FileNotFoundError(f"Image not found: {image_filename} under {data_path}")
-
-
-def load_image(data_path: str, image_filename: str, is_gcs: bool):
-    """Load image as BGR numpy array (cv2). Returns None if failed."""
-    if is_gcs:
-        raw = load_image_bytes_gcs(data_path, image_filename)
-        arr = np.frombuffer(raw, dtype=np.uint8)
-        img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-        return img
-    # Local: try data_path/images/<name> then data_path/<name>
+def load_image(data_path: str, image_filename: str):
+    """Load image as BGR numpy array (cv2). Returns (img, path_used) or (None, None) if not found. path_used is the local path used for loading."""
     base = Path(data_path)
     for p in (base / "images" / image_filename, base / image_filename):
         if p.exists():
             img = cv2.imread(str(p))
-            return img
-    return None
+            return (img, str(p.resolve())) if img is not None else (None, None)
+    return (None, None)
 
 
 def _detection_to_standard(d: dict, class_name: str) -> dict:
@@ -193,6 +135,85 @@ def _detection_to_standard(d: dict, class_name: str) -> dict:
 def normalize_detections_to_standard(detections: list, class_name: str):
     """Convert each detection to standard format: class, confidence, bbox, rois only."""
     return [_detection_to_standard(d, class_name) for d in detections]
+
+
+def _iou_xyxy(a: np.ndarray, b: np.ndarray) -> float:
+    """IoU of two boxes [x1,y1,x2,y2]."""
+    x1 = max(a[0], b[0])
+    y1 = max(a[1], b[1])
+    x2 = min(a[2], b[2])
+    y2 = min(a[3], b[3])
+    inter = max(0, x2 - x1) * max(0, y2 - y1)
+    area_a = max(0, a[2] - a[0]) * max(0, a[3] - a[1])
+    area_b = max(0, b[2] - b[0]) * max(0, b[3] - b[1])
+    union = area_a + area_b - inter + 1e-6
+    return inter / union
+
+
+def apply_postprocess(
+    detections: list,
+    width: int,
+    height: int,
+    min_area_frac: float = POST_MIN_AREA_FRAC,
+    max_area_frac: float = POST_MAX_AREA_FRAC,
+    min_ar: float = POST_MIN_AR,
+    max_ar: float = POST_MAX_AR,
+    nms_iou: float = POST_NMS_IOU,
+    top_k: int = POST_TOP_K,
+) -> list:
+    """Filter by area fraction and aspect ratio, run NMS, keep top_k by score. Returns list of detection dicts."""
+    if not detections:
+        return []
+    area_img = width * height + 1e-6
+    kept = []
+    for i, d in enumerate(detections):
+        bbox = d.get("bbox") or {}
+        box = d.get("box")
+        if box and len(box) >= 4:
+            x1, y1, x2, y2 = float(box[0]), float(box[1]), float(box[2]), float(box[3])
+        else:
+            x = float(bbox.get("x", 0))
+            y = float(bbox.get("y", 0))
+            w = float(bbox.get("width", 0))
+            h = float(bbox.get("height", 0))
+            x1, y1, x2, y2 = x, y, x + w, y + h
+        w = max(0, x2 - x1)
+        h = max(0, y2 - y1)
+        area = w * h
+        area_frac = area / area_img
+        if area_frac < min_area_frac or area_frac > max_area_frac:
+            continue
+        ar = w / (h + 1e-6)
+        if ar < min_ar or ar > max_ar:
+            continue
+        score = d.get("confidence") if d.get("confidence") is not None else d.get("score")
+        score = float(score) if score is not None else -1.0
+        kept.append((i, d, np.array([x1, y1, x2, y2], dtype=np.float32), score))
+    if not kept:
+        return []
+    kept.sort(key=lambda x: x[3], reverse=True)
+    keep_indices = []
+    boxes_xyxy = np.array([x[2] for x in kept], dtype=np.float32)
+    scores = np.array([x[3] for x in kept], dtype=np.float32)
+    order = np.argsort(-scores)
+    for idx in order:
+        ok = True
+        for j in keep_indices:
+            if _iou_xyxy(boxes_xyxy[idx], boxes_xyxy[j]) >= nms_iou:
+                ok = False
+                break
+        if ok:
+            keep_indices.append(idx)
+    keep_indices = sorted(keep_indices, key=lambda j: -scores[j])[:top_k]
+    return [kept[j][1] for j in keep_indices]
+
+
+def limit_detections_for_class(detections: list, class_name: str, top_k: int = 2) -> list:
+    """For avocado, keep only the top_k detections by confidence; other classes unchanged."""
+    if class_name != "avocado":
+        return detections
+    key = lambda d: d.get("confidence") if d.get("confidence") is not None else -1.0
+    return sorted(detections, key=key, reverse=True)[:top_k]
 
 
 def build_one_detector(class_name: str) -> FilterSAM3Detector:
@@ -228,26 +249,23 @@ def build_one_detector(class_name: str) -> FilterSAM3Detector:
 
 def main():
     if not DATA_PATH:
-        print("Set DATA_PATH (local path or gs://...) to the folder containing labels.jsonl and images.")
+        print("Set DATA_PATH to the local folder containing labels and images.")
         return 1
-    is_gcs = DATA_PATH.startswith("gs://")
-    print(f"Data path: {DATA_PATH} (GCS={is_gcs})")
+    if DATA_PATH.startswith("gs://"):
+        print("Only local DATA_PATH is supported; gs:// is not allowed.")
+        return 1
+    print(f"Data path: {DATA_PATH}")
     print(f"Output root: {OUTPUT_ROOT}")
     print(f"Ref images base: {REF_IMAGES_ROOT}")
 
-    entries = load_labels_jsonl(DATA_PATH, is_gcs)
-    if not entries:
-        print("No entries in labels.jsonl (or none with present classes).")
+    image_list = list_all_images(DATA_PATH)
+    if not image_list:
+        print(f"No images found under {DATA_PATH} (or {DATA_PATH}/images/).")
         return 0
-    print(f"Loaded {len(entries)} image entries from labels.jsonl")
+    print(f"Found {len(image_list)} images in {DATA_PATH}")
 
-    # Which classes appear in at least one entry
-    classes_needed = set()
-    for _, present_classes in entries:
-        classes_needed.update(c for c in present_classes if c in CLASS_CONFIG)
-
-    # Process one class at a time: create detector -> process all images for that class -> shutdown (free GPU)
-    for class_name in sorted(classes_needed):
+    # Process every class on every image (no labels.jsonl filter)
+    for class_name in sorted(CLASS_CONFIG.keys()):
         print(f"\n--- {class_name} (loading model, then processing images) ---")
         detector = build_one_detector(class_name)
         out_dir = OUTPUT_ROOT / class_name
@@ -256,27 +274,35 @@ def main():
         count = 0
         try:
             with open(out_dir / "detections.jsonl", "w") as out_f:
-                for idx, (image_filename, present_classes) in enumerate(entries):
-                    if class_name not in present_classes:
-                        continue
-                    img = load_image(DATA_PATH, image_filename, is_gcs)
+                for idx, image_filename in enumerate(image_list):
+                    img, image_path = load_image(DATA_PATH, image_filename)
                     if img is None:
                         print(f"  Skip (could not load): {image_filename}")
                         continue
-                    image_path_or_uri = f"{DATA_PATH}/{image_filename}" if is_gcs else str(Path(DATA_PATH) / image_filename)
+                    h, w = img.shape[:2]
                     frame = Frame(
                         image=img,
-                        data={"meta": {"id": idx, "path": image_path_or_uri}},
+                        data={"meta": {"id": idx, "path": image_path}},
                         format="BGR",
                     )
                     out = detector.process({"main": frame})
                     raw = out["main"].data.get("meta", {}).get("sam3_detections", [])
                     detections = normalize_detections_to_standard(list(raw), class_name)
+                    pp_kw = dict(
+                        min_area_frac=POST_MIN_AREA_FRAC,
+                        max_area_frac=POST_MAX_AREA_FRAC,
+                        min_ar=POST_MIN_AR,
+                        max_ar=POST_MAX_AR,
+                        nms_iou=POST_NMS_IOU,
+                        top_k=POST_TOP_K,
+                    )
+                    pp_kw.update(POSTPROCESS_BY_CLASS.get(class_name, {}))
+                    detections = apply_postprocess(detections, w, h, **pp_kw)
+                    detections = limit_detections_for_class(detections, class_name, top_k=2)
                     score = max((d.get("confidence") for d in detections if d.get("confidence") is not None), default=None)
-                    h, w = img.shape[:2]
                     rec = {
                         "image": image_filename,
-                        "path": image_path_or_uri,
+                        "path": image_path,
                         "class": class_name,
                         "prompt": prompt_used,
                         "score": score,
