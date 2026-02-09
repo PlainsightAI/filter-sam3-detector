@@ -60,13 +60,13 @@ CLASS_CONFIG = {
     "roasted_chicken": ("chunks of cooked chicken (white meat)", 0.5),
     "miso_glazed_steelhead": ("cooked salmon fillet", 0.5),
     "hard_boiled_egg": ("boiled egg", 0.5),
-    "caramelized_garlic_steak": ("blackened steak bites or diced steak or steak cubes", 0.5),
+    "caramelized_garlic_steak": ("blackened steak bites or diced steak or steak cubes", 0.2),
     "blackened_chicken": (
-        "small chunks of chicken (light beige), bite-sized pieces",
-        0.55,
+        "small cooked chicken chunks, light beige/tan, irregular pieces of meat",
+        0.2,
     ),
-    "roasted_tofu": ("tofu", 0.4),
-    "warm_portobello_mix": ("dark mushroom mix", 0.5),
+    "roasted_tofu": ("tofu", 0.05),
+    "warm_portobello_mix": ("small dark mushroom pieces", 0.2),
 }
 
 REF_IMAGES_DIR = REF_IMAGES_ROOT / "ref_images"
@@ -82,12 +82,19 @@ REF_IMAGES_BY_CLASS = {
         ],
     ),
     "roasted_tofu": (
-        [REF_IMAGES_DIR / "tofu_example.png"],
-        [REF_IMAGES_NEGATIVE_DIR / f"carrot_{i}.png" for i in (1, 2, 3)],
+        [
+            Path("/home/leandrobmarinho/datasets/sam3_ds/examples/tofu_example.png"),
+            Path("/home/leandrobmarinho/datasets/sam3_ds/examples/tofu2.png"),
+        ],
+        [],
     ),
-    "blackened_chicken": (
-        [REF_IMAGES_DIR / "blackened_chicken_example.png"],
-        [REF_IMAGES_NEGATIVE_DIR / f"carrot_{i}.png" for i in (1, 2, 3)],
+    # "blackened_chicken": (
+    #     [REF_IMAGES_DIR / "blackened_chicken_example.png"],
+    #     [REF_IMAGES_NEGATIVE_DIR / f"carrot_{i}.png" for i in (1, 2, 3)],
+    # ),
+    "caramelized_garlic_steak": (
+        [REF_IMAGES_DIR / "steak1.png"],
+        [],
     ),
 }
 
