@@ -99,6 +99,32 @@ REF_IMAGES_BY_CLASS = {
 }
 
 
+def load_labels(data_path: str) -> dict[str, set[str]]:
+    """Load LABELS_FILENAME (path relative to DATA_PATH or absolute). Returns dict[image_name, set of class names with present=True]. Empty dict if file missing or invalid."""
+    labels_path = Path(LABELS_FILENAME)
+    if not labels_path.is_absolute():
+        labels_path = Path(data_path).resolve() / LABELS_FILENAME
+    if not labels_path.is_file():
+        return {}
+    out = {}
+    for line in labels_path.read_text().strip().split("\n"):
+        if not line.strip():
+            continue
+        try:
+            rec = json.loads(line)
+            image_name = rec.get("image") or ""
+            labels_obj = rec.get("labels") or {}
+            present = {
+                k for k, v in labels_obj.items()
+                if isinstance(v, dict) and v.get("present") is True
+            }
+            if image_name:
+                out[image_name] = present
+        except (json.JSONDecodeError, TypeError):
+            continue
+    return out
+
+
 def list_all_images(data_path: str):
     """List all image filenames (basenames) in data_path and data_path/images/. Returns sorted unique list."""
     base = Path(data_path)
@@ -271,17 +297,48 @@ def main():
         return 0
     print(f"Found {len(image_list)} images in {DATA_PATH}")
 
-    # Process every class on every image (no labels.jsonl filter)
+    labels_by_image = load_labels(DATA_PATH)
+    if labels_by_image:
+        print(f"Loaded labels from {LABELS_FILENAME}: {len(labels_by_image)} images; will run SAM3 only for classes present per image.")
+    else:
+        print("No labels file or empty; running SAM3 for all classes on all images.")
+
     for class_name in sorted(CLASS_CONFIG.keys()):
-        print(f"\n--- {class_name} (loading model, then processing images) ---")
+        # If we have labels, only run SAM3 for images where this class is present; still write one line per image (empty detections when skipped).
+        if labels_by_image:
+            image_set_for_class = {f for f in image_list if class_name in labels_by_image.get(f, set())}
+        else:
+            image_set_for_class = set(image_list)
+        run_count = len(image_set_for_class)
+        print(f"\n--- {class_name} (loading model, running SAM3 on {run_count} images; output 1 line per image, {len(image_list)} total) ---")
         detector = build_one_detector(class_name)
         out_dir = OUTPUT_ROOT / class_name
         out_dir.mkdir(parents=True, exist_ok=True)
         prompt_used = CLASS_CONFIG[class_name][0]
-        count = 0
+        written = 0
         try:
             with open(out_dir / "detections.jsonl", "w") as out_f:
                 for idx, image_filename in enumerate(image_list):
+                    if image_filename not in image_set_for_class:
+                        # Same pattern: one record per image; no SAM3, empty detections
+                        img, image_path = load_image(DATA_PATH, image_filename)
+                        if img is None:
+                            print(f"  Skip (could not load): {image_filename}")
+                            continue
+                        h, w = img.shape[:2]
+                        rec = {
+                            "image": image_filename,
+                            "path": image_path or str(Path(DATA_PATH) / image_filename),
+                            "class": class_name,
+                            "prompt": prompt_used,
+                            "score": None,
+                            "width": w,
+                            "height": h,
+                            "detections": [],
+                        }
+                        out_f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+                        written += 1
+                        continue
                     img, image_path = load_image(DATA_PATH, image_filename)
                     if img is None:
                         print(f"  Skip (could not load): {image_filename}")
@@ -318,12 +375,12 @@ def main():
                         "detections": detections,
                     }
                     out_f.write(json.dumps(rec, ensure_ascii=False) + "\n")
-                    count += 1
-                    if count % 10 == 0 or count == 1:
-                        print(f"  {class_name}: {count} images written")
+                    written += 1
+                    if written % 10 == 0 or written == 1:
+                        print(f"  {class_name}: {written} lines written")
         finally:
             detector.shutdown()
-        print(f"  {class_name}: done ({count} records), detector shut down (GPU freed)")
+        print(f"  {class_name}: done ({written} lines, SAM3 ran on {run_count} images), detector shut down (GPU freed)")
 
     print(f"\nDone. Output: {OUTPUT_ROOT}")
     print("  One detections.jsonl per class under <class>/")
