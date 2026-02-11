@@ -21,6 +21,7 @@ Optional environment variables:
     FILTER_MAX_DETECTIONS: Maximum detections per frame - default: 100
     FILTER_VISUALIZE: Draw detections on frames (true/false) - default: false
     FILTER_OUTPUT_DIR: Output directory - default: ./output
+    FILTER_VIDEO_LOOP: true to loop video so frames are still available after model load (~14s) - default: false
 
 Example .env file content:
     VIDEO_PATH=/path/to/your/video.mp4
@@ -70,12 +71,14 @@ if __name__ == '__main__':
         exit(1)
     
     # Build video source with options
+    # Loop: useful when SAM3 takes ~14s to load so video keeps sending frames until detector is ready
+    video_loop = os.getenv('FILTER_VIDEO_LOOP', 'false').lower() == 'true'
     video_source = f'file://{Path(video_path).absolute()}'
     if resize:
         video_source += f'!maxsize={resize}x{resize}'
-    video_source += '!no-loop;main'  # Process video once, no loop, topic: main, sync
-    
-    print(f"Using VideoIn with path: {video_path} (no loop, sync)")
+    video_source += '!loop;main' if video_loop else '!no-loop;main'  # topic: main, sync
+    loop_str = "loop" if video_loop else "no loop"
+    print(f"Using VideoIn with path: {video_path} ({loop_str}, sync)")
     print(f"Text prompt: {os.getenv('FILTER_TEXT_PROMPT', 'NOT SET')}")
     print(f"Device: {os.getenv('FILTER_DEVICE', 'cuda')}")
     print(f"Confidence threshold: {os.getenv('FILTER_CONFIDENCE_THRESHOLD', '0.5')}")

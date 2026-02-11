@@ -3,6 +3,10 @@ SAM3 Detector filter release notes
 
 ## [Unreleased]
 
+## v0.1.4 - 2026-02-12
+### Added
+- **Exemplar (reference) images on video**: detection on video streams using positive and optional negative reference images together with a text prompt; reference images are pasted beside each frame so the model can use them for visual grounding while processing the stream.
+
 ## v0.1.3 - 2026-02-04
 
 ### Added

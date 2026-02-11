@@ -81,7 +81,7 @@ FILTER_EXEMPLARS_PATH=./exemplars/           # Path to exemplar images directory
 # FILTER_REF_IMAGES_NEGATIVE=path3.png       # Negative exemplars (bottom-right)
 
 # Model configuration
-FILTER_MODEL_ID=facebook/sam2-hiera-large    # HuggingFace model ID
+FILTER_MODEL_ID=facebook/sam3                # HuggingFace model ID
 FILTER_DEVICE=cuda                           # Device: cuda, cpu, or mps
 
 # Detection parameters
@@ -106,7 +106,7 @@ FILTER_DEBUG=false                           # Enable debug logging
 |----------|------|---------|----------|-------|
 | `text_prompt` | string | None | No* | Natural language description (e.g., "person", "car") |
 | `exemplars_path` | string | None | No* | Path to directory with exemplar images |
-| `model_id` | string | "facebook/sam2-hiera-large" | No | HuggingFace model ID or local path |
+| `model_id` | string | "facebook/sam3" | No | HuggingFace model ID or local path |
 | `device` | string | "cuda" | No | Device: "cuda", "cpu", or "mps" |
 | `confidence_threshold` | float | 0.5 | No | Minimum confidence (0.0-1.0) |
 | `mask_threshold` | float | 0.5 | No | Mask binarization threshold (0.0-1.0) |
@@ -128,72 +128,46 @@ In single-output mode you can add reference images as geometric prompts: set `FI
 
 ### Method 1: Using Example Scripts (Recommended)
 
+Scripts read configuration from environment variables (e.g. from a `.env` file). Copy `env.example` to `.env` and set at least `VIDEO_PATH` and `FILTER_TEXT_PROMPT`.
+
 #### Object Detection with Text Prompts
+
+Scripts read configuration from environment variables (use a `.env` file or pass them inline):
+
+```bash
+# Set in .env: VIDEO_PATH, FILTER_TEXT_PROMPT, FILTER_OUTPUT_DIR, etc.
+python scripts/filter_object_detection.py
+```
+
+Or pass variables inline:
 
 ```bash
 # Detect people in a video
-python scripts/filter_object_detection.py \
-    --video input.mp4 \
-    --prompt "person" \
-    --output-dir ./results \
-    --confidence 0.5
+VIDEO_PATH=input.mp4 FILTER_TEXT_PROMPT=person FILTER_OUTPUT_DIR=./results \
+  FILTER_CONFIDENCE_THRESHOLD=0.5 python scripts/filter_object_detection.py
 
 # Detect cars with visualization
-python scripts/filter_object_detection.py \
-    --video traffic.mp4 \
-    --prompt "car" \
-    --confidence 0.6 \
-    --visualize \
-    --output-dir ./cars
+VIDEO_PATH=traffic.mp4 FILTER_TEXT_PROMPT=car FILTER_CONFIDENCE_THRESHOLD=0.6 \
+  FILTER_VISUALIZE=true FILTER_OUTPUT_DIR=./cars python scripts/filter_object_detection.py
 
-# Process multiple videos
-python scripts/filter_object_detection.py \
-    --video video1.mp4 video2.mp4 video3.mp4 \
-    --prompt "dog" \
-    --output-dir ./detections
+# Process multiple videos (run once per video)
+VIDEO_PATH=video1.mp4 FILTER_TEXT_PROMPT=dog FILTER_OUTPUT_DIR=./detections \
+  python scripts/filter_object_detection.py
+# Then VIDEO_PATH=video2.mp4 ... and VIDEO_PATH=video3.mp4 ...
 ```
 
-#### Exemplar-Based Detection (Few-Shot Learning)
+Optional: `FILTER_VIDEO_LOOP=true` keeps the video looping so frames are still available after the model loads (~14s); useful for short videos.
 
-> ⚠️ **Note**: This feature is currently experimental. See [Known Issues](#known-issues) below.
+#### Detection with Reference (Exemplar) Images
 
-Exemplar-based detection allows you to detect objects by providing example images instead of text descriptions. This is useful for objects that are hard to describe in text or domain-specific items.
-
-**Preparing Exemplar Images:**
-
-Exemplar images should be **pre-cropped** images showing exactly one instance of the target object. No JSON annotations are required - the images themselves serve as the visual reference.
+Use positive (and optionally negative) reference images together with a text prompt for better matching:
 
 ```bash
-# 1. Extract frames from a reference video
-ffmpeg -i reference_video.mp4 -vf "select='not(mod(n,30))'" -vsync vfr frames/frame_%04d.jpg
-
-# 2. Manually crop regions containing your target object
-# Use any image editor to crop tightly around the object
-mkdir -p cup_examples
-# Save cropped images to cup_examples/
-
-# 3. Run detection
-python scripts/filter_exemplar_detection.py \
-    --video input.mp4 \
-    --exemplars ./cup_examples/ \
-    --output-dir ./results \
-    --confidence 0.3
+# In .env set: VIDEO_PATH, FILTER_TEXT_PROMPT, FILTER_REF_IMAGES (required), FILTER_REF_IMAGES_NEGATIVE (optional)
+python scripts/filter_object_detection_exemplar.py
 ```
 
-**Exemplar Directory Structure:**
-```
-cup_examples/
-├── cup1.jpg    # Cropped image of target object
-├── cup2.jpg    # Different angle/lighting
-├── cup3.png    # Another example
-└── ...
-```
-
-**Best Practices:**
-- Crop images tightly around the object (minimal background)
-- Use 3-5 exemplar images with varied angles and lighting
-- Ensure the object fills most of the image
-- Use lower confidence threshold (0.2-0.3) for exemplar-based detection
+**Reference images:** Set `FILTER_REF_IMAGES` to a directory path or comma-separated paths (files or folders). Positive refs are pasted left of the frame, negative refs right; the model uses them with the text prompt. A text prompt is required when using ref images.
 
 ### Method 2: Docker Pipeline
 
@@ -389,43 +363,23 @@ pipeline = [
 
 ### 1. Person Detection
 
-Detect people in surveillance videos:
+Set in `.env`: `VIDEO_PATH`, `FILTER_TEXT_PROMPT=person`, `FILTER_OUTPUT_DIR`, `FILTER_CONFIDENCE_THRESHOLD=0.6`. Then:
 
 ```bash
-python scripts/filter_object_detection.py \
-    --video surveillance.mp4 \
-    --prompt "person" \
-    --output-dir ./person_detections \
-    --confidence 0.6
+python scripts/filter_object_detection.py
 ```
 
 ### 2. Vehicle Detection
 
-Detect cars in traffic monitoring:
+Set `VIDEO_PATH`, `FILTER_TEXT_PROMPT=car`, `FILTER_OUTPUT_DIR`, `FILTER_RESIZE=480`. Then run `python scripts/filter_object_detection.py`.
+
+### 3. Detection with Reference (Exemplar) Images
+
+For better matching using example images plus text:
 
 ```bash
-python scripts/filter_object_detection.py \
-    --video traffic.mp4 \
-    --prompt "car" \
-    --confidence 0.6 \
-    --output-dir ./vehicle_detections \
-    --resize 480
-```
-
-### 3. Custom Object Detection with Exemplars
-
-For objects that are hard to describe with text:
-
-```bash
-# Prepare exemplar images
-mkdir -p custom_objects
-# Add cropped images to custom_objects/
-
-python scripts/filter_exemplar_detection.py \
-    --video assembly_line.mp4 \
-    --exemplars ./custom_objects/ \
-    --confidence 0.3 \
-    --output-dir ./custom_detections
+# In .env: VIDEO_PATH, FILTER_TEXT_PROMPT, FILTER_REF_IMAGES=/path/to/ref_images/, FILTER_REF_IMAGES_NEGATIVE (optional)
+python scripts/filter_object_detection_exemplar.py
 ```
 
 ### 4. Pipeline Integration
@@ -509,9 +463,9 @@ filter-sam3-detector/
 │   ├── __init__.py
 │   └── filter.py              # Main filter implementation
 ├── scripts/                   # Example usage scripts
-│   ├── filter_object_detection.py
-│   ├── filter_exemplar_detection.py
-│   └── README.md
+│   ├── filter_object_detection.py       # Video pipeline (text prompt)
+│   ├── filter_object_detection_exemplar.py  # Video pipeline (ref images + text)
+│   └── run_temporal_intervals.py
 ├── examples/                  # Additional examples
 │   └── detect_objects_video.py
 ├── docs/                      # Documentation
