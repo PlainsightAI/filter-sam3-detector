@@ -4,7 +4,7 @@
 Example script for running object detection with FilterSAM3Detector using
 **exemplar (reference) images** in addition to a text prompt.
 
-Same pipeline as filter_object_detection.py (VideoIn -> SAM3Detector -> Recorder -> Webvis),
+Same pipeline as filter_object_detection.py (VideoIn -> SAM3Detector -> Webvis),
 but configures ref_images and ref_images_negative so SAM3 can use visual examples
 to improve detection. Reference images are pasted beside the frame and used as
 positive/negative visual prompts.
@@ -49,7 +49,6 @@ from openfilter.filter_runtime.filter import Filter
 from filter_sam3_detector.filter import FilterSAM3Detector, FilterSAM3DetectorConfig
 from openfilter.filter_runtime.filters.video_in import VideoIn
 from openfilter.filter_runtime.filters.webvis import Webvis
-from openfilter.filter_runtime.filters.recorder import Recorder
 
 
 def _parse_ref_paths(env_value: str):
@@ -117,17 +116,10 @@ if __name__ == '__main__':
             outputs='tcp://*:5550',
         )),
         (FilterSAM3Detector, detector_config),
-        (Recorder, dict(
-            id="rec",
-            sources="tcp://localhost:5552",
-            outputs=f"file://{output_path / 'detection_out_dev.json'}",
-            rules="+",
-            flush=True,
-        )),
         (Webvis, dict(sources="tcp://localhost:5552")),
     ]
 
     print("\nStarting pipeline (exemplar mode)...")
     print(f"Results will be saved to: {output_path}")
-    print(f"  - detections.jsonl, frames/, detection_out_dev.json")
+    print(f"  - detections.jsonl, frames/")
     Filter.run_multi(filters)
