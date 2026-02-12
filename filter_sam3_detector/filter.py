@@ -437,6 +437,11 @@ class FilterSAM3Detector(Filter):
             self._load_exemplar_images()
 
         # Optional: validate ref image paths exist (log only, do not block)
+        n_pos = len(self.ref_images) if self.ref_images else 0
+        n_neg = len(self.ref_images_negative) if self.ref_images_negative else 0
+        if n_pos or n_neg:
+            logger.info(f"Using reference images: {n_pos} positive, {n_neg} negative (FILTER_REF_IMAGES / FILTER_REF_IMAGES_NEGATIVE)")
+            self._ref_mode_logged = False  # one-time log when ref path is actually taken in process()
         for attr in ("ref_images", "ref_images_negative"):
             paths = getattr(self, attr, None)
             if paths:
@@ -706,6 +711,12 @@ class FilterSAM3Detector(Filter):
                 has_refs = bool(self.ref_images or self.ref_images_negative)
 
                 if has_refs and prompts_to_use:
+                    # One-time log so you can confirm ref path is really running
+                    if not getattr(self, "_ref_mode_logged", True):
+                        logger.info(
+                            "Reference-image mode active: building composite with refs and geometric prompts for this frame"
+                        )
+                        self._ref_mode_logged = True
                     # Reference-image mode: composite with refs in side columns (base in center)
                     composite, all_norm_labels, base_bbox = self._build_composite_with_refs(pil_image)
                     state = self.processor.set_image(composite)

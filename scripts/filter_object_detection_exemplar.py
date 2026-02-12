@@ -23,7 +23,6 @@ Optional:
     FILTER_MAX_DETECTIONS: Max detections per frame - default: 100
     FILTER_VISUALIZE: true/false - default: false
     FILTER_OUTPUT_DIR: Output directory - default: ./output
-    FILTER_VIDEO_LOOP: true/false - loop video (useful if model load is slow)
 
 Example .env:
     VIDEO_PATH=/path/to/video.mp4
@@ -33,7 +32,6 @@ Example .env:
     FILTER_DEVICE=cuda
     FILTER_VISUALIZE=true
     FILTER_OUTPUT_DIR=./results_exemplar
-    FILTER_VIDEO_LOOP=true
 """
 
 import os
@@ -60,11 +58,9 @@ def _parse_ref_paths(env_value: str):
 
 
 if __name__ == '__main__':
-    video_path = os.getenv('VIDEO_PATH', '')
+    video_path = os.getenv("VIDEO_PATH", "")
     output_dir = os.getenv('FILTER_OUTPUT_DIR', './output')
     visualize = os.getenv('FILTER_VISUALIZE', 'false').lower() == 'true'
-    resize = os.getenv('FILTER_RESIZE', '')
-    video_loop = os.getenv('FILTER_VIDEO_LOOP', 'false').lower() == 'true'
 
     ref_images = _parse_ref_paths(os.getenv('FILTER_REF_IMAGES', ''))
     ref_images_negative = _parse_ref_paths(os.getenv('FILTER_REF_IMAGES_NEGATIVE', ''))
@@ -75,20 +71,12 @@ if __name__ == '__main__':
     if not Path(video_path).exists():
         print(f"Error: Video file not found: {video_path}")
         exit(1)
-    if not ref_images:
-        print("Error: FILTER_REF_IMAGES is required for exemplar mode (directory or comma-separated paths)")
-        exit(1)
 
-    video_source = f'file://{Path(video_path).absolute()}'
-    if resize:
-        video_source += f'!maxsize={resize}x{resize}'
-    video_source += '!loop;main' if video_loop else '!no-loop;main'
-
-    loop_str = "loop" if video_loop else "no loop"
-    print(f"Using VideoIn with path: {video_path} ({loop_str}, sync)")
+    print(f"Using VideoIn with path: {video_path} (loop)")
     print(f"Text prompt: {os.getenv('FILTER_TEXT_PROMPT', 'NOT SET')}")
     print(f"Ref images (positive): {ref_images}")
-    print(f"Ref images (negative): {ref_images_negative or '(none)'}")
+    neg_str = ref_images_negative if ref_images_negative else "(none) — FILTER_REF_IMAGES_NEGATIVE not used"
+    print(f"Ref images (negative): {neg_str}")
     print(f"Device: {os.getenv('FILTER_DEVICE', 'cuda')}")
     print(f"Confidence threshold: {os.getenv('FILTER_CONFIDENCE_THRESHOLD', '0.5')}")
     print(f"Max detections: {os.getenv('FILTER_MAX_DETECTIONS', '100')}")
@@ -107,14 +95,16 @@ if __name__ == '__main__':
         output_path=str(output_path / "detections.jsonl"),
         frames_output_dir=str(output_path / "frames"),
         ref_images=ref_images,
-        ref_images_negative=ref_images_negative,
     )
 
     filters = [
-        (VideoIn, dict(
-            sources=video_source,
-            outputs='tcp://*:5550',
-        )),
+        (
+            VideoIn,
+            dict(
+                sources=f"file://{video_path}!loop",
+                outputs="tcp://*:5550",
+            ),
+        ),
         (FilterSAM3Detector, detector_config),
         (Webvis, dict(sources="tcp://localhost:5552")),
     ]
