@@ -95,6 +95,7 @@ if __name__ == '__main__':
         output_path=str(output_path / "detections.jsonl"),
         frames_output_dir=str(output_path / "frames"),
         ref_images=ref_images,
+        # ref_images_negative=ref_images_negative,
     )
 
     filters = [
@@ -106,7 +107,10 @@ if __name__ == '__main__':
             ),
         ),
         (FilterSAM3Detector, detector_config),
-        (Webvis, dict(sources="tcp://localhost:5552")),
+        (
+            Webvis, dict(sources="tcp://localhost:5552",
+            port=9000,
+        )),
     ]
 
     print("\nStarting pipeline (exemplar mode)...")

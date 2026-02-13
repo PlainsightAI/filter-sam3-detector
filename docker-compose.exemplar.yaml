@@ -1,6 +1,6 @@
-# Exemplar-based detection: VideoIn -> SAM3Detector -> Webvis (no Recorder, no loop).
-# Basic params from .env: VIDEO_PATH, FILTER_EXEMPLARS_PATH, FILTER_DEVICE, FILTER_CONFIDENCE_THRESHOLD, FILTER_OUTPUT_DIR.
-# Docker creates ./exemplars and ./results on the host if they do not exist.
+# Aligned with scripts/filter_object_detection_exemplar.py: VideoIn -> SAM3Detector -> Webvis.
+# Uses FILTER_REF_IMAGES (positive) and FILTER_REF_IMAGES_NEGATIVE (negative) like the script; video loops so frames are available while SAM3 loads.
+# .env: VIDEO_PATH, FILTER_TEXT_PROMPT, FILTER_REF_IMAGES, FILTER_REF_IMAGES_NEGATIVE, FILTER_DEVICE, FILTER_CONFIDENCE_THRESHOLD, FILTER_OUTPUT_DIR.
 
 services:
   video_in:
@@ -19,12 +19,15 @@ services:
   sam3_detector:
     image: plainsightai/openfilter-sam3-detector:${SAM3_DETECTOR_VERSION:-latest}
     platform: linux/amd64
+    env_file: .env
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       FILTER_ID: filter_sam3_detector
       FILTER_SOURCES: tcp://video_in:5550
       FILTER_OUTPUTS: tcp://*:5552
       FILTER_TEXT_PROMPT: ${FILTER_TEXT_PROMPT:-}
+      FILTER_REF_IMAGES: /ref_images
+      FILTER_REF_IMAGES_NEGATIVE: /ref_images_negative
       FILTER_EXEMPLARS_PATH: /exemplars
       FILTER_DEVICE: ${FILTER_DEVICE:-cuda}
       FILTER_CONFIDENCE_THRESHOLD: ${FILTER_CONFIDENCE_THRESHOLD:-0.5}
@@ -40,8 +43,10 @@ services:
               count: 1
               capabilities: [gpu]
     volumes:
-      # Docker creates host dir (e.g. ./exemplars) if missing
-      - ${FILTER_EXEMPLARS_PATH:-./exemplars}:/exemplars:ro
+      # Same as script: ref_images (positive) and ref_images_negative (negative) for composite visual prompts
+      - ${FILTER_REF_IMAGES:-./ref_imgs}:/ref_images:ro
+      - ${FILTER_REF_IMAGES_NEGATIVE:-./ref_negative_imgs}:/ref_images_negative:ro
+      - ${FILTER_REF_IMAGES:-./exemplars}:/exemplars:ro
       - ${FILTER_OUTPUT_DIR:-./results}:/output
     networks:
       - filter-network
