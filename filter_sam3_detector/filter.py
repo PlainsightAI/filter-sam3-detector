@@ -439,6 +439,11 @@ class FilterSAM3Detector(Filter):
         n_neg = len(self.negative_boxes) if self.negative_boxes else 0
         if n_pos or n_neg:
             logger.info(f"Using reference boxes: {n_pos} positive, {n_neg} negative (FILTER_POSITIVE_BOXES / FILTER_NEGATIVE_BOXES)")
+            # In ref-boxes mode only the first text prompt is used per frame
+            if self.text_prompts and len(self.text_prompts) > 1:
+                logger.warning(
+                    "Reference-boxes mode uses only the first text prompt; other prompt(s) are ignored (use text-prompt-only mode for multi-prompt detection)"
+                )
 
         # Log multi-output mode configuration and pre-cache text embeddings
         # This is the KEY OPTIMIZATION: text prompts are static, so we encode them ONCE
@@ -699,6 +704,7 @@ class FilterSAM3Detector(Filter):
 
                 if has_ref_boxes:
                     # Reference-boxes mode: use original image and add geometric prompts (no composite)
+                    # Only the first text prompt is used; additional prompts are ignored (see setup warning if text_prompts has multiple)
                     state = self.processor.set_image(pil_image)
                     self.processor.reset_all_prompts(state)
                     prompt = prompts_to_use[0] if prompts_to_use else "visual"
