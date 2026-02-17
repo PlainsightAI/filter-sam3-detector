@@ -32,6 +32,7 @@ class FilterSAM3DetectorConfig(FilterConfig):
 | `output_scores` | `bool` | `True` | Whether to output confidence scores |
 | `output_label` | `str` | `"sam3_detections"` | Key for storing results in `frame.data['meta']` |
 | `visualize` | `bool` | `False` | Whether to draw detections on output frames |
+| `viz_topic` | `str` | `""` | When set (e.g. `"viz"`), main topic gets original frame + meta; this topic gets drawn frame + same meta. Empty = legacy behavior (visualize draws on main). |
 | `debug` | `bool` | `False` | Enable debug logging |
 
 ### Environment Variables
@@ -231,6 +232,7 @@ filters = [
         "positive_boxes": [[480, 290, 110, 360], [370, 280, 115, 375]],
         "negative_boxes": [[100, 100, 50, 200]],
         "visualize": True,  # green=positive ref, red=negative ref, blue=detections
+        "viz_topic": "viz",  # optional: main=original+meta, viz=drawn frame+meta
     }),
 ]
 ```

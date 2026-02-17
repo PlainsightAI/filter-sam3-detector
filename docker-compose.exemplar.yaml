@@ -31,6 +31,7 @@ services:
       FILTER_DEVICE: ${FILTER_DEVICE:-cuda}
       FILTER_CONFIDENCE_THRESHOLD: ${FILTER_CONFIDENCE_THRESHOLD:-0.5}
       FILTER_OUTPUT_LABEL: detections
+      # FILTER_VIZ_TOPIC: "viz"  # optional: separate topic for visualized frames; main stays original+meta
       FILTER_OUTPUT_PATH: /output/detections.jsonl
       FILTER_FRAMES_OUTPUT_DIR: /output/frames
       FILTER_ENABLE_TEMPORAL_INTERVALS: "false"

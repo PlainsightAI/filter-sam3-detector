@@ -97,6 +97,7 @@ FILTER_OUTPUT_LABEL=sam3_detections          # Key in frame.data['meta']
 
 # Visualization and debugging
 FILTER_VISUALIZE=false                       # Draw detections on frames
+# FILTER_VIZ_TOPIC=viz                       # When set: main=original+meta, this topic=drawn frame+meta
 FILTER_DEBUG=false                           # Enable debug logging
 ```
 
@@ -116,6 +117,7 @@ FILTER_DEBUG=false                           # Enable debug logging
 | `output_scores` | bool | true | No | Output confidence scores |
 | `output_label` | string | "sam3_detections" | No | Key for storing results |
 | `visualize` | bool | false | No | Draw detections on output frames |
+| `viz_topic` | string | "" | No | When set (e.g. `viz`), main gets original frame + meta; this topic gets drawn frame + meta. Empty = legacy (visualize draws on main). |
 | `debug` | bool | false | No | Enable debug logging |
 
 \* When using `positive_boxes` or `negative_boxes`, a text prompt is optional (the model can use the placeholder "visual"). Otherwise either `text_prompt` or `exemplars_path` must be provided.

@@ -24,6 +24,7 @@ services:
       FILTER_TEXT_PROMPT: ${FILTER_TEXT_PROMPT:-person}
       FILTER_CONFIDENCE_THRESHOLD: ${FILTER_CONFIDENCE_THRESHOLD:-0.3}
       FILTER_OUTPUT_LABEL: sam3_detections
+      # FILTER_VIZ_TOPIC: "viz"  # optional: separate topic for visualized frames; main stays original+meta
       # Integrated temporal interval tracking (no separate filter needed)
       FILTER_ENABLE_TEMPORAL_INTERVALS: "true"
       FILTER_TEMPORAL_HALF_LIFE: ${FILTER_HALF_LIFE:-5.0}

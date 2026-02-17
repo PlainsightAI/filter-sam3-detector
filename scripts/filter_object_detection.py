@@ -133,6 +133,7 @@ if __name__ == '__main__':
         # Add Webvis for visualization
         (Webvis, dict(
             sources="tcp://localhost:5552",
+            port=9000,
         )),
     ]
     

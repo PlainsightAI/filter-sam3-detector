@@ -10,7 +10,7 @@ boxes in [x, y, w, h] pixel coordinates on the frame.
 
 Required environment variables in .env:
     VIDEO_PATH: Path to the input video file
-    FILTER_TEXT_PROMPT: Text prompt for detection (e.g., "person", "car") — optional if using ref boxes only
+    FILTER_TEXT_PROMPT: Text prompt for detection (e.g., "person", "car"). Required when not using ref boxes; optional when using FILTER_POSITIVE_BOXES/FILTER_NEGATIVE_BOXES.
 
 Optional:
     FILTER_POSITIVE_BOXES: JSON array of [x, y, w, h] boxes (positive prompts), e.g. '[[480,290,110,360]]'
@@ -19,6 +19,7 @@ Optional:
     FILTER_CONFIDENCE_THRESHOLD: 0.0-1.0 - default: 0.5
     FILTER_MAX_DETECTIONS: Max detections per frame - default: 100
     FILTER_VISUALIZE: true/false - default: false
+    FILTER_VIZ_TOPIC: when set (e.g. viz), main=original+meta, this topic=drawn frame+meta - default: unset
     FILTER_OUTPUT_DIR: Output directory - default: ./output
 
 Example .env:
@@ -111,7 +112,8 @@ if __name__ == '__main__':
         )),
     ]
 
-    print("\nStarting pipeline (reference-boxes mode)...")
+    mode = "reference-boxes" if (positive_boxes or negative_boxes) else "text-prompt only"
+    print(f"\nStarting pipeline ({mode})...")
     print(f"Results will be saved to: {output_path}")
     print(f"  - detections.jsonl, frames/")
     Filter.run_multi(filters)

@@ -134,6 +134,7 @@ class FilterSAM3Detector(Filter):
             "annotated_frames_output_dir": None,  # Directory to save annotated frames (separate from original)
             "save_annotated_frames": False,  # Save frames with visual annotations (boxes, scores, masks)
             "visualize": False,
+            "viz_topic": "",  # When set (e.g. "viz"), main gets original frame + meta; this topic gets drawn frame + meta
             # Temporal interval tracking options (integrated from TemporalIntervalFilter)
             "enable_temporal_intervals": False,  # Enable inline temporal interval tracking
             "temporal_half_life": None,  # Frames for 50% EMA decay (fast signal)
@@ -181,6 +182,7 @@ class FilterSAM3Detector(Filter):
             "annotated_frames_output_dir": str,
             "save_annotated_frames": bool,
             "visualize": bool,
+            "viz_topic": str,
             # Temporal interval env mappings
             "enable_temporal_intervals": bool,
             "temporal_half_life": float,
@@ -361,6 +363,7 @@ class FilterSAM3Detector(Filter):
         self.annotated_frames_output_dir = config.get("annotated_frames_output_dir", None)
         self.save_annotated_frames = config.get("save_annotated_frames", False)
         self.visualize = config.get("visualize", False)
+        self.viz_topic = (config.get("viz_topic") or "").strip()
         
         # Initialize JSONL output file if path is provided
         self.jsonl_file = None
@@ -447,9 +450,10 @@ class FilterSAM3Detector(Filter):
             for ps in self.prompt_sets:
                 logger.info(f"  - {ps['name']}: prompts={ps['prompts']}, topic={ps.get('topic', 'main')}")
 
-            # Pre-cache text embeddings for all prompts in all prompt sets
-            if self.model is not None:
-                self._cache_text_embeddings()
+        # Pre-cache text embeddings whenever we have text_prompt, text_prompts, or prompt_sets
+        # (required for single text_prompt mode to use cached embeddings; multi-output already relied on this)
+        if self.model is not None and (self.text_prompt or self.text_prompts or self.prompt_sets):
+            self._cache_text_embeddings()
 
         # Initialize temporal interval tracking if enabled
         self.enable_temporal_intervals = config.get("enable_temporal_intervals", False)
@@ -917,12 +921,23 @@ class FilterSAM3Detector(Filter):
                         logger.warning(f"Failed to save annotation to JSONL: {e}")
 
                 # Optional visualization (for output frame): ref boxes (green/red) and detections (blue)
-                if self.visualize and (detections or has_ref_boxes):
-                    frame = self._visualize_detections(
-                        frame, detections,
-                        self.positive_boxes if has_ref_boxes else None,
-                        self.negative_boxes if has_ref_boxes else None,
-                    )
+                if self.viz_topic:
+                    output_frames[topic] = frame  # main = original + meta
+                    if self.visualize and (detections or has_ref_boxes):
+                        frame_viz = self._visualize_detections(
+                            frame, detections,
+                            self.positive_boxes if has_ref_boxes else None,
+                            self.negative_boxes if has_ref_boxes else None,
+                        )
+                        output_frames[self.viz_topic] = frame_viz
+                else:
+                    if self.visualize and (detections or has_ref_boxes):
+                        frame = self._visualize_detections(
+                            frame, detections,
+                            self.positive_boxes if has_ref_boxes else None,
+                            self.negative_boxes if has_ref_boxes else None,
+                        )
+                    output_frames[topic] = frame
 
             except Exception as e:
                 logger.error(f"Error processing frame from {topic}: {e}")
@@ -1682,17 +1697,6 @@ class FilterSAM3Detector(Filter):
             else:
                 result.append(p)
         return result if result else None
-
-    @staticmethod
-    def _box_overlaps_ref_regions(box, ref_regions_pixel):
-        """Return True if box [x1, y1, x2, y2] overlaps any region in ref_regions_pixel [(x1,y1,x2,y2), ...]."""
-        if not box or not ref_regions_pixel:
-            return False
-        x1, y1, x2, y2 = float(box[0]), float(box[1]), float(box[2]), float(box[3])
-        for (rx1, ry1, rx2, ry2) in ref_regions_pixel:
-            if not (x2 <= rx1 or x1 >= rx2 or y2 <= ry1 or y1 >= ry2):
-                return True
-        return False
 
     def _forward_grounding_with_visual_prompt(self, state):
         """

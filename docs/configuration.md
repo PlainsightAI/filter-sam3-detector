@@ -42,6 +42,8 @@ export FILTER_OUTPUT_LABEL=sam3_detections
 
 # Visualization and debugging
 export FILTER_VISUALIZE=false
+# When set (e.g. viz): main=original+meta, this topic=drawn frame+meta
+# export FILTER_VIZ_TOPIC=viz
 export FILTER_DEBUG=false
 ```
 
@@ -239,6 +241,12 @@ NMS is used to suppress overlapping bounding boxes, keeping only the highest-con
 - **Default**: `False`
 - **Description**: Draw bounding boxes and masks on output frames
 - **Note**: Requires OpenCV, adds processing overhead
+
+#### `viz_topic`
+
+- **Type**: `str`
+- **Default**: `""`
+- **Description**: When non-empty (e.g. `"viz"`), the main output topic receives the original frame with metadata only; the named topic receives the same frame with bounding boxes drawn and the same metadata. When empty, legacy behavior: if `visualize` is true, the main topic gets the drawn frame.
 
 #### `debug`
 
