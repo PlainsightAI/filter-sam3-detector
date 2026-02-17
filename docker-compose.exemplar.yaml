@@ -1,6 +1,6 @@
-# Aligned with scripts/filter_object_detection_exemplar.py: VideoIn -> SAM3Detector -> Webvis.
-# Uses FILTER_REF_IMAGES (positive) and FILTER_REF_IMAGES_NEGATIVE (negative) like the script; video loops so frames are available while SAM3 loads.
-# .env: VIDEO_PATH, FILTER_TEXT_PROMPT, FILTER_REF_IMAGES, FILTER_REF_IMAGES_NEGATIVE, FILTER_DEVICE, FILTER_CONFIDENCE_THRESHOLD, FILTER_OUTPUT_DIR.
+# Exemplar pipeline = reference boxes only (no FILTER_EXEMPLARS_PATH). VideoIn -> SAM3Detector -> Webvis.
+# Uses FILTER_POSITIVE_BOXES and FILTER_NEGATIVE_BOXES (JSON arrays of [x,y,w,h] in pixels).
+# .env: VIDEO_PATH, FILTER_POSITIVE_BOXES and/or FILTER_NEGATIVE_BOXES (JSON), FILTER_TEXT_PROMPT (optional), FILTER_DEVICE, FILTER_CONFIDENCE_THRESHOLD, FILTER_OUTPUT_DIR.
 
 services:
   video_in:
@@ -26,9 +26,8 @@ services:
       FILTER_SOURCES: tcp://video_in:5550
       FILTER_OUTPUTS: tcp://*:5552
       FILTER_TEXT_PROMPT: ${FILTER_TEXT_PROMPT:-}
-      FILTER_REF_IMAGES: /ref_images
-      FILTER_REF_IMAGES_NEGATIVE: /ref_images_negative
-      FILTER_EXEMPLARS_PATH: /exemplars
+      FILTER_POSITIVE_BOXES: ${FILTER_POSITIVE_BOXES:-}
+      FILTER_NEGATIVE_BOXES: ${FILTER_NEGATIVE_BOXES:-}
       FILTER_DEVICE: ${FILTER_DEVICE:-cuda}
       FILTER_CONFIDENCE_THRESHOLD: ${FILTER_CONFIDENCE_THRESHOLD:-0.5}
       FILTER_OUTPUT_LABEL: detections
@@ -43,10 +42,6 @@ services:
               count: 1
               capabilities: [gpu]
     volumes:
-      # Same as script: ref_images (positive) and ref_images_negative (negative) for composite visual prompts
-      - ${FILTER_REF_IMAGES:-./ref_imgs}:/ref_images:ro
-      - ${FILTER_REF_IMAGES_NEGATIVE:-./ref_negative_imgs}:/ref_images_negative:ro
-      - ${FILTER_REF_IMAGES:-./exemplars}:/exemplars:ro
       - ${FILTER_OUTPUT_DIR:-./results}:/output
     networks:
       - filter-network

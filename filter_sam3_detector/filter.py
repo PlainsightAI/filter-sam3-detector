@@ -28,7 +28,7 @@ __all__ = ["FilterSAM3DetectorConfig", "FilterSAM3Detector"]
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-# Image file extensions for ref_images and exemplars (first-level directory listing)
+# Image file extensions for exemplars and path expansion (first-level directory listing)
 REF_IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.bmp', '.webp'}
 
 # Local normalize_bbox (cxcywh) to avoid importing sam3.visualization_utils, which pulls in matplotlib.
@@ -148,14 +148,9 @@ class FilterSAM3Detector(Filter):
             "enable_video_mode": False,  # Use video mode with temporal tracking
             "video_detection_interval": 5,  # Frames between full detection runs in video mode
             "video_min_tracking_confidence": 0.3,  # Re-detect if tracking confidence drops
-            # Reference image prompts (positive = bottom-left, negative = bottom-right)
-            "ref_images": None,
-            "ref_images_negative": None,
-            "ref_margin": 10,
-            "ref_gap": 5,
-            "refs_outside": True,  # Paste refs in side columns (base in center); if False, paste on same image
-            "ref_max_h": 160,  # Max height for ref images when refs_outside (thumbnail)
-            "composite_debug_topic": "",  # If set (e.g. "composite"), emit composite image on this topic for debug
+            # Reference boxes on the original image (SAM3-style): list of [x, y, w, h] in pixels per box
+            "positive_boxes": None,
+            "negative_boxes": None,
         }
         
         for key, default_value in defaults.items():
@@ -202,23 +197,31 @@ class FilterSAM3Detector(Filter):
             "enable_video_mode": bool,
             "video_detection_interval": int,
             "video_min_tracking_confidence": float,
-            # Ref images (margin/gap; ref path lists handled below)
-            "ref_margin": int,
-            "ref_gap": int,
-            "refs_outside": bool,
-            "ref_max_h": int,
-            "composite_debug_topic": str,
         }
-        
-        # Special handling for FILTER_REF_IMAGES (comma-separated paths -> list)
-        env_ref_images = os.getenv("FILTER_REF_IMAGES")
-        if env_ref_images is not None:
-            config["ref_images"] = [p.strip() for p in env_ref_images.split(",") if p.strip()] or None
 
-        # Special handling for FILTER_REF_IMAGES_NEGATIVE (comma-separated paths -> list)
-        env_ref_images_neg = os.getenv("FILTER_REF_IMAGES_NEGATIVE")
-        if env_ref_images_neg is not None:
-            config["ref_images_negative"] = [p.strip() for p in env_ref_images_neg.split(",") if p.strip()] or None
+        def _parse_boxes_env(env_val: str):
+            if not env_val or not env_val.strip():
+                return None
+            try:
+                raw = json.loads(env_val.strip())
+            except json.JSONDecodeError as e:
+                raise ValueError(f"FILTER_POSITIVE_BOXES/FILTER_NEGATIVE_BOXES must be valid JSON array: {e}")
+            if not isinstance(raw, list):
+                raise ValueError(f"FILTER_POSITIVE_BOXES/FILTER_NEGATIVE_BOXES must be a JSON array, got {type(raw)}")
+            out = []
+            for i, item in enumerate(raw):
+                if not isinstance(item, (list, tuple)) or len(item) != 4:
+                    raise ValueError(f"Box {i} must be [x, y, w, h] with 4 numbers, got {item}")
+                out.append([float(item[0]), float(item[1]), float(item[2]), float(item[3])])
+            return out if out else None
+
+        env_positive_boxes = os.getenv("FILTER_POSITIVE_BOXES")
+        if env_positive_boxes is not None:
+            config["positive_boxes"] = _parse_boxes_env(env_positive_boxes)
+
+        env_negative_boxes = os.getenv("FILTER_NEGATIVE_BOXES")
+        if env_negative_boxes is not None:
+            config["negative_boxes"] = _parse_boxes_env(env_negative_boxes)
 
         # Special handling for FILTER_OUTPUT_PATH (maps to output_path)
         env_output_path = os.getenv("FILTER_OUTPUT_PATH")
@@ -339,18 +342,9 @@ class FilterSAM3Detector(Filter):
         self.text_prompts = config.get("text_prompts")  # Multiple prompts for parallel detection
         self.prompt_sets = config.get("prompt_sets")  # Multi-output mode
         self.exemplars_path = config.get("exemplars_path")
-        # Reference image paths (positive = bottom-left, negative = bottom-right on composite)
-        # Accept files or directories; directories are expanded to sorted list of images
-        _ref_images = config.get("ref_images")
-        self.ref_images = [_ref_images] if isinstance(_ref_images, (str, Path)) else (_ref_images if _ref_images else None)
-        _ref_neg = config.get("ref_images_negative")
-        self.ref_images_negative = [_ref_neg] if isinstance(_ref_neg, (str, Path)) else (_ref_neg if _ref_neg else None)
-        self.ref_images = self._expand_ref_paths(self.ref_images)
-        self.ref_images_negative = self._expand_ref_paths(self.ref_images_negative)
-        self.ref_margin = config.get("ref_margin", 10)
-        self.ref_gap = config.get("ref_gap", 5)
-        self.refs_outside = config.get("refs_outside", True)
-        self.ref_max_h = config.get("ref_max_h", 160)
+        # Reference boxes on original image: list of [x, y, w, h] in pixels (SAM3-style)
+        self.positive_boxes = config.get("positive_boxes") or []
+        self.negative_boxes = config.get("negative_boxes") or []
         self.confidence_threshold = config.get("confidence_threshold", 0.5)
         self.mask_threshold = config.get("mask_threshold", 0.5)
         self.nms_threshold = config.get("nms_threshold", 0.5)
@@ -381,9 +375,7 @@ class FilterSAM3Detector(Filter):
         self.annotated_frames_dir = None
         self.frame_counter = 0  # Counter for unique frame numbering
         self.global_detection_id = 0  # Global counter for unique detection IDs across all frames
-        self.composite_debug_topic = (config.get("composite_debug_topic") or "").strip()  # If set, emit composite on this topic
-        self._last_composite_frame = None
-        
+
         # Always save original frames if frames_output_dir is configured (default: true)
         if self.frames_output_dir:
             self.frames_dir = Path(self.frames_output_dir)
@@ -440,18 +432,10 @@ class FilterSAM3Detector(Filter):
         if self.exemplars_path:
             self._load_exemplar_images()
 
-        # Optional: validate ref image paths exist (log only, do not block)
-        n_pos = len(self.ref_images) if self.ref_images else 0
-        n_neg = len(self.ref_images_negative) if self.ref_images_negative else 0
+        n_pos = len(self.positive_boxes) if self.positive_boxes else 0
+        n_neg = len(self.negative_boxes) if self.negative_boxes else 0
         if n_pos or n_neg:
-            logger.info(f"Using reference images: {n_pos} positive, {n_neg} negative (FILTER_REF_IMAGES / FILTER_REF_IMAGES_NEGATIVE)")
-            self._ref_mode_logged = False  # one-time log when ref path is actually taken in process()
-        for attr in ("ref_images", "ref_images_negative"):
-            paths = getattr(self, attr, None)
-            if paths:
-                for p in paths:
-                    if not Path(p).exists():
-                        logger.warning(f"Ref image path does not exist: {p}")
+            logger.info(f"Using reference boxes: {n_pos} positive, {n_neg} negative (FILTER_POSITIVE_BOXES / FILTER_NEGATIVE_BOXES)")
 
         # Log multi-output mode configuration and pre-cache text embeddings
         # This is the KEY OPTIMIZATION: text prompts are static, so we encode them ONCE
@@ -687,15 +671,10 @@ class FilterSAM3Detector(Filter):
             elif self.text_prompt:
                 prompts_to_use = [self.text_prompt]
 
-            # Need either text prompts or visual embeddings from exemplars
-            if prompts_to_use is None and self.visual_prompt_embed is None:
-                logger.warning("No text prompt(s) or exemplars configured, forwarding frame unchanged")
-                output_frames[topic] = frame
-                continue
-
-            # When using ref images, a text prompt is required
-            if (self.ref_images or self.ref_images_negative) and not prompts_to_use:
-                logger.warning("ref_images or ref_images_negative set but no text prompt; forwarding frame unchanged")
+            # Need either text prompts, visual embeddings from exemplars, or reference boxes
+            has_ref_boxes = bool(self.positive_boxes or self.negative_boxes)
+            if prompts_to_use is None and self.visual_prompt_embed is None and not has_ref_boxes:
+                logger.warning("No text prompt(s), exemplars, or reference boxes configured, forwarding frame unchanged")
                 output_frames[topic] = frame
                 continue
 
@@ -712,52 +691,31 @@ class FilterSAM3Detector(Filter):
                 detections = []
                 all_scores = []  # Track all scores for detection_confidence calculation
 
-                has_refs = bool(self.ref_images or self.ref_images_negative)
+                has_ref_boxes = bool(self.positive_boxes or self.negative_boxes)
 
-                if has_refs and prompts_to_use:
-                    # One-time log so you can confirm ref path is really running
-                    if not getattr(self, "_ref_mode_logged", True):
-                        logger.info(
-                            "Reference-image mode active: building composite with refs and geometric prompts for this frame"
-                        )
-                        self._ref_mode_logged = True
-                    # Reference-image mode: composite with refs in side columns (base in center)
-                    composite, all_norm_labels, base_bbox = self._build_composite_with_refs(pil_image)
-                    # Optionally prepare composite frame for debug topic (emit when output_frames is written)
-                    if getattr(self, "composite_debug_topic", None):
-                        composite_arr = np.array(composite)
-                        composite_bgr = composite_arr[:, :, ::-1].copy()
-                        self._last_composite_frame = Frame(composite_bgr, frame.data, "BGR")
-                    else:
-                        self._last_composite_frame = None
-                    state = self.processor.set_image(composite)
+                if has_ref_boxes:
+                    # Reference-boxes mode: use original image and add geometric prompts (no composite)
+                    state = self.processor.set_image(pil_image)
                     self.processor.reset_all_prompts(state)
-                    prompt = prompts_to_use[0]
+                    prompt = prompts_to_use[0] if prompts_to_use else "visual"
                     if prompt in self.cached_text_embeddings:
                         state = self._inject_cached_text_embedding(state, prompt)
                     else:
                         state = self.processor.set_text_prompt_no_grounding(prompt, state)
-                    for (norm_box, label) in all_norm_labels:
-                        state = self.processor.add_geometric_prompt(norm_box, label, state)
-                    state = self.processor.forward_grounding(state)
-                    if base_bbox is not None:
-                        state = self._filter_state_to_base_region(
-                            state, base_bbox, composite.size[0], composite.size[1]
-                        )
-                        base_w, base_h = base_bbox[2], base_bbox[3]
-                        detections = self._extract_detections_from_state(
-                            state, prompt, base_w, base_h, self.global_detection_id
-                        )
-                    else:
-                        detections = self._extract_detections_from_state(
-                            state, prompt, img_width, img_height, self.global_detection_id
-                        )
+                    norm_positive = self._boxes_xywh_to_norm_cxcywh(self.positive_boxes, img_width, img_height)
+                    norm_negative = self._boxes_xywh_to_norm_cxcywh(self.negative_boxes, img_width, img_height)
+                    for norm_box in norm_positive:
+                        state = self.processor.add_geometric_prompt(norm_box, True, state)
+                    for norm_box in norm_negative:
+                        state = self.processor.add_geometric_prompt(norm_box, False, state)
+                    detections = self._extract_detections_from_state(
+                        state, prompt, img_width, img_height, self.global_detection_id
+                    )
                     num_extracted = len(detections)
                     all_scores.extend(float(d["score"]) for d in detections if "score" in d)
                     self.global_detection_id += num_extracted
                 else:
                     # Standard mode: set image once, then loop over prompts (and optionally visual exemplars)
-                    self._last_composite_frame = None  # No composite in this path
                     state = self.processor.set_image(pil_image)
 
                     # Process each prompt using cached image features
@@ -915,11 +873,14 @@ class FilterSAM3Detector(Filter):
                     if self.frames_dir is not None and frame_filename:
                         cv2.imwrite(str(frame_filename), image_bgr_original)
                     
-                    # Save annotated frame (if annotated_frames_dir is configured and there are detections)
-                    if self.annotated_frames_dir is not None and annotated_frame_filename and detections:
-                        # Create annotated version
+                    # Save annotated frame (if annotated_frames_dir is configured and there are detections or ref boxes)
+                    if self.annotated_frames_dir is not None and annotated_frame_filename and (detections or has_ref_boxes):
                         image_bgr_annotated = image_bgr_original.copy()
-                        image_bgr_annotated = self._visualize_detections_on_image(image_bgr_annotated, detections)
+                        image_bgr_annotated = self._visualize_detections_on_image(
+                            image_bgr_annotated, detections,
+                            self.positive_boxes if has_ref_boxes else None,
+                            self.negative_boxes if has_ref_boxes else None,
+                        )
                         cv2.imwrite(str(annotated_frame_filename), image_bgr_annotated)
                     
                 except Exception as e:
@@ -955,22 +916,20 @@ class FilterSAM3Detector(Filter):
                     except Exception as e:
                         logger.warning(f"Failed to save annotation to JSONL: {e}")
 
-                # Optional visualization (for output frame)
-                if self.visualize and detections:
-                    frame = self._visualize_detections(frame, detections)
+                # Optional visualization (for output frame): ref boxes (green/red) and detections (blue)
+                if self.visualize and (detections or has_ref_boxes):
+                    frame = self._visualize_detections(
+                        frame, detections,
+                        self.positive_boxes if has_ref_boxes else None,
+                        self.negative_boxes if has_ref_boxes else None,
+                    )
 
             except Exception as e:
                 logger.error(f"Error processing frame from {topic}: {e}")
                 import traceback
                 logger.debug(traceback.format_exc())
-                self._last_composite_frame = None
 
             output_frames[topic] = frame
-            # Emit composite on debug topic when option is set and we have a composite frame
-            composite_topic = getattr(self, "composite_debug_topic", None)
-            if composite_topic and getattr(self, "_last_composite_frame", None) is not None:
-                output_frames[composite_topic] = self._last_composite_frame
-                self._last_composite_frame = None
 
         return output_frames
 
@@ -1190,6 +1149,20 @@ class FilterSAM3Detector(Filter):
             'confidences': confidences,
             'architecture': 'sam3',
         }
+
+    def _boxes_xywh_to_norm_cxcywh(self, boxes_xywh: list, img_w: int, img_h: int) -> list:
+        """Convert list of [x, y, w, h] (pixels) to normalized [cx, cy, w, h] in [0, 1] for add_geometric_prompt."""
+        if not boxes_xywh:
+            return []
+        out = []
+        for box in boxes_xywh:
+            if len(box) != 4:
+                continue
+            box_t = torch.tensor([float(box[0]), float(box[1]), float(box[2]), float(box[3])], device=self.device, dtype=torch.float32).view(1, 4)
+            box_cxcywh = box_xywh_to_cxcywh(box_t)
+            norm = normalize_bbox(box_cxcywh, img_w, img_h)
+            out.append(norm.flatten().tolist())
+        return out
 
     def _extract_detections_from_state(
         self, state: dict, class_name: str, img_width: int, img_height: int, id_offset: int = 0,
@@ -1721,141 +1694,6 @@ class FilterSAM3Detector(Filter):
                 return True
         return False
 
-    def _resize_ref(self, ref_img: Image.Image) -> Image.Image:
-        """Resize ref image to max height ref_max_h for side-column layout."""
-        if ref_img.height <= self.ref_max_h:
-            return ref_img
-        ratio = self.ref_max_h / ref_img.height
-        new_w = max(1, int(ref_img.width * ratio))
-        return ref_img.resize((new_w, self.ref_max_h), Image.Resampling.LANCZOS)
-
-    def _build_composite_with_refs(self, pil_image: Image.Image):
-        """
-        Build composite with base image in center and refs in side columns (refs outside).
-        Returns (composite_pil, all_norm_labels, base_bbox) with base_bbox = (base_x, base_y, base_w, base_h)
-        in composite coordinates, or (pil_image, [], None) when no refs.
-        """
-        ref_paths_pos = self.ref_images or []
-        ref_paths_neg = self.ref_images_negative or []
-        if not ref_paths_pos and not ref_paths_neg:
-            return pil_image, [], None
-
-        base_w, base_h = pil_image.size
-        margin = self.ref_margin
-        gap = self.ref_gap
-        ref_max_h = getattr(self, "ref_max_h", 160)
-
-        def load_and_size_refs(ref_paths: list):
-            widths = []
-            images = []
-            for ref_path in ref_paths:
-                ref_path = Path(ref_path)
-                try:
-                    ref_img = Image.open(ref_path).convert("RGB")
-                except Exception as e:
-                    logger.warning(f"Failed to open ref image {ref_path}: {e}")
-                    continue
-                ref_img = self._resize_ref(ref_img)
-                sw, sh = ref_img.size
-                widths.append(sw)
-                images.append((ref_img, sw, sh))
-            return (max(widths) + 2 * margin if widths else 0, images)
-
-        left_w, pos_imgs = load_and_size_refs(ref_paths_pos)
-        right_w, neg_imgs = load_and_size_refs(ref_paths_neg)
-
-        composite_w = left_w + base_w + right_w
-        composite_h = base_h
-        composite = Image.new("RGB", (composite_w, composite_h), (255, 255, 255))
-        base_x, base_y = left_w, 0
-        composite.paste(pil_image, (base_x, base_y))
-        base_bbox = (base_x, base_y, base_w, base_h)
-
-        all_norm_labels = []
-
-        def paste_refs(imgs_with_size: list, is_positive: bool):
-            y_next = composite_h - margin
-            for (ref_img, sw, sh) in imgs_with_size:
-                x = margin if is_positive else (composite_w - margin - sw)
-                y = y_next - sh
-                composite.paste(ref_img, (int(x), int(y)))
-                box_xywh = [float(x), float(y), float(sw), float(sh)]
-                box_t = torch.tensor(box_xywh, device=self.device, dtype=torch.float32).view(1, 4)
-                box_cxcywh = box_xywh_to_cxcywh(box_t)
-                norm = normalize_bbox(box_cxcywh, composite_w, composite_h)
-                norm_list = norm.flatten().tolist()
-                all_norm_labels.append((norm_list, is_positive))
-                y_next = y - gap
-
-        paste_refs(pos_imgs, is_positive=True)
-        paste_refs(neg_imgs, is_positive=False)
-
-        return composite, all_norm_labels, base_bbox
-
-    def _filter_state_to_base_region(self, state: dict, base_bbox: tuple, composite_w: int, composite_h: int) -> dict:
-        """
-        Keep only boxes whose center is inside base_bbox; convert box coords to base-image space.
-        base_bbox = (base_x, base_y, base_w, base_h). Returns new state with filtered boxes, scores, masks.
-        """
-        if "boxes" not in state or state["boxes"] is None:
-            return state
-        base_x, base_y, base_w, base_h = base_bbox
-        boxes = state["boxes"]
-        scores = state.get("scores")
-        masks = state.get("masks")
-
-        if hasattr(boxes, "device"):
-            boxes_np = boxes.detach().cpu().numpy()
-        else:
-            boxes_np = np.asarray(boxes, dtype=np.float32)
-        if boxes_np.ndim == 1:
-            boxes_np = boxes_np.reshape(1, -1)
-        if len(boxes_np) == 0:
-            return state
-
-        cx = (boxes_np[:, 0] + boxes_np[:, 2]) * 0.5
-        cy = (boxes_np[:, 1] + boxes_np[:, 3]) * 0.5
-        keep = (
-            (cx >= base_x) & (cx <= base_x + base_w) &
-            (cy >= base_y) & (cy <= base_y + base_h)
-        )
-        if not np.any(keep):
-            out = dict(state)
-            if hasattr(boxes, "new_zeros"):
-                out["boxes"] = boxes.new_zeros((0, 4))
-            else:
-                out["boxes"] = np.zeros((0, 4), dtype=np.float32)
-            if scores is not None:
-                if hasattr(scores, "new_zeros"):
-                    out["scores"] = scores.new_zeros((0,))
-                else:
-                    out["scores"] = np.zeros((0,), dtype=np.float32)
-            if masks is not None:
-                out["masks"] = masks[keep]
-            return out
-
-        boxes_kept = boxes_np[keep].copy()
-        boxes_kept[:, [0, 2]] -= base_x
-        boxes_kept[:, [1, 3]] -= base_y
-
-        out = dict(state)
-        if hasattr(boxes, "device"):
-            out["boxes"] = torch.from_numpy(boxes_kept).to(boxes.device)
-        else:
-            out["boxes"] = boxes_kept
-        if scores is not None:
-            keep_idx = np.where(keep)[0]
-            if hasattr(scores, "device"):
-                out["scores"] = scores[torch.as_tensor(keep_idx, device=scores.device)]
-            else:
-                out["scores"] = np.asarray(scores)[keep_idx]
-        if masks is not None:
-            if hasattr(masks, "device"):
-                out["masks"] = masks[torch.as_tensor(keep_idx, device=masks.device)]
-            else:
-                out["masks"] = masks[keep_idx]
-        return out
-
     def _forward_grounding_with_visual_prompt(self, state):
         """
         Run SAM3 grounding with visual prompt embeddings from exemplar images.
@@ -2020,13 +1858,34 @@ class FilterSAM3Detector(Filter):
 
         return filtered_boxes, filtered_scores, filtered_masks
 
-    def _visualize_detections(self, frame: Frame, detections: list) -> Frame:
+    def _draw_ref_boxes_on_image(self, image: np.ndarray, positive_boxes: list, negative_boxes: list) -> None:
+        """Draw reference boxes on image in-place: green for positive, red for negative. Boxes are [x, y, w, h]."""
+        try:
+            import cv2
+            for box in positive_boxes or []:
+                if len(box) != 4:
+                    continue
+                x, y, w, h = int(box[0]), int(box[1]), int(box[2]), int(box[3])
+                cv2.rectangle(image, (x, y), (x + w, y + h), (0, 255, 0), 2)  # Green BGR
+                cv2.putText(image, "ref+", (x, y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+            for box in negative_boxes or []:
+                if len(box) != 4:
+                    continue
+                x, y, w, h = int(box[0]), int(box[1]), int(box[2]), int(box[3])
+                cv2.rectangle(image, (x, y), (x + w, y + h), (0, 0, 255), 2)  # Red BGR
+                cv2.putText(image, "ref-", (x, y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+        except Exception as e:
+            logger.warning(f"Failed to draw ref boxes: {e}")
+
+    def _visualize_detections(self, frame: Frame, detections: list, positive_boxes: list = None, negative_boxes: list = None) -> Frame:
         """
-        Draw detection results on the frame.
+        Draw detection results on the frame. Optionally draw ref boxes first (green=positive, red=negative); detections in blue.
 
         Args:
             frame: Input frame
             detections: List of detection dictionaries
+            positive_boxes: Optional list of [x,y,w,h] ref boxes to draw in green
+            negative_boxes: Optional list of [x,y,w,h] ref boxes to draw in red
 
         Returns:
             New Frame with visualizations drawn
@@ -2035,13 +1894,16 @@ class FilterSAM3Detector(Filter):
             import cv2
             image = frame.rw_bgr.image.copy()
 
+            if positive_boxes or negative_boxes:
+                self._draw_ref_boxes_on_image(image, positive_boxes or [], negative_boxes or [])
+
+            color_detection = (255, 0, 0)  # Blue BGR for original detections
             boxes_drawn = 0
             for i, det in enumerate(detections):
                 # Draw bounding box
                 if 'box' in det:
                     x1, y1, x2, y2 = det['box']
-                    color = (0, 255, 0)  # Green
-                    cv2.rectangle(image, (x1, y1), (x2, y2), color, 2)
+                    cv2.rectangle(image, (x1, y1), (x2, y2), color_detection, 2)
                     boxes_drawn += 1
 
                     # Draw label with class name and score
@@ -2053,14 +1915,14 @@ class FilterSAM3Detector(Filter):
                     label = " ".join(label_parts) if label_parts else ""
                     if label:
                         cv2.putText(image, label, (x1, y1 - 10),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color_detection, 2)
 
-                # Draw mask overlay (semi-transparent)
+                # Draw mask overlay (semi-transparent blue)
                 if 'mask' in det:
                     mask = np.array(det['mask'], dtype=np.uint8)
                     if mask.shape == image.shape[:2]:
                         color_mask = np.zeros_like(image)
-                        color_mask[mask > 0] = [0, 255, 0]  # Green mask
+                        color_mask[mask > 0] = [255, 0, 0]  # Blue BGR
                         image = cv2.addWeighted(image, 1.0, color_mask, 0.3, 0)
 
             # Create new Frame with visualized image (Frame.image is read-only)
@@ -2076,46 +1938,43 @@ class FilterSAM3Detector(Filter):
 
         return frame
 
-    def _visualize_detections_on_image(self, image: np.ndarray, detections: list) -> np.ndarray:
+    def _visualize_detections_on_image(self, image: np.ndarray, detections: list, positive_boxes: list = None, negative_boxes: list = None) -> np.ndarray:
         """
-        Draw detection results on an image array (not Frame).
-        
+        Draw detection results on an image array. Optionally draw ref boxes first (green=positive, red=negative); detections in blue.
+
         Args:
             image: BGR image array
             detections: List of detection dictionaries
-            
+            positive_boxes: Optional list of [x,y,w,h] ref boxes to draw in green
+            negative_boxes: Optional list of [x,y,w,h] ref boxes to draw in red
+
         Returns:
             Image array with visualizations drawn
         """
         try:
             import cv2
             image = image.copy()
-            
+
+            if positive_boxes or negative_boxes:
+                self._draw_ref_boxes_on_image(image, positive_boxes or [], negative_boxes or [])
+
+            color_detection = (255, 0, 0)  # Blue BGR for original detections
             for i, det in enumerate(detections):
                 # Draw bounding box
                 if 'box' in det:
                     x1, y1, x2, y2 = det['box']
-                    color = (0, 255, 0)  # Green
-                    cv2.rectangle(image, (x1, y1), (x2, y2), color, 2)
-                    
-                    # Draw score
+                    cv2.rectangle(image, (x1, y1), (x2, y2), color_detection, 2)
                     if 'score' in det:
-                        score = det['score']
-                        label = f"{score:.2f}"
-                        cv2.putText(image, label, (x1, y1 - 10),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
-                
-                # Draw mask overlay (semi-transparent)
+                        cv2.putText(image, f"{det['score']:.2f}", (x1, y1 - 10),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color_detection, 2)
                 if 'mask' in det:
                     mask = np.array(det['mask'], dtype=np.uint8)
                     if mask.shape == image.shape[:2]:
                         color_mask = np.zeros_like(image)
-                        color_mask[mask > 0] = [0, 255, 0]  # Green mask
+                        color_mask[mask > 0] = [255, 0, 0]  # Blue BGR
                         image = cv2.addWeighted(image, 1.0, color_mask, 0.3, 0)
-            
         except Exception as e:
             logger.warning(f"Failed to visualize detections on image: {e}")
-        
         return image
 
     def _mask_to_coco_polygons(self, mask: np.ndarray) -> list:

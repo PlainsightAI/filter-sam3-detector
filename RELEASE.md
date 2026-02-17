@@ -5,12 +5,12 @@ SAM3 Detector filter release notes
 
 ## v0.1.4 - 2026-02-12
 ### Added
-- **Exemplar (reference) images on video**: detection on video streams using positive and optional negative reference images together with a text prompt; reference images are pasted beside each frame so the model can use them for visual grounding while processing the stream.
+- **Reference box prompts**: detection using positive and/or negative bounding boxes on the original image (SAM3-style geometric prompts). Set `FILTER_POSITIVE_BOXES` and/or `FILTER_NEGATIVE_BOXES` to a JSON array of `[x, y, w, h]` boxes in pixels; text prompt is optional. Visualization: green = positive ref, red = negative ref, blue = detections.
 
 ## v0.1.3 - 2026-02-04
 
 ### Added
-- Reference image prompts: `FILTER_REF_IMAGES` and `FILTER_REF_IMAGES_NEGATIVE` for positive exemplars (pasted bottom-left) and negative exemplars (pasted bottom-right); text prompt required when using ref images. Optional `ref_margin` and `ref_gap` for positioning (env: `FILTER_REF_MARGIN`, `FILTER_REF_GAP`).
+- Reference box prompts (current): `FILTER_POSITIVE_BOXES` and `FILTER_NEGATIVE_BOXES` (JSON arrays of [x, y, w, h] in pixels) for positive and negative geometric prompts on the frame.
 
 ## v0.1.2 - 2026-01-23
 

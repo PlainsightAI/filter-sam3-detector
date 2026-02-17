@@ -30,9 +30,9 @@ All configuration parameters can be set via environment variables with the `FILT
 FILTER_TEXT_PROMPT=person                    # Text prompt for detection
 FILTER_EXEMPLARS_PATH=./exemplars/           # Path to exemplar images directory
 
-# Reference image prompts (comma-separated paths; requires FILTER_TEXT_PROMPT)
-# FILTER_REF_IMAGES=path1.png,path2.png      # Positive exemplars (bottom-left)
-# FILTER_REF_IMAGES_NEGATIVE=path3.png       # Negative exemplars (bottom-right)
+# Reference box prompts (JSON array of [x, y, w, h] in pixels; text prompt optional)
+# FILTER_POSITIVE_BOXES='[[480, 290, 110, 360], [370, 280, 115, 375]]'
+# FILTER_NEGATIVE_BOXES='[[100, 100, 50, 200]]'
 
 # Model configuration
 FILTER_MODEL_ID=facebook/sam2-hiera-large    # HuggingFace model ID
@@ -103,9 +103,9 @@ FILTER_TEXT_PROMPT=person
 # Or use exemplars instead
 # FILTER_EXEMPLARS_PATH=./exemplars/
 
-# Reference image prompts (requires FILTER_TEXT_PROMPT; comma-separated paths)
-# FILTER_REF_IMAGES=pos1.png,pos2.png
-# FILTER_REF_IMAGES_NEGATIVE=neg1.png
+# Reference box prompts (JSON arrays of [x, y, w, h]; FILTER_TEXT_PROMPT optional)
+# FILTER_POSITIVE_BOXES='[[480, 290, 110, 360]]'
+# FILTER_NEGATIVE_BOXES='[[100, 100, 50, 200]]'
 
 # Device configuration
 FILTER_DEVICE=cuda
@@ -246,10 +246,8 @@ Configuration is applied in this order (later overrides earlier):
 |----------|------|---------|-------------|
 | `FILTER_TEXT_PROMPT` | string | None | Text prompt for detection |
 | `FILTER_EXEMPLARS_PATH` | string | None | Path to exemplar images |
-| `FILTER_REF_IMAGES` | string (comma-separated) | None | Positive exemplar image paths (bottom-left); requires text prompt |
-| `FILTER_REF_IMAGES_NEGATIVE` | string (comma-separated) | None | Negative exemplar image paths (bottom-right) |
-| `FILTER_REF_MARGIN` | int | 10 | Pixels from edge for pasted refs (optional) |
-| `FILTER_REF_GAP` | int | 5 | Vertical gap between stacked refs (optional) |
+| `FILTER_POSITIVE_BOXES` | string (JSON array) | None | Reference boxes (positive): array of [x, y, w, h] in pixels, e.g. `'[[480, 290, 110, 360]]'` |
+| `FILTER_NEGATIVE_BOXES` | string (JSON array) | None | Reference boxes (negative): array of [x, y, w, h] in pixels |
 | `FILTER_MODEL_ID` | string | "facebook/sam2-hiera-large" | HuggingFace model ID |
 | `FILTER_DEVICE` | string | "cuda" | Device: cuda, cpu, mps |
 | `FILTER_CONFIDENCE_THRESHOLD` | float | 0.5 | Confidence threshold |
@@ -273,7 +271,7 @@ Configuration is applied in this order (later overrides earlier):
 | `FILTER_TEMPORAL_EMIT_ON_CHANGE` | bool | true | Emit only on state changes |
 | `FILTER_TEMPORAL_LABEL_FIELD` | string | None | Field for label grouping |
 
-When using `FILTER_REF_IMAGES` or `FILTER_REF_IMAGES_NEGATIVE`, a text prompt is required.
+When using `FILTER_POSITIVE_BOXES` or `FILTER_NEGATIVE_BOXES`, a text prompt is optional (model can use "visual" placeholder).
 
 ## Examples
 

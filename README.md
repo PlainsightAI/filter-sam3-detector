@@ -8,7 +8,7 @@ OpenFilter implementation for SAM3 (Segment Anything Model 3) object detection w
 
 - **Open-Set Detection**: Detect objects not in standard training datasets
 - **Dual Prompting Modes**: Text prompts or exemplar images (few-shot learning)
-- **Reference Image Prompts**: Positive/negative exemplar images pasted on frame with geometric prompts (single-output mode; requires text prompt)
+- **Reference Box Prompts**: Positive/negative bounding boxes on the original image (SAM3-style geometric prompts; optional text prompt)
 - **Flexible Output**: Bounding boxes, segmentation masks, and confidence scores
 - **GPU Acceleration**: CUDA, CPU, and MPS (Apple Silicon) support
 - **Real-time Processing**: Processes video streams in real-time
@@ -77,8 +77,8 @@ cp env.example .env
 # Prompt configuration (choose one)
 FILTER_TEXT_PROMPT=person                    # Text prompt for detection
 FILTER_EXEMPLARS_PATH=./exemplars/           # Path to exemplar images directory
-# FILTER_REF_IMAGES=path1.png,folder/        # Positive exemplars (files or folders), requires text prompt
-# FILTER_REF_IMAGES_NEGATIVE=path3.png       # Negative exemplars (bottom-right)
+# FILTER_POSITIVE_BOXES='[[x,y,w,h],...]'    # Reference boxes (positive), JSON array of [x,y,w,h] in pixels
+# FILTER_NEGATIVE_BOXES='[[x,y,w,h],...]'    # Reference boxes (negative), JSON array of [x,y,w,h] in pixels
 
 # Model configuration
 FILTER_MODEL_ID=facebook/sam3                # HuggingFace model ID
@@ -118,11 +118,18 @@ FILTER_DEBUG=false                           # Enable debug logging
 | `visualize` | bool | false | No | Draw detections on output frames |
 | `debug` | bool | false | No | Enable debug logging |
 
-\* When using `ref_images` or `ref_images_negative`, `text_prompt` (or `text_prompts`) is required. Otherwise either `text_prompt` or `exemplars_path` must be provided.
+\* When using `positive_boxes` or `negative_boxes`, a text prompt is optional (the model can use the placeholder "visual"). Otherwise either `text_prompt` or `exemplars_path` must be provided.
 
-### Reference image prompts
+### Reference box prompts
 
-In single-output mode you can add reference images as geometric prompts: set `FILTER_REF_IMAGES` and/or `FILTER_REF_IMAGES_NEGATIVE` to comma-separated paths (files or folders; folders are expanded to all images inside). Positive refs are pasted at the bottom-left of each frame, negative refs at the bottom-right; the model uses them together with the text prompt. A text prompt is required when using ref images.
+In single-output mode you can add reference bounding boxes on the **original image** (no composite): set `FILTER_POSITIVE_BOXES` and/or `FILTER_NEGATIVE_BOXES` to a **JSON array** of boxes, each box `[x, y, width, height]` in pixels. Positive boxes encourage detections similar to those regions; negative boxes suppress them. Example in `.env`:
+
+```bash
+FILTER_POSITIVE_BOXES="[[480, 290, 110, 360], [370, 280, 115, 375]]"
+FILTER_NEGATIVE_BOXES="[[100, 100, 50, 200]]"
+```
+
+Text prompt is optional when using reference boxes. With `FILTER_VISUALIZE=true`, positive ref boxes are drawn in green, negative in red, and detections in blue.
 
 ## Usage
 
@@ -158,16 +165,17 @@ VIDEO_PATH=video1.mp4 FILTER_TEXT_PROMPT=dog FILTER_OUTPUT_DIR=./detections \
 
 Optional: `FILTER_VIDEO_LOOP=true` keeps the video looping so frames are still available after the model loads (~14s); useful for short videos.
 
-#### Detection with Reference (Exemplar) Images
+#### Detection with Reference Boxes
 
-Use positive (and optionally negative) reference images together with a text prompt for better matching:
+Use positive and/or negative reference bounding boxes on the frame (SAM3-style geometric prompts) with or without a text prompt:
 
 ```bash
-# In .env set: VIDEO_PATH, FILTER_TEXT_PROMPT, FILTER_REF_IMAGES (required), FILTER_REF_IMAGES_NEGATIVE (optional)
+# In .env set: VIDEO_PATH, and FILTER_POSITIVE_BOXES and/or FILTER_NEGATIVE_BOXES (JSON arrays of [x,y,w,h])
+# Optional: FILTER_TEXT_PROMPT for text-guided detection
 python scripts/filter_object_detection_exemplar.py
 ```
 
-**Reference images:** Set `FILTER_REF_IMAGES` to a directory path or comma-separated paths (files or folders). Positive refs are pasted left of the frame, negative refs right; the model uses them with the text prompt. A text prompt is required when using ref images.
+**Reference boxes:** Set `FILTER_POSITIVE_BOXES` and/or `FILTER_NEGATIVE_BOXES` to a JSON array of boxes, each `[x, y, width, height]` in pixels. Example: `FILTER_POSITIVE_BOXES="[[480, 290, 110, 360]]"`. Text prompt is optional. With `FILTER_VISUALIZE=true`, ref boxes are drawn in green (positive) and red (negative), detections in blue.
 
 ### Method 2: Docker Pipeline
 
@@ -373,12 +381,12 @@ python scripts/filter_object_detection.py
 
 Set `VIDEO_PATH`, `FILTER_TEXT_PROMPT=car`, `FILTER_OUTPUT_DIR`, `FILTER_RESIZE=480`. Then run `python scripts/filter_object_detection.py`.
 
-### 3. Detection with Reference (Exemplar) Images
+### 3. Detection with Reference Boxes
 
-For better matching using example images plus text:
+Use bounding boxes on the frame as positive/negative prompts (with or without text):
 
 ```bash
-# In .env: VIDEO_PATH, FILTER_TEXT_PROMPT, FILTER_REF_IMAGES=/path/to/ref_images/, FILTER_REF_IMAGES_NEGATIVE (optional)
+# In .env: VIDEO_PATH, FILTER_POSITIVE_BOXES='[[x,y,w,h],...]', FILTER_NEGATIVE_BOXES (optional), FILTER_TEXT_PROMPT (optional)
 python scripts/filter_object_detection_exemplar.py
 ```
 
@@ -464,7 +472,7 @@ filter-sam3-detector/
 │   └── filter.py              # Main filter implementation
 ├── scripts/                   # Example usage scripts
 │   ├── filter_object_detection.py       # Video pipeline (text prompt)
-│   ├── filter_object_detection_exemplar.py  # Video pipeline (ref images + text)
+│   ├── filter_object_detection_exemplar.py  # Video pipeline (reference boxes + optional text)
 │   └── run_temporal_intervals.py
 ├── examples/                  # Additional examples
 │   └── detect_objects_video.py
