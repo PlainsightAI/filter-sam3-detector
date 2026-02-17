@@ -58,15 +58,11 @@ try:
     from sam3.model.box_ops import box_xywh_to_cxcywh
     normalize_bbox = _normalize_bbox_cxcywh
     HAS_SAM3 = True
-except ImportError:
-    box_xywh_to_cxcywh = None
-    normalize_bbox = None
-    logger.warning("SAM3 not available. Install from: https://github.com/facebookresearch/sam3")
-except Exception:
+except Exception as e:
     HAS_SAM3 = False
     box_xywh_to_cxcywh = None
     normalize_bbox = None
-    logger.warning("SAM3 not available. Install from: https://github.com/facebookresearch/sam3")
+    logger.warning("SAM3 not available: %s. Install from: https://github.com/facebookresearch/sam3", e)
 
 
 class FilterSAM3DetectorConfig(FilterConfig):
