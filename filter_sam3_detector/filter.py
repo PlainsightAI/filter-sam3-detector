@@ -703,27 +703,32 @@ class FilterSAM3Detector(Filter):
                 has_ref_boxes = bool(self.positive_boxes or self.negative_boxes)
 
                 if has_ref_boxes:
-                    # Reference-boxes mode: use original image and add geometric prompts (no composite)
-                    # Only the first text prompt is used; additional prompts are ignored (see setup warning if text_prompts has multiple)
-                    state = self.processor.set_image(pil_image)
-                    self.processor.reset_all_prompts(state)
-                    prompt = prompts_to_use[0] if prompts_to_use else "visual"
-                    if prompt in self.cached_text_embeddings:
-                        state = self._inject_cached_text_embedding(state, prompt)
+                    if not HAS_SAM3:
+                        logger.warning(
+                            "Reference boxes configured but SAM3 is not available (install sam3); forwarding frame unchanged"
+                        )
                     else:
-                        state = self.processor.set_text_prompt_no_grounding(prompt, state)
-                    norm_positive = self._boxes_xywh_to_norm_cxcywh(self.positive_boxes, img_width, img_height)
-                    norm_negative = self._boxes_xywh_to_norm_cxcywh(self.negative_boxes, img_width, img_height)
-                    for norm_box in norm_positive:
-                        state = self.processor.add_geometric_prompt(norm_box, True, state)
-                    for norm_box in norm_negative:
-                        state = self.processor.add_geometric_prompt(norm_box, False, state)
-                    detections = self._extract_detections_from_state(
-                        state, prompt, img_width, img_height, self.global_detection_id
-                    )
-                    num_extracted = len(detections)
-                    all_scores.extend(float(d["score"]) for d in detections if "score" in d)
-                    self.global_detection_id += num_extracted
+                        # Reference-boxes mode: use original image and add geometric prompts (no composite)
+                        # Only the first text prompt is used; additional prompts are ignored (see setup warning if text_prompts has multiple)
+                        state = self.processor.set_image(pil_image)
+                        self.processor.reset_all_prompts(state)
+                        prompt = prompts_to_use[0] if prompts_to_use else "visual"
+                        if prompt in self.cached_text_embeddings:
+                            state = self._inject_cached_text_embedding(state, prompt)
+                        else:
+                            state = self.processor.set_text_prompt_no_grounding(prompt, state)
+                        norm_positive = self._boxes_xywh_to_norm_cxcywh(self.positive_boxes, img_width, img_height)
+                        norm_negative = self._boxes_xywh_to_norm_cxcywh(self.negative_boxes, img_width, img_height)
+                        for norm_box in norm_positive:
+                            state = self.processor.add_geometric_prompt(norm_box, True, state)
+                        for norm_box in norm_negative:
+                            state = self.processor.add_geometric_prompt(norm_box, False, state)
+                        detections = self._extract_detections_from_state(
+                            state, prompt, img_width, img_height, self.global_detection_id
+                        )
+                        num_extracted = len(detections)
+                        all_scores.extend(float(d["score"]) for d in detections if "score" in d)
+                        self.global_detection_id += num_extracted
                 else:
                     # Standard mode: set image once, then loop over prompts (and optionally visual exemplars)
                     state = self.processor.set_image(pil_image)

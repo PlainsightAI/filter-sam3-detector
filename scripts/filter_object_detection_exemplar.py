@@ -101,7 +101,7 @@ if __name__ == '__main__':
         (
             VideoIn,
             dict(
-                sources=f"file://{video_path}!sync",
+                sources=f"file://{video_path}!sync!resize=960x540",
                 outputs="tcp://*:5550",
             ),
         ),
