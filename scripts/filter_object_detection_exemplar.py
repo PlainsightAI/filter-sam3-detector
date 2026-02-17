@@ -11,7 +11,7 @@ positive/negative visual prompts.
 
 Required environment variables in .env:
     VIDEO_PATH: Path to the input video file
-    FILTER_TEXT_PROMPT: Text prompt for detection (e.g., "avocado", "ripe peach")
+    FILTER_TEXT_PROMPT: Text prompt for detection (e.g., "people", "car")
     FILTER_REF_IMAGES: Path(s) to positive reference images. Can be:
         - A single directory path (all .jpg/.png inside are used)
         - Comma-separated file or directory paths
@@ -26,7 +26,7 @@ Optional:
 
 Example .env:
     VIDEO_PATH=/path/to/video.mp4
-    FILTER_TEXT_PROMPT=avocado in salad
+    FILTER_TEXT_PROMPT=people
     FILTER_REF_IMAGES=/path/to/ref_images/
     FILTER_REF_IMAGES_NEGATIVE=/path/to/ref_images_negative/
     FILTER_DEVICE=cuda
@@ -65,12 +65,12 @@ if __name__ == '__main__':
     ref_images = _parse_ref_paths(os.getenv('FILTER_REF_IMAGES', ''))
     ref_images_negative = _parse_ref_paths(os.getenv('FILTER_REF_IMAGES_NEGATIVE', ''))
 
-    if not video_path:
-        print("Error: VIDEO_PATH is required")
-        exit(1)
-    if not Path(video_path).exists():
-        print(f"Error: Video file not found: {video_path}")
-        exit(1)
+    # if not video_path:
+    #     print("Error: VIDEO_PATH is required")
+    #     exit(1)
+    # if not Path(video_path).exists():
+    #     print(f"Error: Video file not found: {video_path}")
+    #     exit(1)
 
     print(f"Using VideoIn with path: {video_path} (loop)")
     print(f"Text prompt: {os.getenv('FILTER_TEXT_PROMPT', 'NOT SET')}")
@@ -95,14 +95,14 @@ if __name__ == '__main__':
         output_path=str(output_path / "detections.jsonl"),
         frames_output_dir=str(output_path / "frames"),
         ref_images=ref_images,
-        # ref_images_negative=ref_images_negative,
+        ref_images_negative=ref_images_negative,
     )
 
     filters = [
         (
             VideoIn,
             dict(
-                sources=f"file://{video_path}!loop",
+                sources=f"file://{video_path}!sync!resize=960x540",
                 outputs="tcp://*:5550",
             ),
         ),

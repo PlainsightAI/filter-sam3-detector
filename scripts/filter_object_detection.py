@@ -11,9 +11,10 @@ The script uses OpenFilter's standard environment variable pattern:
 - FILTER_OUTPUTS: Output destination (automatically handled by Filter.normalize_config)
 - Filter-specific variables: FILTER_TEXT_PROMPT, FILTER_DEVICE, etc.
 
-Required environment variables in .env file:
-    FILTER_TEXT_PROMPT: Text prompt for detection (e.g., "person", "car")
+Required environment variables in .env file (one of):
     VIDEO_PATH: Path to the input video file
+    IMAGE_PATH: Path to input image file or directory of images (uses ImageIn instead of VideoIn)
+    FILTER_TEXT_PROMPT: Text prompt for detection (e.g., "person", "car")
 
 Optional environment variables:
     FILTER_DEVICE: Device to use (cuda, cpu, mps) - default: cuda
@@ -46,39 +47,52 @@ except ImportError:
 from openfilter.filter_runtime.filter import Filter
 from filter_sam3_detector.filter import FilterSAM3Detector, FilterSAM3DetectorConfig
 from openfilter.filter_runtime.filters.video_in import VideoIn
+from openfilter.filter_runtime.filters.image_in import ImageIn
 from openfilter.filter_runtime.filters.webvis import Webvis
 from openfilter.filter_runtime.filters.recorder import Recorder
 
 
 if __name__ == '__main__':
-    # Get video path from environment variable
+    # Get video or image path from environment variable
     video_path = os.getenv('VIDEO_PATH', '')
+    image_path = os.getenv('IMAGE_PATH', '')
     
     # Get optional configuration (will be read by normalize_config from env vars)
     output_dir = os.getenv('FILTER_OUTPUT_DIR', './output')
     visualize = os.getenv('FILTER_VISUALIZE', 'false').lower() == 'true'
     resize = os.getenv('FILTER_RESIZE', '')
     
-    # Validate required variables
-    if not video_path:
-        print("Error: VIDEO_PATH environment variable is required")
-        print("Please set the path to your input video in the .env file")
+    # Require either VIDEO_PATH or IMAGE_PATH
+    if not video_path and not image_path:
+        print("Error: Either VIDEO_PATH or IMAGE_PATH environment variable is required")
+        print("Please set the path to your input video or image (file/dir) in the .env file")
         exit(1)
     
-    # Check if video file exists
-    if not Path(video_path).exists():
-        print(f"Error: Video file not found: {video_path}")
-        exit(1)
-    
-    # Build video source with options
-    # Loop: useful when SAM3 takes ~14s to load so video keeps sending frames until detector is ready
-    video_loop = os.getenv('FILTER_VIDEO_LOOP', 'false').lower() == 'true'
-    video_source = f'file://{Path(video_path).absolute()}'
-    if resize:
-        video_source += f'!maxsize={resize}x{resize}'
-    video_source += '!loop;main' if video_loop else '!no-loop;main'  # topic: main, sync
-    loop_str = "loop" if video_loop else "no loop"
-    print(f"Using VideoIn with path: {video_path} ({loop_str}, sync)")
+    if image_path:
+        if not Path(image_path).exists():
+            print(f"Error: Image path not found: {image_path}")
+            exit(1)
+        input_source = (ImageIn, dict(
+            sources=f'file://{Path(image_path).absolute()}!maxfps=1!no-loop;main',
+            outputs='tcp://*:5550',
+            poll_interval=0,
+        ))
+        print(f"Using ImageIn with path: {image_path} (no loop, no polling)")
+    else:
+        if not Path(video_path).exists():
+            print(f"Error: Video file not found: {video_path}")
+            exit(1)
+        video_loop = os.getenv('FILTER_VIDEO_LOOP', 'false').lower() == 'true'
+        video_source = f'file://{Path(video_path).absolute()}'
+        if resize:
+            video_source += f'!maxsize={resize}x{resize}'
+        video_source += '!loop;main' if video_loop else '!no-loop;main'
+        loop_str = "loop" if video_loop else "no loop"
+        input_source = (VideoIn, dict(
+            sources=video_source,
+            outputs='tcp://*:5550',
+        ))
+        print(f"Using VideoIn with path: {video_path} ({loop_str}, sync)")
     print(f"Text prompt: {os.getenv('FILTER_TEXT_PROMPT', 'NOT SET')}")
     print(f"Device: {os.getenv('FILTER_DEVICE', 'cuda')}")
     print(f"Confidence threshold: {os.getenv('FILTER_CONFIDENCE_THRESHOLD', '0.5')}")
@@ -93,11 +107,8 @@ if __name__ == '__main__':
     # Build filters pipeline
     # OpenFilter will automatically read FILTER_SOURCES and FILTER_OUTPUTS from env vars
     filters = [
-        # Input: Stream video frames
-        (VideoIn, dict(
-            sources=video_source,
-            outputs='tcp://*:5550',
-        )),
+        # Input: Stream video or image(s)
+        input_source,
         
         # Detect objects with SAM3
         # Filter-specific config will be read from FILTER_* env vars by normalize_config

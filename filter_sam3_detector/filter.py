@@ -155,6 +155,7 @@ class FilterSAM3Detector(Filter):
             "ref_gap": 5,
             "refs_outside": True,  # Paste refs in side columns (base in center); if False, paste on same image
             "ref_max_h": 160,  # Max height for ref images when refs_outside (thumbnail)
+            "composite_debug_topic": "",  # If set (e.g. "composite"), emit composite image on this topic for debug
         }
         
         for key, default_value in defaults.items():
@@ -206,6 +207,7 @@ class FilterSAM3Detector(Filter):
             "ref_gap": int,
             "refs_outside": bool,
             "ref_max_h": int,
+            "composite_debug_topic": str,
         }
         
         # Special handling for FILTER_REF_IMAGES (comma-separated paths -> list)
@@ -379,6 +381,8 @@ class FilterSAM3Detector(Filter):
         self.annotated_frames_dir = None
         self.frame_counter = 0  # Counter for unique frame numbering
         self.global_detection_id = 0  # Global counter for unique detection IDs across all frames
+        self.composite_debug_topic = (config.get("composite_debug_topic") or "").strip()  # If set, emit composite on this topic
+        self._last_composite_frame = None
         
         # Always save original frames if frames_output_dir is configured (default: true)
         if self.frames_output_dir:
@@ -719,6 +723,13 @@ class FilterSAM3Detector(Filter):
                         self._ref_mode_logged = True
                     # Reference-image mode: composite with refs in side columns (base in center)
                     composite, all_norm_labels, base_bbox = self._build_composite_with_refs(pil_image)
+                    # Optionally prepare composite frame for debug topic (emit when output_frames is written)
+                    if getattr(self, "composite_debug_topic", None):
+                        composite_arr = np.array(composite)
+                        composite_bgr = composite_arr[:, :, ::-1].copy()
+                        self._last_composite_frame = Frame(composite_bgr, frame.data, "BGR")
+                    else:
+                        self._last_composite_frame = None
                     state = self.processor.set_image(composite)
                     self.processor.reset_all_prompts(state)
                     prompt = prompts_to_use[0]
@@ -746,6 +757,7 @@ class FilterSAM3Detector(Filter):
                     self.global_detection_id += num_extracted
                 else:
                     # Standard mode: set image once, then loop over prompts (and optionally visual exemplars)
+                    self._last_composite_frame = None  # No composite in this path
                     state = self.processor.set_image(pil_image)
 
                     # Process each prompt using cached image features
@@ -925,6 +937,8 @@ class FilterSAM3Detector(Filter):
                         jsonl_meta['frame_id'] = output_frame_id
                         jsonl_meta['width'] = img_width
                         jsonl_meta['height'] = img_height
+                        # Same filename as saved under frames_output_dir (e.g. results/frames)
+                        jsonl_meta['frame_filename'] = frame_filename_str
 
                         # Event sink format: {'filter_name': ..., 'topic': ..., 'data': {'id': ..., 'meta': ...}}
                         # This matches what filter-event-sink outputs - frame id is merged into data
@@ -949,8 +963,14 @@ class FilterSAM3Detector(Filter):
                 logger.error(f"Error processing frame from {topic}: {e}")
                 import traceback
                 logger.debug(traceback.format_exc())
+                self._last_composite_frame = None
 
             output_frames[topic] = frame
+            # Emit composite on debug topic when option is set and we have a composite frame
+            composite_topic = getattr(self, "composite_debug_topic", None)
+            if composite_topic and getattr(self, "_last_composite_frame", None) is not None:
+                output_frames[composite_topic] = self._last_composite_frame
+                self._last_composite_frame = None
 
         return output_frames
 
@@ -986,11 +1006,27 @@ class FilterSAM3Detector(Filter):
         # The state contains cached image features that we reuse for ALL prompt sets
         state = self.processor.set_image(pil_image)
 
-        # Get frame metadata for ID tracking
+        # Get frame metadata for ID tracking and filename (same format as single-output)
         frame_meta_orig = frame.data.get('meta', {})
         frame_id_num = filter_frame_id if filter_frame_id is not None else frame_meta_orig.get('id', None)
         frame_counter = self.frame_counter
         self.frame_counter += 1
+
+        frame_ts = (
+            getattr(frame, 'timestamp', None)
+            or frame_meta_orig.get('ts', None)
+            or frame_meta_orig.get('timestamp', None)
+            or frame.data.get('timestamp', None)
+        )
+        if frame_ts is not None:
+            timestamp_str = f"{float(frame_ts):.3f}".replace(".", "_")
+        else:
+            timestamp_str = f"{time.time():.3f}".replace(".", "_")
+        if isinstance(frame_id_num, (int, float)):
+            frame_id_str = f"{int(frame_id_num):06d}"
+        else:
+            frame_id_str = f"{frame_counter:06d}"
+        frame_filename_str = f"frame_{frame_id_str}_ts{timestamp_str}_count{frame_counter:06d}.jpg"
 
         # Process each prompt set
         for prompt_set in self.prompt_sets:
@@ -1057,6 +1093,7 @@ class FilterSAM3Detector(Filter):
                     jsonl_meta['frame_id'] = output_frame_id
                     jsonl_meta['width'] = img_width
                     jsonl_meta['height'] = img_height
+                    jsonl_meta['frame_filename'] = frame_filename_str
 
                     event_record = {
                         "filter_name": ps_filter_name,
