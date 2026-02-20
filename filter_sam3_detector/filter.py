@@ -387,6 +387,10 @@ class FilterSAM3Detector(Filter):
         # Reference boxes on original image: list of [x, y, w, h] in pixels (SAM3-style)
         self.positive_boxes = config.get("positive_boxes") or []
         self.negative_boxes = config.get("negative_boxes") or []
+        # Cache for normalized ref boxes (lazy-filled per resolution to avoid per-frame recompute)
+        self._cached_norm_boxes_size = None
+        self._cached_norm_positive_boxes = None
+        self._cached_norm_negative_boxes = None
         # Ref images (pasted on composite): only used when no ref boxes (rule: boxes take priority)
         ref_images_raw = config.get("ref_images")
         ref_images_negative_raw = config.get("ref_images_negative")
@@ -787,8 +791,17 @@ class FilterSAM3Detector(Filter):
                             state = self._inject_cached_text_embedding(state, prompt)
                         else:
                             state = self.processor.set_text_prompt_no_grounding(prompt, state)
-                        norm_positive = self._boxes_xywh_to_norm_cxcywh(self.positive_boxes, img_width, img_height)
-                        norm_negative = self._boxes_xywh_to_norm_cxcywh(self.negative_boxes, img_width, img_height)
+                        cache_key = (img_width, img_height)
+                        if self._cached_norm_boxes_size != cache_key:
+                            self._cached_norm_positive_boxes = self._boxes_xywh_to_norm_cxcywh(
+                                self.positive_boxes, img_width, img_height
+                            )
+                            self._cached_norm_negative_boxes = self._boxes_xywh_to_norm_cxcywh(
+                                self.negative_boxes, img_width, img_height
+                            )
+                            self._cached_norm_boxes_size = cache_key
+                        norm_positive = self._cached_norm_positive_boxes
+                        norm_negative = self._cached_norm_negative_boxes
                         for norm_box in norm_positive:
                             state = self.processor.add_geometric_prompt(norm_box, True, state)
                         for norm_box in norm_negative:
