@@ -411,6 +411,13 @@ class FilterSAM3Detector(Filter):
             n_pos = len(self.ref_images_paths) if self.ref_images_paths else 0
             n_neg = len(self.ref_images_negative_paths) if self.ref_images_negative_paths else 0
             logger.info(f"Using reference images: {n_pos} positive, {n_neg} negative (REF_IMGS; disabled when FILTER_POSITIVE_BOXES/FILTER_NEGATIVE_BOXES are set)")
+        # Load and resize ref images once so we don't read from disk every frame
+        self._cached_ref_images_pos = (
+            self._load_ref_images_for_cache(self.ref_images_paths) if self.ref_images_paths else None
+        )
+        self._cached_ref_images_neg = (
+            self._load_ref_images_for_cache(self.ref_images_negative_paths) if self.ref_images_negative_paths else None
+        )
         self.confidence_threshold = config.get("confidence_threshold", 0.5)
         self.mask_threshold = config.get("mask_threshold", 0.5)
         self.nms_threshold = config.get("nms_threshold", 0.5)
@@ -1897,6 +1904,22 @@ class FilterSAM3Detector(Filter):
                 return True
         return False
 
+    def _load_ref_images_for_cache(self, paths: list) -> list:
+        """Load and resize ref images to ref_max_height once (used in setup). Returns list of PIL Image or None per path."""
+        out = []
+        max_h = self.ref_max_height
+        for path in paths:
+            try:
+                im = Image.open(path).convert("RGB")
+                w, h = im.size
+                if h > max_h:
+                    im = im.resize((int(w * max_h / h), max_h), Image.Resampling.LANCZOS)
+                out.append(im)
+            except Exception as e:
+                logger.warning(f"Failed to load ref image {path}: {e}")
+                out.append(None)
+        return out
+
     def _build_composite_with_refs(self, pil_image: Image.Image):
         """
         Build composite image with ref images: positive left, negative right.
@@ -1906,9 +1929,9 @@ class FilterSAM3Detector(Filter):
         frame_offset_x is None for overlay; for side_strips it is the x offset of the frame in the composite.
         ref_regions_frame: list of [x1,y1,x2,y2] in frame coords for overlay (negative ref regions only; detections overlapping these are removed; positive ref may keep detections); None for side_strips.
         """
-        paths_pos = self.ref_images_paths or []
-        paths_neg = self.ref_images_negative_paths or []
-        if not paths_pos and not paths_neg:
+        cached_pos = self._cached_ref_images_pos or []
+        cached_neg = self._cached_ref_images_neg or []
+        if not cached_pos and not cached_neg:
             return (pil_image, [], None, None)
 
         img_w, img_h = pil_image.size
@@ -1919,16 +1942,14 @@ class FilterSAM3Detector(Filter):
         all_norm_labels = []
         ref_regions_frame = []  # negative ref regions only (for filtering detections; positive ref may keep model detections)
 
-        def load_and_resize(path) -> Optional[Image.Image]:
-            try:
-                im = Image.open(path).convert("RGB")
-                w, h = im.size
-                if h > max_ref_height:
-                    im = im.resize((int(w * max_ref_height / h), max_ref_height), Image.Resampling.LANCZOS)
-                return im
-            except Exception as e:
-                logger.warning(f"Failed to load ref image {path}: {e}")
+        def ref_im_for_frame(cached_im: Optional[Image.Image]) -> Optional[Image.Image]:
+            """Use cached image, optionally resize down when frame is smaller than ref_max_height."""
+            if cached_im is None:
                 return None
+            w, h = cached_im.size
+            if h > max_ref_height:
+                return cached_im.resize((int(w * max_ref_height / h), max_ref_height), Image.Resampling.LANCZOS)
+            return cached_im
 
         if self.ref_layout == "side_strips":
             strip_w = self.ref_strip_width
@@ -1937,13 +1958,13 @@ class FilterSAM3Detector(Filter):
             composite = Image.new("RGB", (composite_w, composite_h), (128, 128, 128))
             composite.paste(pil_image, (strip_w, 0))
 
-            def paste_refs_side(paths, positive: bool):
+            def paste_refs_side(cached_list: list, positive: bool):
                 nonlocal all_norm_labels
                 x_start = 0 if positive else (strip_w + img_w)
                 strip_width = strip_w
                 y_cur = composite_h - margin
-                for path in paths:
-                    ref_im = load_and_resize(path)
+                for cached_im in cached_list:
+                    ref_im = ref_im_for_frame(cached_im)
                     if ref_im is None:
                         continue
                     rw, rh = ref_im.size
@@ -1964,18 +1985,18 @@ class FilterSAM3Detector(Filter):
                         all_norm_labels.append((norm_list[0], positive))
                     y_cur -= gap
 
-            paste_refs_side(paths_pos, True)
-            paste_refs_side(paths_neg, False)
+            paste_refs_side(cached_pos, True)
+            paste_refs_side(cached_neg, False)
             return (composite, all_norm_labels, strip_w, None)
         else:
             # overlay
             composite = pil_image.copy()
             y_cur = img_h - margin
 
-            def paste_refs_overlay(paths, positive: bool):
+            def paste_refs_overlay(cached_list: list, positive: bool):
                 nonlocal all_norm_labels, y_cur, ref_regions_frame
-                for path in paths:
-                    ref_im = load_and_resize(path)
+                for cached_im in cached_list:
+                    ref_im = ref_im_for_frame(cached_im)
                     if ref_im is None:
                         continue
                     rw, rh = ref_im.size
@@ -1997,9 +2018,9 @@ class FilterSAM3Detector(Filter):
                         all_norm_labels.append((norm_list[0], positive))
                     y_cur -= gap
 
-            paste_refs_overlay(paths_pos, True)
+            paste_refs_overlay(cached_pos, True)
             y_cur = img_h - margin
-            paste_refs_overlay(paths_neg, False)
+            paste_refs_overlay(cached_neg, False)
             return (composite, all_norm_labels, None, ref_regions_frame)
 
     def _forward_grounding_with_visual_prompt(self, state):
