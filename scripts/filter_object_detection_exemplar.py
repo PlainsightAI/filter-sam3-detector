@@ -2,34 +2,29 @@
 
 """
 Example script for running object detection with FilterSAM3Detector using
-**reference boxes** (positive/negative bboxes on the original image). Exemplar = ref boxes only (no exemplars_path).
+**reference boxes** (positive/negative bboxes) and/or **reference images** (REF_IMGS).
 
-Same pipeline as filter_object_detection.py (VideoIn -> SAM3Detector -> Webvis),
-but configures positive_boxes and negative_boxes so SAM3 uses geometric prompts:
-boxes in [x, y, w, h] pixel coordinates on the frame.
+Same pipeline as filter_object_detection.py (VideoIn -> SAM3Detector -> Webvis).
+- Ref boxes: FILTER_POSITIVE_BOXES / FILTER_NEGATIVE_BOXES (bboxes [x, y, w, h] on the frame).
+- Ref images: FILTER_REF_IMAGES / FILTER_REF_IMAGES_NEGATIVE (images pasted on composite). When ref boxes are set, ref images are disabled.
 
-Required environment variables in .env:
+Required in .env:
     VIDEO_PATH: Path to the input video file
-    FILTER_TEXT_PROMPT: Text prompt for detection (e.g., "person", "car"). Required when not using ref boxes; optional when using FILTER_POSITIVE_BOXES/FILTER_NEGATIVE_BOXES.
+    At least one of: FILTER_TEXT_PROMPT, ref boxes (FILTER_POSITIVE_BOXES / FILTER_NEGATIVE_BOXES),
+    or ref images (FILTER_REF_IMAGES and/or FILTER_REF_IMAGES_NEGATIVE). FILTER_TEXT_PROMPT is optional
+    when using REF_IMGS only (detection is driven by the reference images).
 
-Optional:
-    FILTER_POSITIVE_BOXES: JSON array of [x, y, w, h] boxes (positive prompts), e.g. '[[480,290,110,360]]'
-    FILTER_NEGATIVE_BOXES: JSON array of [x, y, w, h] boxes (negative prompts), e.g. '[[100,100,50,200]]'
-    FILTER_DEVICE: cuda, cpu, mps - default: cuda
-    FILTER_CONFIDENCE_THRESHOLD: 0.0-1.0 - default: 0.5
-    FILTER_MAX_DETECTIONS: Max detections per frame - default: 100
-    FILTER_VISUALIZE: true/false - default: false
-    FILTER_VIZ_TOPIC: when set (e.g. viz), main=original+meta, this topic=drawn frame+meta - default: unset
-    FILTER_OUTPUT_DIR: Output directory - default: ./output
+Optional (ref boxes):
+    FILTER_POSITIVE_BOXES: JSON array of [x, y, w, h] boxes, e.g. '[[480,290,110,360]]'
+    FILTER_NEGATIVE_BOXES: JSON array of [x, y, w, h] boxes, e.g. '[[100,100,50,200]]'
 
-Example .env:
-    VIDEO_PATH=/path/to/video.mp4
-    FILTER_TEXT_PROMPT=person
-    FILTER_POSITIVE_BOXES='[[480,290,110,360]]'
-    FILTER_NEGATIVE_BOXES='[[100,100,50,200]]'
-    FILTER_DEVICE=cuda
-    FILTER_VISUALIZE=true
-    FILTER_OUTPUT_DIR=./results_exemplar
+Optional (ref images; ignored if ref boxes are set):
+    FILTER_REF_IMAGES: Comma-separated paths or dir (positive ref images)
+    FILTER_REF_IMAGES_NEGATIVE: Comma-separated paths or dir (negative ref images)
+    FILTER_COMPOSITE_TOPIC: e.g. composite — publish composite image for inspection
+
+Optional (common):
+    FILTER_DEVICE, FILTER_CONFIDENCE_THRESHOLD, FILTER_MAX_DETECTIONS, FILTER_VISUALIZE, FILTER_VIZ_TOPIC, FILTER_OUTPUT_DIR
 """
 
 import os
@@ -65,6 +60,14 @@ def _parse_boxes_env(env_value: str):
     return out if out else None
 
 
+def _parse_ref_images_env(env_value: str):
+    """Parse FILTER_REF_IMAGES or FILTER_REF_IMAGES_NEGATIVE: comma-separated paths -> list, or None if empty."""
+    if not env_value or not env_value.strip():
+        return None
+    parts = [p.strip() for p in env_value.strip().split(",") if p.strip()]
+    return parts if parts else None
+
+
 if __name__ == '__main__':
     video_path = os.getenv("VIDEO_PATH", "")
     output_dir = os.getenv('FILTER_OUTPUT_DIR', './output')
@@ -72,11 +75,18 @@ if __name__ == '__main__':
 
     positive_boxes = _parse_boxes_env(os.getenv('FILTER_POSITIVE_BOXES', ''))
     negative_boxes = _parse_boxes_env(os.getenv('FILTER_NEGATIVE_BOXES', ''))
+    ref_images = _parse_ref_images_env(os.getenv('FILTER_REF_IMAGES', ''))
+    ref_images_negative = _parse_ref_images_env(os.getenv('FILTER_REF_IMAGES_NEGATIVE', ''))
+    composite_topic = (os.getenv('FILTER_COMPOSITE_TOPIC') or '').strip()
 
-    print(f"Using VideoIn with path: {video_path} (loop)")
-    print(f"Text prompt: {os.getenv('FILTER_TEXT_PROMPT', 'NOT SET')}")
+    print(f"Using VideoIn with path: {video_path}")
+    print(f"Text prompt: {os.getenv('FILTER_TEXT_PROMPT') or '(none; ref images/boxes can be used without)'}")
     print(f"Positive boxes: {positive_boxes if positive_boxes else '(none)'}")
     print(f"Negative boxes: {negative_boxes if negative_boxes else '(none)'}")
+    print(f"Ref images (FILTER_REF_IMAGES): {ref_images if ref_images else '(none)'}")
+    print(f"Ref images negative: {ref_images_negative if ref_images_negative else '(none)'}")
+    if composite_topic:
+        print(f"Composite topic: {composite_topic}")
     print(f"Device: {os.getenv('FILTER_DEVICE', 'cuda')}")
     print(f"Confidence threshold: {os.getenv('FILTER_CONFIDENCE_THRESHOLD', '0.5')}")
     print(f"Max detections: {os.getenv('FILTER_MAX_DETECTIONS', '100')}")
@@ -95,6 +105,9 @@ if __name__ == '__main__':
         frames_output_dir=str(output_path / "frames"),
         positive_boxes=positive_boxes or [],
         negative_boxes=negative_boxes or [],
+        ref_images=ref_images,
+        ref_images_negative=ref_images_negative,
+        composite_topic=composite_topic or None,
     )
 
     filters = [
@@ -112,7 +125,12 @@ if __name__ == '__main__':
         )),
     ]
 
-    mode = "reference-boxes" if (positive_boxes or negative_boxes) else "text-prompt only"
+    if positive_boxes or negative_boxes:
+        mode = "reference-boxes"
+    elif ref_images or ref_images_negative:
+        mode = "reference-images (REF_IMGS)"
+    else:
+        mode = "text-prompt only"
     print(f"\nStarting pipeline ({mode})...")
     print(f"Results will be saved to: {output_path}")
     print(f"  - detections.jsonl, frames/")

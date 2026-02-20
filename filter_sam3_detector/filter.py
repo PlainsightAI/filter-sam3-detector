@@ -148,6 +148,15 @@ class FilterSAM3Detector(Filter):
             # Reference boxes on the original image (SAM3-style): list of [x, y, w, h] in pixels per box
             "positive_boxes": None,
             "negative_boxes": None,
+            # Ref images (pasted on composite): list of paths; when set, REF_IMGS are used only if no ref boxes
+            "ref_images": None,
+            "ref_images_negative": None,
+            "ref_margin": 10,
+            "ref_gap": 5,
+            "composite_topic": "",  # When set (e.g. "composite"), publish composite image when REF_IMGS in use
+            "ref_layout": "overlay",  # "overlay" = refs on frame; "side_strips" = refs in lateral strips
+            "ref_strip_width": 120,  # Width of each lateral strip when ref_layout == "side_strips"
+            "ref_max_height": 80,  # Max height (px) of each ref image when pasted on composite
         }
         
         for key, default_value in defaults.items():
@@ -220,6 +229,41 @@ class FilterSAM3Detector(Filter):
         env_negative_boxes = os.getenv("FILTER_NEGATIVE_BOXES")
         if env_negative_boxes is not None:
             config["negative_boxes"] = _parse_boxes_env(env_negative_boxes)
+
+        # FILTER_REF_IMAGES / FILTER_REF_IMAGES_NEGATIVE: comma-separated paths (list or None)
+        def _parse_ref_images_env(env_val: str):
+            if not env_val or not env_val.strip():
+                return None
+            parts = [p.strip() for p in env_val.strip().split(",") if p.strip()]
+            return parts if parts else None
+
+        env_ref_images = os.getenv("FILTER_REF_IMAGES")
+        if env_ref_images is not None:
+            config["ref_images"] = _parse_ref_images_env(env_ref_images)
+        env_ref_images_negative = os.getenv("FILTER_REF_IMAGES_NEGATIVE")
+        if env_ref_images_negative is not None:
+            config["ref_images_negative"] = _parse_ref_images_env(env_ref_images_negative)
+
+        env_composite_topic = os.getenv("FILTER_COMPOSITE_TOPIC")
+        if env_composite_topic is not None:
+            config["composite_topic"] = env_composite_topic.strip()
+
+        env_ref_layout = os.getenv("FILTER_REF_IMAGES_LAYOUT")
+        if env_ref_layout is not None:
+            v = env_ref_layout.strip().lower()
+            config["ref_layout"] = v if v in ("overlay", "side_strips") else "overlay"
+        env_ref_strip_width = os.getenv("FILTER_REF_STRIP_WIDTH")
+        if env_ref_strip_width is not None:
+            try:
+                config["ref_strip_width"] = int(env_ref_strip_width.strip())
+            except ValueError:
+                pass
+        env_ref_max_height = os.getenv("FILTER_REF_MAX_HEIGHT")
+        if env_ref_max_height is not None:
+            try:
+                config["ref_max_height"] = int(env_ref_max_height.strip())
+            except ValueError:
+                pass
 
         # Special handling for FILTER_OUTPUT_PATH (maps to output_path)
         env_output_path = os.getenv("FILTER_OUTPUT_PATH")
@@ -343,6 +387,30 @@ class FilterSAM3Detector(Filter):
         # Reference boxes on original image: list of [x, y, w, h] in pixels (SAM3-style)
         self.positive_boxes = config.get("positive_boxes") or []
         self.negative_boxes = config.get("negative_boxes") or []
+        # Ref images (pasted on composite): only used when no ref boxes (rule: boxes take priority)
+        ref_images_raw = config.get("ref_images")
+        ref_images_negative_raw = config.get("ref_images_negative")
+        has_ref_boxes = bool(self.positive_boxes or self.negative_boxes)
+        if has_ref_boxes and (ref_images_raw or ref_images_negative_raw):
+            logger.info(
+                "FILTER_POSITIVE_BOXES/FILTER_NEGATIVE_BOXES set; ignoring REF_IMGS (ref images disabled)."
+            )
+            ref_images_raw = None
+            ref_images_negative_raw = None
+        self.ref_images_paths = self._expand_ref_paths(ref_images_raw) if ref_images_raw else None
+        self.ref_images_negative_paths = self._expand_ref_paths(ref_images_negative_raw) if ref_images_negative_raw else None
+        self.ref_margin = config.get("ref_margin", 10)
+        self.ref_gap = config.get("ref_gap", 5)
+        self.composite_topic = (config.get("composite_topic") or "").strip()
+        self.ref_layout = (config.get("ref_layout") or "overlay").strip().lower()
+        if self.ref_layout not in ("overlay", "side_strips"):
+            self.ref_layout = "overlay"
+        self.ref_strip_width = max(1, int(config.get("ref_strip_width", 120)))
+        self.ref_max_height = max(1, min(4000, int(config.get("ref_max_height", 80))))
+        if self.ref_images_paths or self.ref_images_negative_paths:
+            n_pos = len(self.ref_images_paths) if self.ref_images_paths else 0
+            n_neg = len(self.ref_images_negative_paths) if self.ref_images_negative_paths else 0
+            logger.info(f"Using reference images: {n_pos} positive, {n_neg} negative (REF_IMGS; disabled when FILTER_POSITIVE_BOXES/FILTER_NEGATIVE_BOXES are set)")
         self.confidence_threshold = config.get("confidence_threshold", 0.5)
         self.mask_threshold = config.get("mask_threshold", 0.5)
         self.nms_threshold = config.get("nms_threshold", 0.5)
@@ -676,10 +744,11 @@ class FilterSAM3Detector(Filter):
             elif self.text_prompt:
                 prompts_to_use = [self.text_prompt]
 
-            # Need either text prompts, visual embeddings from exemplars, or reference boxes
+            # Need either text prompts, visual embeddings from exemplars, reference boxes, or reference images
             has_ref_boxes = bool(self.positive_boxes or self.negative_boxes)
-            if prompts_to_use is None and self.visual_prompt_embed is None and not has_ref_boxes:
-                logger.warning("No text prompt(s), exemplars, or reference boxes configured, forwarding frame unchanged")
+            has_ref_images = bool(self.ref_images_paths or self.ref_images_negative_paths)
+            if prompts_to_use is None and self.visual_prompt_embed is None and not has_ref_boxes and not has_ref_images:
+                logger.warning("No text prompt(s), exemplars, reference boxes, or reference images configured, forwarding frame unchanged")
                 output_frames[topic] = frame
                 continue
 
@@ -697,6 +766,7 @@ class FilterSAM3Detector(Filter):
                 all_scores = []  # Track all scores for detection_confidence calculation
 
                 has_ref_boxes = bool(self.positive_boxes or self.negative_boxes)
+                has_ref_images = bool(self.ref_images_paths or self.ref_images_negative_paths)
 
                 if has_ref_boxes:
                     if not HAS_SAM3:
@@ -725,6 +795,85 @@ class FilterSAM3Detector(Filter):
                         num_extracted = len(detections)
                         all_scores.extend(float(d["score"]) for d in detections if "score" in d)
                         self.global_detection_id += num_extracted
+                elif has_ref_images and HAS_SAM3:
+                    # REF_IMGS mode: composite with refs pasted + geometric prompts (only when no ref boxes).
+                    # Text prompt is optional; when omitted, use "visual" so geometric prompts drive detection.
+                    build_result = self._build_composite_with_refs(pil_image)
+                    composite_pil = build_result[0]
+                    all_norm_labels = build_result[1]
+                    frame_offset_x = build_result[2] if len(build_result) >= 3 else None
+                    ref_regions_frame = build_result[3] if len(build_result) > 3 else None
+                    state = self.processor.set_image(composite_pil)
+                    self.processor.reset_all_prompts(state)
+                    prompt = prompts_to_use[0] if prompts_to_use else "visual"
+                    if prompt in self.cached_text_embeddings:
+                        state = self._inject_cached_text_embedding(state, prompt)
+                    else:
+                        state = self.processor.set_text_prompt_no_grounding(prompt, state)
+                    for norm_box, label in all_norm_labels:
+                        state = self.processor.add_geometric_prompt(norm_box, label, state)
+                    if frame_offset_x is not None:
+                        composite_w, composite_h = composite_pil.size
+                        detections = self._extract_detections_from_state(
+                            state, prompt, composite_w, composite_h, self.global_detection_id
+                        )
+                        frame_x1, frame_y1 = frame_offset_x, 0
+                        frame_x2, frame_y2 = frame_offset_x + img_width, img_height
+                        detections_in_frame = []
+                        for d in detections:
+                            if "box" not in d:
+                                continue
+                            x1, y1, x2, y2 = d["box"]
+                            if x2 <= frame_x1 or x1 >= frame_x2 or y2 <= frame_y1 or y1 >= frame_y2:
+                                continue
+                            x1_f = max(0, int(x1 - frame_offset_x))
+                            y1_f = max(0, int(y1))
+                            x2_f = min(img_width, int(x2 - frame_offset_x))
+                            y2_f = min(img_height, int(y2))
+                            if x2_f <= x1_f or y2_f <= y1_f:
+                                continue
+                            d_f = dict(d)
+                            d_f["box"] = [x1_f, y1_f, x2_f, y2_f]
+                            if "rois" in d_f and d_f["rois"]:
+                                d_f["rois"] = [[x1_f, y1_f, x2_f, y2_f]]
+                            detections_in_frame.append(d_f)
+                        detections = detections_in_frame
+                    else:
+                        detections = self._extract_detections_from_state(
+                            state, prompt, img_width, img_height, self.global_detection_id
+                        )
+                        if ref_regions_frame:
+                            detections = [
+                                d for d in detections
+                                if "box" not in d or not self._box_overlaps_any_region(d["box"], ref_regions_frame)
+                            ]
+                    num_extracted = len(detections)
+                    all_scores.extend(float(d["score"]) for d in detections if "score" in d)
+                    self.global_detection_id += num_extracted
+                    # Publish composite to composite_topic when set (with detections in blue)
+                    if self.composite_topic:
+                        composite_rgb = np.array(composite_pil)
+                        composite_bgr = composite_rgb[:, :, ::-1].copy()
+                        if frame_offset_x is not None:
+                            detections_for_viz = []
+                            for d in detections:
+                                if "box" in d:
+                                    x1, y1, x2, y2 = d["box"]
+                                    detections_for_viz.append({
+                                        **d,
+                                        "box": [x1 + frame_offset_x, y1, x2 + frame_offset_x, y2],
+                                    })
+                                else:
+                                    detections_for_viz.append(d)
+                            composite_bgr = self._visualize_detections_on_image(
+                                composite_bgr, detections_for_viz, None, None
+                            )
+                        else:
+                            composite_bgr = self._visualize_detections_on_image(
+                                composite_bgr, detections, None, None
+                            )
+                        frame_composite = Frame(composite_bgr, frame.data, "BGR")
+                        output_frames[self.composite_topic] = frame_composite
                 else:
                     # Standard mode: set image once, then loop over prompts (and optionally visual exemplars)
                     state = self.processor.set_image(pil_image)
@@ -1704,6 +1853,122 @@ class FilterSAM3Detector(Filter):
             else:
                 result.append(p)
         return result if result else None
+
+    def _box_overlaps_any_region(self, box, regions):
+        """Return True if box [x1,y1,x2,y2] overlaps any region in regions (list of [x1,y1,x2,y2])."""
+        if not regions or not box or len(box) != 4:
+            return False
+        bx1, by1, bx2, by2 = box
+        for r in regions:
+            if len(r) != 4:
+                continue
+            rx1, ry1, rx2, ry2 = r
+            if not (bx2 <= rx1 or bx1 >= rx2 or by2 <= ry1 or by1 >= ry2):
+                return True
+        return False
+
+    def _build_composite_with_refs(self, pil_image: Image.Image):
+        """
+        Build composite image with ref images: positive left, negative right.
+        ref_layout "overlay": refs on frame (bottom-left = positive, bottom-right = negative).
+        ref_layout "side_strips": lateral strips; left = positive, center = frame, right = negative.
+        Returns (composite_pil, all_norm_labels, frame_offset_x, ref_regions_frame).
+        frame_offset_x is None for overlay; for side_strips it is the x offset of the frame in the composite.
+        ref_regions_frame: list of [x1,y1,x2,y2] in frame coords for overlay (to filter detections); None for side_strips.
+        """
+        paths_pos = self.ref_images_paths or []
+        paths_neg = self.ref_images_negative_paths or []
+        if not paths_pos and not paths_neg:
+            return (pil_image, [], None, None)
+
+        img_w, img_h = pil_image.size
+        margin = self.ref_margin
+        gap = self.ref_gap
+        # Cap ref height by frame height so layout never breaks (overlay or side_strips)
+        max_ref_height = min(self.ref_max_height, img_h)
+        all_norm_labels = []
+        ref_regions_frame = []  # List of [x1, y1, x2, y2] in frame coords for overlay; None for side_strips
+
+        def load_and_resize(path) -> Optional[Image.Image]:
+            try:
+                im = Image.open(path).convert("RGB")
+                w, h = im.size
+                if h > max_ref_height:
+                    im = im.resize((int(w * max_ref_height / h), max_ref_height), Image.Resampling.LANCZOS)
+                return im
+            except Exception as e:
+                logger.warning(f"Failed to load ref image {path}: {e}")
+                return None
+
+        if self.ref_layout == "side_strips":
+            strip_w = self.ref_strip_width
+            composite_w = strip_w + img_w + strip_w
+            composite_h = img_h
+            composite = Image.new("RGB", (composite_w, composite_h), (128, 128, 128))
+            composite.paste(pil_image, (strip_w, 0))
+
+            def paste_refs_side(paths, positive: bool):
+                nonlocal all_norm_labels
+                x_start = 0 if positive else (strip_w + img_w)
+                strip_width = strip_w
+                y_cur = composite_h - margin
+                for path in paths:
+                    ref_im = load_and_resize(path)
+                    if ref_im is None:
+                        continue
+                    rw, rh = ref_im.size
+                    rw = min(rw, strip_width - 2 * margin)
+                    if rw <= 0:
+                        continue
+                    ref_im = ref_im.resize((int(rw), int(rh)), Image.Resampling.LANCZOS) if ref_im.size[0] != rw else ref_im
+                    rw, rh = ref_im.size
+                    y_cur -= rh
+                    py = y_cur
+                    if py < margin:
+                        break
+                    px = x_start + margin if positive else x_start + (strip_width - rw - margin)
+                    composite.paste(ref_im, (px, py))
+                    box_xywh = [float(px), float(py), float(rw), float(rh)]
+                    norm_list = self._boxes_xywh_to_norm_cxcywh([box_xywh], composite_w, composite_h)
+                    if norm_list:
+                        all_norm_labels.append((norm_list[0], positive))
+                    y_cur -= gap
+
+            paste_refs_side(paths_pos, True)
+            paste_refs_side(paths_neg, False)
+            return (composite, all_norm_labels, strip_w, None)
+        else:
+            # overlay
+            composite = pil_image.copy()
+            y_cur = img_h - margin
+
+            def paste_refs_overlay(paths, positive: bool):
+                nonlocal all_norm_labels, y_cur, ref_regions_frame
+                for path in paths:
+                    ref_im = load_and_resize(path)
+                    if ref_im is None:
+                        continue
+                    rw, rh = ref_im.size
+                    y_cur -= rh
+                    py = y_cur
+                    if py < margin:
+                        break
+                    if positive:
+                        px = margin
+                    else:
+                        px = img_w - margin - rw
+                    composite.paste(ref_im, (px, py))
+                    ref_regions_frame.append([px, py, px + rw, py + rh])
+                    box_xywh = [float(px), float(py), float(rw), float(rh)]
+                    norm_list = self._boxes_xywh_to_norm_cxcywh([box_xywh], img_w, img_h)
+                    if norm_list:
+                        all_norm_labels.append((norm_list[0], positive))
+                    y_cur -= gap
+
+            paste_refs_overlay(paths_pos, True)
+            y_cur = img_h - margin
+            paste_refs_overlay(paths_neg, False)
+            return (composite, all_norm_labels, None, ref_regions_frame)
 
     def _forward_grounding_with_visual_prompt(self, state):
         """

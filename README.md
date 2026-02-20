@@ -118,9 +118,12 @@ FILTER_DEBUG=false                           # Enable debug logging
 | `output_label` | string | "sam3_detections" | No | Key for storing results |
 | `visualize` | bool | false | No | Draw detections on output frames |
 | `viz_topic` | string | "" | No | When set (e.g. `viz`), main gets original frame + meta; this topic gets drawn frame + meta. Empty = legacy (visualize draws on main). |
+| `ref_images` | string | None | No | Comma-separated paths for positive ref images (pasted on composite). Ignored when `positive_boxes` or `negative_boxes` are set. |
+| `ref_images_negative` | string | None | No | Comma-separated paths for negative ref images. Ignored when ref boxes are set. |
+| `composite_topic` | string | "" | No | When set (e.g. `composite`), publish the composite image (frame + refs) on this topic when REF_IMGS are in use. |
 | `debug` | bool | false | No | Enable debug logging |
 
-\* When using `positive_boxes` or `negative_boxes`, a text prompt is optional (the model can use the placeholder "visual"). Otherwise either `text_prompt` or `exemplars_path` must be provided.
+\* When using `positive_boxes` or `negative_boxes`, a text prompt is optional (the model can use the placeholder "visual"). Otherwise either `text_prompt` or `exemplars_path` must be provided. When using REF_IMGS (ref images), a text prompt is required; REF_IMGS are disabled when ref boxes are set.
 
 ### Reference box prompts
 
@@ -132,6 +135,12 @@ FILTER_NEGATIVE_BOXES="[[100, 100, 50, 200]]"
 ```
 
 Text prompt is optional when using reference boxes. With `FILTER_VISUALIZE=true`, positive ref boxes are drawn in green, negative in red, and detections in blue.
+
+**Rule: when `FILTER_POSITIVE_BOXES` or `FILTER_NEGATIVE_BOXES` are set, reference images (REF_IMGS) are not used** — only the reference-boxes mode on the original image is applied. Set REF_IMGS only when you are not using ref boxes.
+
+### Reference images (REF_IMGS)
+
+You can pass **reference images** (positive and/or negative) that are pasted on a composite (frame + refs) for visual prompting. Set `FILTER_REF_IMAGES` and/or `FILTER_REF_IMAGES_NEGATIVE` to comma-separated paths (files or directories; directories are expanded to image files). A text prompt is required when using REF_IMGS. To view the composite image in the pipeline, set `FILTER_COMPOSITE_TOPIC=composite` and ensure the filter outputs include the composite topic (e.g. in Webvis you can open `/composite`).
 
 ## Usage
 
