@@ -765,9 +765,6 @@ class FilterSAM3Detector(Filter):
                 detections = []
                 all_scores = []  # Track all scores for detection_confidence calculation
 
-                has_ref_boxes = bool(self.positive_boxes or self.negative_boxes)
-                has_ref_images = bool(self.ref_images_paths or self.ref_images_negative_paths)
-
                 if has_ref_boxes:
                     if not HAS_SAM3:
                         logger.warning(
