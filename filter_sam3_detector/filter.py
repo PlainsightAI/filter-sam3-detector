@@ -888,6 +888,12 @@ class FilterSAM3Detector(Filter):
                             )
                         frame_composite = Frame(composite_bgr, frame.data, "BGR")
                         output_frames[self.composite_topic] = frame_composite
+                elif has_ref_images and not HAS_SAM3:
+                    logger.warning(
+                        "Reference images configured but SAM3 is not available; forwarding frame unchanged"
+                    )
+                    output_frames[topic] = frame
+                    continue
                 else:
                     # Standard mode: set image once, then loop over prompts (and optionally visual exemplars)
                     state = self.processor.set_image(pil_image)
