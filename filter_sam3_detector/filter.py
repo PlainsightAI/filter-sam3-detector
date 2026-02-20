@@ -786,6 +786,7 @@ class FilterSAM3Detector(Filter):
                             state = self.processor.add_geometric_prompt(norm_box, True, state)
                         for norm_box in norm_negative:
                             state = self.processor.add_geometric_prompt(norm_box, False, state)
+                        # add_geometric_prompt runs _forward_grounding(state) internally, so state has boxes/scores
                         detections = self._extract_detections_from_state(
                             state, prompt, img_width, img_height, self.global_detection_id
                         )
@@ -824,6 +825,7 @@ class FilterSAM3Detector(Filter):
                         state = self.processor.set_text_prompt_no_grounding(prompt, state)
                     for norm_box, label in all_norm_labels:
                         state = self.processor.add_geometric_prompt(norm_box, label, state)
+                    # add_geometric_prompt runs _forward_grounding(state) internally, so state has boxes/scores
                     if frame_offset_x is not None:
                         composite_w, composite_h = composite_pil.size
                         detections = self._extract_detections_from_state(
@@ -908,12 +910,10 @@ class FilterSAM3Detector(Filter):
                             detections.extend(prompt_detections)
                             self.global_detection_id += len(prompt_detections)
 
-                            # Track scores
-                            if "scores" in prompt_state:
-                                all_scores.extend(
-                                    float(s.item() if hasattr(s, 'item') else s)
-                                    for s in prompt_state["scores"]
-                                )
+                            # Track scores (only for kept detections; state["scores"] includes sub-threshold)
+                            all_scores.extend(
+                                float(d["score"]) for d in prompt_detections if "score" in d
+                            )
 
                     # If we have visual embeddings from exemplar images, run grounding with them
                     if self.visual_prompt_embed is not None:
@@ -944,21 +944,19 @@ class FilterSAM3Detector(Filter):
                         detections.extend(visual_detections)
                         self.global_detection_id += len(visual_detections)
 
-                        # Track scores
-                        if "scores" in visual_state:
-                            all_scores.extend(
-                                float(s.item() if hasattr(s, 'item') else s)
-                                for s in visual_state["scores"]
-                            )
+                        # Track scores (only for kept detections; state["scores"] includes sub-threshold)
+                        all_scores.extend(
+                            float(d["score"]) for d in visual_detections if "score" in d
+                        )
 
-                # Set scores variable for detection_confidence calculation
+                # Set scores variable for detection_confidence calculation (1:1 with detections)
                 scores = all_scores if all_scores else None
 
                 # Calculate detection_confidence (average or max score)
                 detection_confidence = None
                 if detections and scores is not None and len(scores) > 0:
-                    # Use the maximum confidence score
-                    max_score = max(float(s.item() if hasattr(s, 'item') else s) for s in scores[:len(detections)])
+                    # Use the maximum confidence score (scores are already aligned with detections)
+                    max_score = max(float(s) for s in scores)
                     detection_confidence = float(max_score)
                 elif detections and any('score' in d for d in detections):
                     # Fallback: use max score from detections
