@@ -1099,8 +1099,8 @@ class FilterSAM3Detector(Filter):
                 logger.error(f"Error processing frame from {topic}: {e}")
                 import traceback
                 logger.debug(traceback.format_exc())
-
-            output_frames[topic] = frame
+                output_frames[topic] = frame  # forward frame on error
+                continue
 
         return output_frames
 
