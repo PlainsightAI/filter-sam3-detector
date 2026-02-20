@@ -28,7 +28,6 @@ Optional (common):
 """
 
 import os
-import json
 from pathlib import Path
 
 try:
@@ -41,23 +40,6 @@ from openfilter.filter_runtime.filter import Filter
 from filter_sam3_detector.filter import FilterSAM3Detector, FilterSAM3DetectorConfig
 from openfilter.filter_runtime.filters.video_in import VideoIn
 from openfilter.filter_runtime.filters.webvis import Webvis
-
-
-def _parse_boxes_env(env_value: str):
-    """Parse FILTER_POSITIVE_BOXES or FILTER_NEGATIVE_BOXES from JSON to list of [x,y,w,h], or None if empty."""
-    if not env_value or not env_value.strip():
-        return None
-    try:
-        raw = json.loads(env_value.strip())
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(raw, list):
-        return None
-    out = []
-    for item in raw:
-        if isinstance(item, (list, tuple)) and len(item) == 4:
-            out.append([float(item[0]), float(item[1]), float(item[2]), float(item[3])])
-    return out if out else None
 
 
 def _parse_ref_images_env(env_value: str):
@@ -73,16 +55,14 @@ if __name__ == '__main__':
     output_dir = os.getenv('FILTER_OUTPUT_DIR', './output')
     visualize = os.getenv('FILTER_VISUALIZE', 'false').lower() == 'true'
 
-    positive_boxes = _parse_boxes_env(os.getenv('FILTER_POSITIVE_BOXES', ''))
-    negative_boxes = _parse_boxes_env(os.getenv('FILTER_NEGATIVE_BOXES', ''))
     ref_images = _parse_ref_images_env(os.getenv('FILTER_REF_IMAGES', ''))
     ref_images_negative = _parse_ref_images_env(os.getenv('FILTER_REF_IMAGES_NEGATIVE', ''))
     composite_topic = (os.getenv('FILTER_COMPOSITE_TOPIC') or '').strip()
 
     print(f"Using VideoIn with path: {video_path}")
     print(f"Text prompt: {os.getenv('FILTER_TEXT_PROMPT') or '(none; ref images/boxes can be used without)'}")
-    print(f"Positive boxes: {positive_boxes if positive_boxes else '(none)'}")
-    print(f"Negative boxes: {negative_boxes if negative_boxes else '(none)'}")
+    print(f"Positive boxes: {os.getenv('FILTER_POSITIVE_BOXES') or '(none)'}")
+    print(f"Negative boxes: {os.getenv('FILTER_NEGATIVE_BOXES') or '(none)'}")
     print(f"Ref images (FILTER_REF_IMAGES): {ref_images if ref_images else '(none)'}")
     print(f"Ref images negative: {ref_images_negative if ref_images_negative else '(none)'}")
     if composite_topic:
@@ -103,8 +83,6 @@ if __name__ == '__main__':
         output_label="detections",
         output_path=str(output_path / "detections.jsonl"),
         frames_output_dir=str(output_path / "frames"),
-        positive_boxes=positive_boxes or [],
-        negative_boxes=negative_boxes or [],
         ref_images=ref_images,
         ref_images_negative=ref_images_negative,
         composite_topic=composite_topic or None,
@@ -114,7 +92,7 @@ if __name__ == '__main__':
         (
             VideoIn,
             dict(
-                sources=f"file://{video_path}!sync!resize=960x540",
+                sources=f"file://{video_path}!sync",
                 outputs="tcp://*:5550",
             ),
         ),
@@ -125,7 +103,7 @@ if __name__ == '__main__':
         )),
     ]
 
-    if positive_boxes or negative_boxes:
+    if os.getenv('FILTER_POSITIVE_BOXES') or os.getenv('FILTER_NEGATIVE_BOXES'):
         mode = "reference-boxes"
     elif ref_images or ref_images_negative:
         mode = "reference-images (REF_IMGS)"

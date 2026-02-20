@@ -9,6 +9,9 @@ Required in .env:
     VIDEO_PATH: Path to the input video file
     FILTER_TEXT_PROMPT: Text prompt (e.g., "person", "car")
 
+Optional (ref boxes, JSON arrays of [x,y,w,h] in .env):
+    FILTER_POSITIVE_BOXES, FILTER_NEGATIVE_BOXES
+
 Optional:
     FILTER_DEVICE, FILTER_CONFIDENCE_THRESHOLD, FILTER_MAX_DETECTIONS, FILTER_VISUALIZE, FILTER_OUTPUT_DIR
 """
@@ -66,6 +69,8 @@ if __name__ == '__main__':
                 output_label="detections",
                 output_path=str(output_path / "detections.jsonl"),
                 frames_output_dir=str(output_path / "frames"),
+                positive_boxes=[],  # from FILTER_POSITIVE_BOXES in .env
+                negative_boxes=[],  # from FILTER_NEGATIVE_BOXES in .env
             ),
         ),
         (

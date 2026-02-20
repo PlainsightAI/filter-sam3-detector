@@ -7,11 +7,6 @@ SAM3 Detector filter release notes
 ### Added
 - **Reference box prompts**: detection using positive and/or negative bounding boxes on the original image (SAM3-style geometric prompts). Set `FILTER_POSITIVE_BOXES` and/or `FILTER_NEGATIVE_BOXES` to a JSON array of `[x, y, w, h]` boxes in pixels; text prompt is optional. Visualization: green = positive ref, red = negative ref, blue = detections.
 
-## v0.1.3 - 2026-02-04
-
-### Added
-- Reference box prompts (current): `FILTER_POSITIVE_BOXES` and `FILTER_NEGATIVE_BOXES` (JSON arrays of [x, y, w, h] in pixels) for positive and negative geometric prompts on the frame.
-
 ## v0.1.2 - 2026-01-23
 
 ### Added

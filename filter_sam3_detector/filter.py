@@ -789,6 +789,21 @@ class FilterSAM3Detector(Filter):
                         detections = self._extract_detections_from_state(
                             state, prompt, img_width, img_height, self.global_detection_id
                         )
+                        # Remove detections that overlap any negative reference box. When a detection overlaps both
+                        # positive and negative, keep it only if its center is inside a positive box (positive ref prediction).
+                        if self.negative_boxes:
+                            neg_regions = [[b[0], b[1], b[0] + b[2], b[1] + b[3]] for b in self.negative_boxes if len(b) == 4]
+                            pos_regions = [[b[0], b[1], b[0] + b[2], b[1] + b[3]] for b in (self.positive_boxes or []) if len(b) == 4]
+                            if neg_regions:
+                                def _keep(d):
+                                    if "box" not in d:
+                                        return True
+                                    if not self._box_overlaps_any_region(d["box"], neg_regions):
+                                        return True
+                                    if pos_regions and self._box_center_inside_any_region(d["box"], pos_regions):
+                                        return True  # center in positive: keep (positive ref prediction)
+                                    return False
+                                detections = [d for d in detections if _keep(d)]
                         num_extracted = len(detections)
                         all_scores.extend(float(d["score"]) for d in detections if "score" in d)
                         self.global_detection_id += num_extracted
@@ -1864,6 +1879,20 @@ class FilterSAM3Detector(Filter):
                 return True
         return False
 
+    def _box_center_inside_any_region(self, box, regions):
+        """Return True if the center of box [x1,y1,x2,y2] lies inside any region [x1,y1,x2,y2]."""
+        if not regions or not box or len(box) != 4:
+            return False
+        cx = (box[0] + box[2]) / 2.0
+        cy = (box[1] + box[3]) / 2.0
+        for r in regions:
+            if len(r) != 4:
+                continue
+            rx1, ry1, rx2, ry2 = r
+            if rx1 <= cx <= rx2 and ry1 <= cy <= ry2:
+                return True
+        return False
+
     def _build_composite_with_refs(self, pil_image: Image.Image):
         """
         Build composite image with ref images: positive left, negative right.
@@ -1871,7 +1900,7 @@ class FilterSAM3Detector(Filter):
         ref_layout "side_strips": lateral strips; left = positive, center = frame, right = negative.
         Returns (composite_pil, all_norm_labels, frame_offset_x, ref_regions_frame).
         frame_offset_x is None for overlay; for side_strips it is the x offset of the frame in the composite.
-        ref_regions_frame: list of [x1,y1,x2,y2] in frame coords for overlay (to filter detections); None for side_strips.
+        ref_regions_frame: list of [x1,y1,x2,y2] in frame coords for overlay (negative ref regions only; detections overlapping these are removed; positive ref may keep detections); None for side_strips.
         """
         paths_pos = self.ref_images_paths or []
         paths_neg = self.ref_images_negative_paths or []
@@ -1884,7 +1913,7 @@ class FilterSAM3Detector(Filter):
         # Cap ref height by frame height so layout never breaks (overlay or side_strips)
         max_ref_height = min(self.ref_max_height, img_h)
         all_norm_labels = []
-        ref_regions_frame = []  # List of [x1, y1, x2, y2] in frame coords for overlay; None for side_strips
+        ref_regions_frame = []  # negative ref regions only (for filtering detections; positive ref may keep model detections)
 
         def load_and_resize(path) -> Optional[Image.Image]:
             try:
@@ -1955,7 +1984,9 @@ class FilterSAM3Detector(Filter):
                     else:
                         px = img_w - margin - rw
                     composite.paste(ref_im, (px, py))
-                    ref_regions_frame.append([px, py, px + rw, py + rh])
+                    # Only filter detections in negative ref regions; positive ref may keep model detections
+                    if not positive:
+                        ref_regions_frame.append([px, py, px + rw, py + rh])
                     box_xywh = [float(px), float(py), float(rw), float(rh)]
                     norm_list = self._boxes_xywh_to_norm_cxcywh([box_xywh], img_w, img_h)
                     if norm_list:
