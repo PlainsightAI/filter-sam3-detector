@@ -801,6 +801,7 @@ class FilterSAM3Detector(Filter):
                         # Include frame_id in meta (from _filter topic or VideoIn's meta['id'])
                         output_frame_id = frame_id_num if frame_id_num is not None else frame_counter
                         jsonl_meta['frame_id'] = output_frame_id
+                        jsonl_meta['filename'] = frame_filename_str
 
                         # Event sink format: {'filter_name': ..., 'topic': ..., 'data': {'id': ..., 'meta': ...}}
                         # This matches what filter-event-sink outputs - frame id is merged into data
