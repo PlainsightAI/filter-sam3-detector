@@ -3,6 +3,8 @@ SAM3 Detector filter release notes
 
 ## [Unreleased]
 
+- Add filename to output filter subject data
+
 ## v0.1.2 - 2026-01-23
 
 ### Added
