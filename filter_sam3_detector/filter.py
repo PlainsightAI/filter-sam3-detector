@@ -1094,8 +1094,7 @@ class FilterSAM3Detector(Filter):
                         jsonl_meta['frame_id'] = output_frame_id
                         jsonl_meta['width'] = img_width
                         jsonl_meta['height'] = img_height
-                        # Same filename as saved under frames_output_dir (e.g. results/frames)
-                        jsonl_meta['frame_filename'] = frame_filename_str
+                        jsonl_meta['filename'] = frame_filename_str
 
                         # Event sink format: {'filter_name': ..., 'topic': ..., 'data': {'id': ..., 'meta': ...}}
                         # This matches what filter-event-sink outputs - frame id is merged into data
