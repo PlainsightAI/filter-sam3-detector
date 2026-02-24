@@ -773,7 +773,7 @@ class FilterSAM3Detector(Filter):
                 img_height, img_width = image_bgr.shape[:2]
 
                 # Collect all detections across all prompts
-                detections = []
+                detections = None  # None = didn't run (pass-through); [] = ran, found nothing
                 all_scores = []  # Track all scores for detection_confidence calculation
 
                 if has_ref_boxes:
@@ -912,10 +912,9 @@ class FilterSAM3Detector(Filter):
                     logger.warning(
                         "Reference images configured but SAM3 is not available; forwarding frame unchanged"
                     )
-                    output_frames[topic] = frame
-                    continue
                 else:
                     # Standard mode: set image once, then loop over prompts (and optionally visual exemplars)
+                    detections = []
                     state = self.processor.set_image(pil_image)
 
                     # Process each prompt using cached image features
@@ -974,6 +973,11 @@ class FilterSAM3Detector(Filter):
                         all_scores.extend(
                             float(d["score"]) for d in visual_detections if "score" in d
                         )
+
+                # If no inference ran (SAM3 unavailable), forward frame unchanged
+                if detections is None:
+                    output_frames[topic] = frame
+                    continue
 
                 # Set scores variable for detection_confidence calculation (1:1 with detections)
                 scores = all_scores if all_scores else None
