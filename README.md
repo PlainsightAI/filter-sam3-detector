@@ -8,6 +8,7 @@ OpenFilter implementation for SAM3 (Segment Anything Model 3) object detection w
 
 - **Open-Set Detection**: Detect objects not in standard training datasets
 - **Dual Prompting Modes**: Text prompts or exemplar images (few-shot learning)
+- **Reference Box Prompts**: Positive/negative bounding boxes on the original image (SAM3-style geometric prompts; optional text prompt)
 - **Flexible Output**: Bounding boxes, segmentation masks, and confidence scores
 - **GPU Acceleration**: CUDA, CPU, and MPS (Apple Silicon) support
 - **Real-time Processing**: Processes video streams in real-time
@@ -76,9 +77,11 @@ cp env.example .env
 # Prompt configuration (choose one)
 FILTER_TEXT_PROMPT=person                    # Text prompt for detection
 FILTER_EXEMPLARS_PATH=./exemplars/           # Path to exemplar images directory
+# FILTER_POSITIVE_BOXES='[[x,y,w,h],...]'    # Reference boxes (positive), JSON array of [x,y,w,h] in pixels
+# FILTER_NEGATIVE_BOXES='[[x,y,w,h],...]'    # Reference boxes (negative), JSON array of [x,y,w,h] in pixels
 
 # Model configuration
-FILTER_MODEL_ID=facebook/sam2-hiera-large    # HuggingFace model ID
+FILTER_MODEL_ID=facebook/sam3                # HuggingFace model ID
 FILTER_DEVICE=cuda                           # Device: cuda, cpu, or mps
 
 # Detection parameters
@@ -94,6 +97,7 @@ FILTER_OUTPUT_LABEL=sam3_detections          # Key in frame.data['meta']
 
 # Visualization and debugging
 FILTER_VISUALIZE=false                       # Draw detections on frames
+# FILTER_VIZ_TOPIC=viz                       # When set: main=original+meta, this topic=drawn frame+meta
 FILTER_DEBUG=false                           # Enable debug logging
 ```
 
@@ -103,7 +107,7 @@ FILTER_DEBUG=false                           # Enable debug logging
 |----------|------|---------|----------|-------|
 | `text_prompt` | string | None | No* | Natural language description (e.g., "person", "car") |
 | `exemplars_path` | string | None | No* | Path to directory with exemplar images |
-| `model_id` | string | "facebook/sam2-hiera-large" | No | HuggingFace model ID or local path |
+| `model_id` | string | "facebook/sam3" | No | HuggingFace model ID or local path |
 | `device` | string | "cuda" | No | Device: "cuda", "cpu", or "mps" |
 | `confidence_threshold` | float | 0.5 | No | Minimum confidence (0.0-1.0) |
 | `mask_threshold` | float | 0.5 | No | Mask binarization threshold (0.0-1.0) |
@@ -113,80 +117,76 @@ FILTER_DEBUG=false                           # Enable debug logging
 | `output_scores` | bool | true | No | Output confidence scores |
 | `output_label` | string | "sam3_detections" | No | Key for storing results |
 | `visualize` | bool | false | No | Draw detections on output frames |
+| `viz_topic` | string | "" | No | When set (e.g. `viz`), main gets original frame + meta; this topic gets drawn frame + meta. Empty = legacy (visualize draws on main). |
+| `ref_images` | string | None | No | Comma-separated paths for positive ref images (pasted on composite). Ignored when `positive_boxes` or `negative_boxes` are set. |
+| `ref_images_negative` | string | None | No | Comma-separated paths for negative ref images. Ignored when ref boxes are set. |
+| `composite_topic` | string | "" | No | When set (e.g. `composite`), publish the composite image (frame + refs) on this topic when REF_IMGS are in use. |
 | `debug` | bool | false | No | Enable debug logging |
 
-\* Either `text_prompt` or `exemplars_path` must be provided.
+\* When using `positive_boxes` or `negative_boxes`, a text prompt is optional (the model can use the placeholder "visual"). Otherwise either `text_prompt` or `exemplars_path` must be provided. When using REF_IMGS (ref images), a text prompt is required; REF_IMGS are disabled when ref boxes are set.
+
+### Reference box prompts
+
+In single-output mode you can add reference bounding boxes on the **original image** (no composite): set `FILTER_POSITIVE_BOXES` and/or `FILTER_NEGATIVE_BOXES` to a **JSON array** of boxes, each box `[x, y, width, height]` in pixels. Positive boxes encourage detections similar to those regions; negative boxes suppress them. Example in `.env`:
+
+```bash
+FILTER_POSITIVE_BOXES="[[480, 290, 110, 360], [370, 280, 115, 375]]"
+FILTER_NEGATIVE_BOXES="[[100, 100, 50, 200]]"
+```
+
+Text prompt is optional when using reference boxes. With `FILTER_VISUALIZE=true`, positive ref boxes are drawn in green, negative in red, and detections in blue.
+
+**Rule: when `FILTER_POSITIVE_BOXES` or `FILTER_NEGATIVE_BOXES` are set, reference images (REF_IMGS) are not used** — only the reference-boxes mode on the original image is applied. Set REF_IMGS only when you are not using ref boxes.
+
+### Reference images (REF_IMGS)
+
+You can pass **reference images** (positive and/or negative) that are pasted on a composite (frame + refs) for visual prompting. Set `FILTER_REF_IMAGES` and/or `FILTER_REF_IMAGES_NEGATIVE` to comma-separated paths (files or directories; directories are expanded to image files). A text prompt is required when using REF_IMGS. To view the composite image in the pipeline, set `FILTER_COMPOSITE_TOPIC=composite` and ensure the filter outputs include the composite topic (e.g. in Webvis you can open `/composite`).
 
 ## Usage
 
 ### Method 1: Using Example Scripts (Recommended)
 
+Scripts read configuration from environment variables (e.g. from a `.env` file). Copy `env.example` to `.env` and set at least `VIDEO_PATH` and `FILTER_TEXT_PROMPT`.
+
 #### Object Detection with Text Prompts
+
+Scripts read configuration from environment variables (use a `.env` file or pass them inline):
+
+```bash
+# Set in .env: VIDEO_PATH, FILTER_TEXT_PROMPT, FILTER_OUTPUT_DIR, etc.
+python scripts/filter_object_detection.py
+```
+
+Or pass variables inline:
 
 ```bash
 # Detect people in a video
-python scripts/filter_object_detection.py \
-    --video input.mp4 \
-    --prompt "person" \
-    --output-dir ./results \
-    --confidence 0.5
+VIDEO_PATH=input.mp4 FILTER_TEXT_PROMPT=person FILTER_OUTPUT_DIR=./results \
+  FILTER_CONFIDENCE_THRESHOLD=0.5 python scripts/filter_object_detection.py
 
 # Detect cars with visualization
-python scripts/filter_object_detection.py \
-    --video traffic.mp4 \
-    --prompt "car" \
-    --confidence 0.6 \
-    --visualize \
-    --output-dir ./cars
+VIDEO_PATH=traffic.mp4 FILTER_TEXT_PROMPT=car FILTER_CONFIDENCE_THRESHOLD=0.6 \
+  FILTER_VISUALIZE=true FILTER_OUTPUT_DIR=./cars python scripts/filter_object_detection.py
 
-# Process multiple videos
-python scripts/filter_object_detection.py \
-    --video video1.mp4 video2.mp4 video3.mp4 \
-    --prompt "dog" \
-    --output-dir ./detections
+# Process multiple videos (run once per video)
+VIDEO_PATH=video1.mp4 FILTER_TEXT_PROMPT=dog FILTER_OUTPUT_DIR=./detections \
+  python scripts/filter_object_detection.py
+# Then VIDEO_PATH=video2.mp4 ... and VIDEO_PATH=video3.mp4 ...
 ```
 
-#### Exemplar-Based Detection (Few-Shot Learning)
+Optional: `FILTER_VIDEO_LOOP=true` keeps the video looping so frames are still available after the model loads (~14s); useful for short videos.
 
-> ⚠️ **Note**: This feature is currently experimental. See [Known Issues](#known-issues) below.
+#### Detection with Reference Boxes
 
-Exemplar-based detection allows you to detect objects by providing example images instead of text descriptions. This is useful for objects that are hard to describe in text or domain-specific items.
-
-**Preparing Exemplar Images:**
-
-Exemplar images should be **pre-cropped** images showing exactly one instance of the target object. No JSON annotations are required - the images themselves serve as the visual reference.
+Use positive and/or negative reference bounding boxes on the frame (SAM3-style geometric prompts) with or without a text prompt:
 
 ```bash
-# 1. Extract frames from a reference video
-ffmpeg -i reference_video.mp4 -vf "select='not(mod(n,30))'" -vsync vfr frames/frame_%04d.jpg
-
-# 2. Manually crop regions containing your target object
-# Use any image editor to crop tightly around the object
-mkdir -p cup_examples
-# Save cropped images to cup_examples/
-
-# 3. Run detection
-python scripts/filter_exemplar_detection.py \
-    --video input.mp4 \
-    --exemplars ./cup_examples/ \
-    --output-dir ./results \
-    --confidence 0.3
+# In .env set: VIDEO_PATH, and FILTER_POSITIVE_BOXES and/or FILTER_NEGATIVE_BOXES (JSON arrays of [x,y,w,h])
+# Optional: FILTER_TEXT_PROMPT for text-guided detection
+python scripts/filter_object_detection_exemplar.py
 ```
 
-**Exemplar Directory Structure:**
-```
-cup_examples/
-├── cup1.jpg    # Cropped image of target object
-├── cup2.jpg    # Different angle/lighting
-├── cup3.png    # Another example
-└── ...
-```
-
-**Best Practices:**
-- Crop images tightly around the object (minimal background)
-- Use 3-5 exemplar images with varied angles and lighting
-- Ensure the object fills most of the image
-- Use lower confidence threshold (0.2-0.3) for exemplar-based detection
+**Reference boxes:** Set `FILTER_POSITIVE_BOXES` and/or `FILTER_NEGATIVE_BOXES` to a JSON array of boxes, each `[x, y, width, height]` in pixels. Example: `FILTER_POSITIVE_BOXES="[[480, 290, 110, 360]]"`. Text prompt is optional. With `FILTER_VISUALIZE=true`, ref boxes are drawn in green (positive) and red (negative), detections in blue.
 
 ### Method 2: Docker Pipeline
 
@@ -382,43 +382,23 @@ pipeline = [
 
 ### 1. Person Detection
 
-Detect people in surveillance videos:
+Set in `.env`: `VIDEO_PATH`, `FILTER_TEXT_PROMPT=person`, `FILTER_OUTPUT_DIR`, `FILTER_CONFIDENCE_THRESHOLD=0.6`. Then:
 
 ```bash
-python scripts/filter_object_detection.py \
-    --video surveillance.mp4 \
-    --prompt "person" \
-    --output-dir ./person_detections \
-    --confidence 0.6
+python scripts/filter_object_detection.py
 ```
 
 ### 2. Vehicle Detection
 
-Detect cars in traffic monitoring:
+Set `VIDEO_PATH`, `FILTER_TEXT_PROMPT=car`, `FILTER_OUTPUT_DIR`, `FILTER_RESIZE=480`. Then run `python scripts/filter_object_detection.py`.
+
+### 3. Detection with Reference Boxes
+
+Use bounding boxes on the frame as positive/negative prompts (with or without text):
 
 ```bash
-python scripts/filter_object_detection.py \
-    --video traffic.mp4 \
-    --prompt "car" \
-    --confidence 0.6 \
-    --output-dir ./vehicle_detections \
-    --resize 480
-```
-
-### 3. Custom Object Detection with Exemplars
-
-For objects that are hard to describe with text:
-
-```bash
-# Prepare exemplar images
-mkdir -p custom_objects
-# Add cropped images to custom_objects/
-
-python scripts/filter_exemplar_detection.py \
-    --video assembly_line.mp4 \
-    --exemplars ./custom_objects/ \
-    --confidence 0.3 \
-    --output-dir ./custom_detections
+# In .env: VIDEO_PATH, FILTER_POSITIVE_BOXES='[[x,y,w,h],...]', FILTER_NEGATIVE_BOXES (optional), FILTER_TEXT_PROMPT (optional)
+python scripts/filter_object_detection_exemplar.py
 ```
 
 ### 4. Pipeline Integration
@@ -502,9 +482,9 @@ filter-sam3-detector/
 │   ├── __init__.py
 │   └── filter.py              # Main filter implementation
 ├── scripts/                   # Example usage scripts
-│   ├── filter_object_detection.py
-│   ├── filter_exemplar_detection.py
-│   └── README.md
+│   ├── filter_object_detection.py       # Video pipeline (text prompt)
+│   ├── filter_object_detection_exemplar.py  # Video pipeline (reference boxes + optional text)
+│   └── run_temporal_intervals.py
 ├── examples/                  # Additional examples
 │   └── detect_objects_video.py
 ├── docs/                      # Documentation

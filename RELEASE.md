@@ -2,8 +2,19 @@
 SAM3 Detector filter release notes
 
 ## [Unreleased]
-
 - Add filename to output filter subject data
+
+## v0.1.4 - 2026-02-24
+### Added
+- **Reference box prompts**: detection using positive and/or negative bounding boxes on the original image (SAM3-style geometric prompts). Set `FILTER_POSITIVE_BOXES` and/or `FILTER_NEGATIVE_BOXES` to a JSON array of `[x, y, w, h]` boxes in pixels; text prompt is optional. Visualization: green = positive ref, red = negative ref, blue = detections.
+
+### Fixed
+- Detection confidence: use scores from kept detections only (fix alignment when state scores include sub-threshold)
+- Ref-images without SAM3: explicit branch with warning and frame forwarded unchanged (avoid AttributeError on processor)
+
+### Changed
+- Ref images: load and resize once in setup(); use cached PIL images per frame (no disk read per frame)
+- Ref boxes: cache normalized boxes per resolution; recompute only when frame size changes
 
 ## v0.1.2 - 2026-01-23
 

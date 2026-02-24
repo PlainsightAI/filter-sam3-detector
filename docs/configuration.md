@@ -21,6 +21,10 @@ export FILTER_TEXT_PROMPT="person"
 # Exemplar images (alternative to text prompt)
 export FILTER_EXEMPLARS_PATH="./cup_examples/"
 
+# Reference box prompts (JSON arrays of [x, y, w, h] in pixels; text prompt optional)
+# export FILTER_POSITIVE_BOXES='[[480, 290, 110, 360], [370, 280, 115, 375]]'
+# export FILTER_NEGATIVE_BOXES='[[100, 100, 50, 200]]'
+
 # Model configuration
 export FILTER_MODEL_ID=facebook/sam2-hiera-large
 export FILTER_DEVICE=cuda
@@ -38,6 +42,8 @@ export FILTER_OUTPUT_LABEL=sam3_detections
 
 # Visualization and debugging
 export FILTER_VISUALIZE=false
+# When set (e.g. viz): main=original+meta, this topic=drawn frame+meta
+# export FILTER_VIZ_TOPIC=viz
 export FILTER_DEBUG=false
 ```
 
@@ -235,6 +241,12 @@ NMS is used to suppress overlapping bounding boxes, keeping only the highest-con
 - **Default**: `False`
 - **Description**: Draw bounding boxes and masks on output frames
 - **Note**: Requires OpenCV, adds processing overhead
+
+#### `viz_topic`
+
+- **Type**: `str`
+- **Default**: `""`
+- **Description**: When non-empty (e.g. `"viz"`), the main output topic receives the original frame with metadata only; the named topic receives the same frame with bounding boxes drawn and the same metadata. When empty, legacy behavior: if `visualize` is true, the main topic gets the drawn frame.
 
 #### `debug`
 

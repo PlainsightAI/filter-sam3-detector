@@ -22,6 +22,8 @@ class FilterSAM3DetectorConfig(FilterConfig):
 | `text_prompt` | `str \| None` | `None` | Natural language text prompt for detection (e.g., "person", "car") |
 | `exemplars_path` | `str \| None` | `None` | Path to directory containing exemplar images (jpg/png) |
 | `exemplar_embeddings_cache` | `str \| None` | `None` | Path to cache file for exemplar embeddings (optional) |
+| `positive_boxes` | `list \| None` | `None` | Reference boxes (positive): list of [x, y, w, h] in pixels |
+| `negative_boxes` | `list \| None` | `None` | Reference boxes (negative): list of [x, y, w, h] in pixels |
 | `confidence_threshold` | `float` | `0.5` | Minimum confidence score for detections (0.0-1.0) |
 | `mask_threshold` | `float` | `0.5` | Threshold for mask binarization (0.0-1.0) |
 | `max_detections` | `int` | `100` | Maximum number of detections per frame |
@@ -30,6 +32,7 @@ class FilterSAM3DetectorConfig(FilterConfig):
 | `output_scores` | `bool` | `True` | Whether to output confidence scores |
 | `output_label` | `str` | `"sam3_detections"` | Key for storing results in `frame.data['meta']` |
 | `visualize` | `bool` | `False` | Whether to draw detections on output frames |
+| `viz_topic` | `str` | `""` | When set (e.g. `"viz"`), main topic gets original frame + meta; this topic gets drawn frame + same meta. Empty = legacy behavior (visualize draws on main). |
 | `debug` | `bool` | `False` | Enable debug logging |
 
 ### Environment Variables
@@ -214,6 +217,22 @@ filters = [
         "outputs": ["tcp://127.0.0.1:5556"],
         "exemplars_path": "./cup_examples/",
         "confidence_threshold": 0.3,
+    }),
+]
+```
+
+### With Reference Boxes
+
+```python
+filters = [
+    (FilterSAM3Detector, {
+        "sources": "tcp://127.0.0.1:5555",
+        "outputs": ["tcp://127.0.0.1:5556"],
+        "text_prompt": "person",  # optional when using ref boxes
+        "positive_boxes": [[480, 290, 110, 360], [370, 280, 115, 375]],
+        "negative_boxes": [[100, 100, 50, 200]],
+        "visualize": True,  # green=positive ref, red=negative ref, blue=detections
+        "viz_topic": "viz",  # optional: main=original+meta, viz=drawn frame+meta
     }),
 ]
 ```
