@@ -1198,12 +1198,10 @@ class FilterSAM3Detector(Filter):
         frame_filename_str = f"frame_{frame_id_str}_ts{timestamp_str}_count{frame_counter:06d}.jpg"
 
         # Save original (unannotated) frame once, before prompt set loop
-        original_frame_saved = False
         if self.frames_dir is not None:
             try:
                 import cv2
                 cv2.imwrite(str(self.frames_dir / frame_filename_str), image_bgr.copy())
-                original_frame_saved = True
             except Exception as e:
                 logger.warning(f"Failed to save original frame: {e}")
 
