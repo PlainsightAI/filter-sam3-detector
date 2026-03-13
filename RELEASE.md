@@ -1,8 +1,14 @@
 # Changelog
 SAM3 Detector filter release notes
 
-## [Unreleased]
+## v0.1.5 - 2026-03-12
+### Added
 - Add filename to output filter subject data
+
+### Fixed
+- **prompt_sets frame saving** (FILTER-349): `_process_multi_output` now saves original frames (once per frame) and annotated frames (per prompt set) when `FILTER_FRAMES_OUTPUT_DIR` / `FILTER_ANNOTATED_FRAMES_OUTPUT_DIR` are configured
+
+## [Unreleased]
 
 ## v0.1.4 - 2026-02-24
 ### Added

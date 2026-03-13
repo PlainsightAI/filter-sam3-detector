@@ -1197,6 +1197,16 @@ class FilterSAM3Detector(Filter):
             frame_id_str = f"{frame_counter:06d}"
         frame_filename_str = f"frame_{frame_id_str}_ts{timestamp_str}_count{frame_counter:06d}.jpg"
 
+        # Save original (unannotated) frame once, before prompt set loop
+        if self.frames_dir is not None:
+            try:
+                import cv2
+                cv2.imwrite(str(self.frames_dir / frame_filename_str), image_bgr.copy())
+            except Exception as e:
+                logger.warning(f"Failed to save original frame: {e}")
+
+        has_ref_boxes = bool(self.positive_boxes or self.negative_boxes)
+
         # Process each prompt set
         for prompt_set in self.prompt_sets:
             ps_name = prompt_set['name']
@@ -1252,6 +1262,22 @@ class FilterSAM3Detector(Filter):
 
             # Add to output frames with the prompt set's topic
             output_frames[ps_topic] = output_frame
+
+            # Save annotated frame for this prompt set (per-set detections drawn on original image)
+            if self.annotated_frames_dir is not None and ps_detections:
+                try:
+                    import cv2
+                    # Include prompt set name in filename to disambiguate across sets
+                    annotated_filename = f"frame_{frame_id_str}_ts{timestamp_str}_count{frame_counter:06d}_{ps_name}.jpg"
+                    image_bgr_annotated = image_bgr.copy()
+                    image_bgr_annotated = self._visualize_detections_on_image(
+                        image_bgr_annotated, ps_detections,
+                        self.positive_boxes if has_ref_boxes else None,
+                        self.negative_boxes if has_ref_boxes else None,
+                    )
+                    cv2.imwrite(str(self.annotated_frames_dir / annotated_filename), image_bgr_annotated)
+                except Exception as e:
+                    logger.warning(f"Failed to save annotated frame for prompt set {ps_name}: {e}")
 
             # Write to JSONL if configured (one record per prompt set per frame)
             if hasattr(self, 'jsonl_file') and self.jsonl_file is not None:
