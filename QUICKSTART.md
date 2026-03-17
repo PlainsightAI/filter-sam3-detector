@@ -119,15 +119,15 @@ Outputs (host):
 - `./output/frames/`
 - `./output/annotated_frames/` (when `FILTER_SAVE_ANNOTATED_FRAMES=true`)
 
-## Example 3: Positive/negative reference images
+## Example 3: Positive/negative reference boxes (`child` video)
 
-Use this when you want visual guidance from positive and negative image references.
+Use this when you want geometric guidance with positive/negative boxes.
 
 ```bash
-VIDEO_PATH=/absolute/path/to/video.mp4 \
-FILTER_TEXT_PROMPT="small plastic cup with lid" \
-FILTER_REF_IMAGES="/absolute/path/to/positive1.jpg,/absolute/path/to/positive2.jpg" \
-FILTER_REF_IMAGES_NEGATIVE="/absolute/path/to/negative1.jpg" \
+VIDEO_PATH=/absolute/path/to/child.mp4 \
+FILTER_TEXT_PROMPT=person \
+FILTER_POSITIVE_BOXES='[[480, 290, 110, 360]]' \
+FILTER_NEGATIVE_BOXES='[[370, 280, 115, 375]]' \
 FILTER_DEVICE=cuda \
 docker compose -f docker-compose.exemplar.yaml up -d
 ```
