@@ -26,6 +26,7 @@ COPY sam3/ /app/sam3/
 # Copy project files
 COPY pyproject.toml VERSION README.md /app/
 COPY filter_sam3_detector/ /app/filter_sam3_detector/
+COPY scripts/ /app/scripts/
 
 # Install dependencies using uv (respects tool.uv.sources for local sam3)
 RUN uv pip install --system -e .

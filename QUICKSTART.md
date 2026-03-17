@@ -40,6 +40,32 @@ FILTER_ANNOTATED_FRAMES_OUTPUT_DIR=/output/annotated_frames
 FILTER_COCO_OUTPUT_PATH=/output/labels_coco.jsonl
 ```
 
+Use different output path styles depending on how you run:
+
+### `.env` for Docker Compose
+
+Use container paths (`/output/...`):
+
+```bash
+FILTER_OUTPUT_PATH=/output/detections.jsonl
+FILTER_FRAMES_OUTPUT_DIR=/output/frames
+FILTER_SAVE_ANNOTATED_FRAMES=true
+FILTER_ANNOTATED_FRAMES_OUTPUT_DIR=/output/annotated_frames
+FILTER_COCO_OUTPUT_PATH=/output/labels_coco.jsonl
+```
+
+### `.env` for local script (`python scripts/filter_object_detection.py`)
+
+Use host paths (`./output/...`):
+
+```bash
+FILTER_OUTPUT_PATH=./output/detections.jsonl
+FILTER_FRAMES_OUTPUT_DIR=./output/frames
+FILTER_SAVE_ANNOTATED_FRAMES=true
+FILTER_ANNOTATED_FRAMES_OUTPUT_DIR=./output/annotated_frames
+FILTER_COCO_OUTPUT_PATH=./output/labels_coco.jsonl
+```
+
 ## Example 1: Single prompt (`FILTER_TEXT_PROMPT`)
 
 Use this when detecting one class.
@@ -130,7 +156,6 @@ If you prefer running without Docker Compose, you can use:
 Important for local script mode:
 
 - Use host paths like `./output/...` for output variables.
-- If your `.env` contains Docker paths (`/output/...`), the script auto-maps them to `./output/...`.
 
 Set env vars and run:
 

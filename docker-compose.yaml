@@ -16,7 +16,7 @@ services:
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       FILTER_ID: VideoIn
-      FILTER_SOURCES: file:///video.mp4!sync
+      FILTER_SOURCES: file:///video.mp4
       FILTER_OUTPUTS: tcp://*:5550
     volumes:
       - ${VIDEO_PATH:-./data/sample-video.mp4}:/video.mp4:ro
@@ -24,8 +24,7 @@ services:
       - filter-network
 
   sam3_detector:
-    # image: plainsightai/openfilter-sam3-detector:${SAM3_DETECTOR_VERSION:-latest}
-    image: us-west1-docker.pkg.dev/plainsightai-prod/oci/filter-sam3-detector:${SAM3_DETECTOR_VERSION:-latest}
+    image: plainsightai/openfilter-sam3-detector:${SAM3_DETECTOR_VERSION:-latest}
     platform: linux/amd64
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
