@@ -1,9 +1,19 @@
 # Changelog
 SAM3 Detector filter release notes
 
-## v0.1.5 - 2026-03-12
+## v0.1.6 - 2026-03-17
 ### Added
 - Add filename to output filter subject data
+## [Unreleased]
+
+## v0.1.5 - 2026-03-11
+### Added
+- Quick start guide focused on compose-first onboarding with detached commands and three runnable examples: `FILTER_TEXT_PROMPT`, `FILTER_TEXT_PROMPTS`, and positive/negative reference images.
+- Optional utility script `scripts/convert_detections_jsonl_to_coco.py` to export `detections.jsonl` into COCO-style JSON (`images`, `annotations`, `categories` with `score`).
+
+### Changed
+- Docker compose examples now surface get-started usage and output locations more clearly.
+- Main compose example now accepts `VIDEO_PATH` and `FILTER_TEXT_PROMPTS`, and writes `FILTER_OUTPUT_PATH` to persist raw detections.
 
 ### Fixed
 - **prompt_sets frame saving** (FILTER-349): `_process_multi_output` now saves original frames (once per frame) and annotated frames (per prompt set) when `FILTER_FRAMES_OUTPUT_DIR` / `FILTER_ANNOTATED_FRAMES_OUTPUT_DIR` are configured

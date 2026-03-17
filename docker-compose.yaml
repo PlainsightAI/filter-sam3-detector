@@ -1,3 +1,12 @@
+# Get Started pipeline: video_in -> sam3_detector -> webvis
+# Start:
+#   VIDEO_PATH=/absolute/path/to/video.mp4 docker compose -f docker-compose.yaml up -d
+# Stop:
+#   docker compose -f docker-compose.yaml down
+# Outputs (host):
+#   ./output/detections.jsonl
+#   ./output/intervals.json
+#
 services:
   video_in:
     image: containers.openfilter.io/plainsightai/openfilter-video-in:v0.1.10
@@ -8,7 +17,7 @@ services:
       FILTER_SOURCES: file:///video.mp4!loop!sync
       FILTER_OUTPUTS: tcp://*:5550
     volumes:
-      - ./data/sample-video.mp4:/video.mp4:ro
+      - ${VIDEO_PATH:-./data/sample-video.mp4}:/video.mp4:ro
     networks:
       - filter-network
 
@@ -22,8 +31,10 @@ services:
       FILTER_OUTPUTS: tcp://*:5551
       # SAM3 detection config
       FILTER_TEXT_PROMPT: ${FILTER_TEXT_PROMPT:-person}
+      FILTER_TEXT_PROMPTS: ${FILTER_TEXT_PROMPTS:-}
       FILTER_CONFIDENCE_THRESHOLD: ${FILTER_CONFIDENCE_THRESHOLD:-0.3}
       FILTER_OUTPUT_LABEL: sam3_detections
+      FILTER_OUTPUT_PATH: /output/detections.jsonl
       # FILTER_VIZ_TOPIC: "viz"  # optional: separate topic for visualized frames; main stays original+meta
       # Integrated temporal interval tracking (no separate filter needed)
       FILTER_ENABLE_TEMPORAL_INTERVALS: "true"
