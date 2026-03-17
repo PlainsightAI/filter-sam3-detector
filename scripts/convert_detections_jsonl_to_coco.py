@@ -174,7 +174,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--output",
-        default="./output/labels_coco_postprocessed.jsonl",
+        default="./output/labels_coco.jsonl",
         help="Path to output COCO JSON file",
     )
     parser.add_argument(

@@ -3,6 +3,8 @@ import os
 import json
 import multiprocessing
 import time
+import subprocess
+import sys
 from typing import Optional
 from pathlib import Path
 from datetime import datetime
@@ -122,6 +124,8 @@ class FilterSAM3Detector(Filter):
             "output_scores": True,
             "output_label": "sam3_detections",
             "output_path": None,  # Path to save JSONL annotations
+            "auto_export_coco": True,  # Export COCO JSON automatically on shutdown when output_path is set
+            "coco_output_path": None,  # Optional explicit path for COCO JSON output
             "output_filter_name": "SAM3Detector",  # Filter name for event sink format
             # NMS (Non-Maximum Suppression) options
             "nms_enabled": True,  # Enable NMS to suppress overlapping detections
@@ -181,6 +185,8 @@ class FilterSAM3Detector(Filter):
             "output_scores": bool,
             "output_label": str,
             "output_path": str,
+            "auto_export_coco": bool,
+            "coco_output_path": str,
             "nms_enabled": bool,
             "nms_threshold": float,
             "frames_output_dir": str,
@@ -431,6 +437,8 @@ class FilterSAM3Detector(Filter):
         self.output_scores = config.get("output_scores", True)
         self.output_label = config.get("output_label", "sam3_detections")
         self.output_path = config.get("output_path", None)
+        self.auto_export_coco = config.get("auto_export_coco", True)
+        self.coco_output_path = config.get("coco_output_path", None)
         self.output_filter_name = config.get("output_filter_name", "SAM3Detector")
         self.nms_enabled = config.get("nms_enabled", True)
         self.nms_threshold = config.get("nms_threshold", 0.5)
@@ -589,6 +597,8 @@ class FilterSAM3Detector(Filter):
                 self.jsonl_file.close()
                 if hasattr(self, 'output_path') and self.output_path:
                     logger.info(f"Closed annotation file: {self.output_path}")
+                    if self.auto_export_coco:
+                        self._run_coco_export_script()
             except Exception as e:
                 logger.warning(f"Error closing annotation file: {e}")
             self.jsonl_file = None
@@ -607,6 +617,36 @@ class FilterSAM3Detector(Filter):
             torch.cuda.empty_cache()
 
         logger.info("FilterSAM3Detector shutdown complete")
+
+    def _run_coco_export_script(self) -> None:
+        if not self.output_path:
+            return
+        input_path = Path(self.output_path)
+        if not input_path.exists():
+            logger.warning(f"COCO export skipped; input JSONL not found: {input_path}")
+            return
+
+        script_path = Path(__file__).resolve().parent.parent / "scripts" / "convert_detections_jsonl_to_coco.py"
+        if not script_path.exists():
+            logger.warning(f"COCO export skipped; script not found: {script_path}")
+            return
+
+        cmd = [sys.executable, str(script_path), "--input", str(input_path)]
+        if self.coco_output_path:
+            cmd.extend(["--output", str(self.coco_output_path)])
+
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+            if result.returncode == 0:
+                if result.stdout.strip():
+                    logger.info(result.stdout.strip())
+                else:
+                    logger.info("COCO export script completed successfully")
+            else:
+                stderr = result.stderr.strip() if result.stderr else "(no stderr)"
+                logger.warning(f"COCO export script failed (exit={result.returncode}): {stderr}")
+        except Exception as e:
+            logger.warning(f"Failed to run COCO export script: {e}")
 
     def _process_temporal_intervals(self, frame: Frame, detections: list):
         """

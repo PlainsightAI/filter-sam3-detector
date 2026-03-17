@@ -5,7 +5,7 @@
 #   docker compose -f docker-compose.yaml down
 # Outputs (host):
 #   ./output/detections.jsonl
-#   ./output/intervals.json
+#   ./output/labels_coco.jsonl
 #
 services:
   video_in:
@@ -35,13 +35,10 @@ services:
       FILTER_CONFIDENCE_THRESHOLD: ${FILTER_CONFIDENCE_THRESHOLD:-0.3}
       FILTER_OUTPUT_LABEL: sam3_detections
       FILTER_OUTPUT_PATH: /output/detections.jsonl
+      FILTER_COCO_OUTPUT_PATH: /output/labels_coco.jsonl
+      FILTER_AUTO_EXPORT_COCO: ${FILTER_AUTO_EXPORT_COCO:-true}
+      FILTER_ENABLE_TEMPORAL_INTERVALS: "false"
       # FILTER_VIZ_TOPIC: "viz"  # optional: separate topic for visualized frames; main stays original+meta
-      # Integrated temporal interval tracking (no separate filter needed)
-      FILTER_ENABLE_TEMPORAL_INTERVALS: "true"
-      FILTER_TEMPORAL_HALF_LIFE: ${FILTER_HALF_LIFE:-5.0}
-      FILTER_TEMPORAL_PRESENCE_THRESHOLD: ${FILTER_PRESENCE_THRESHOLD:-0.4}
-      FILTER_TEMPORAL_OUTPUT_JSON_PATH: /output/intervals.json
-      FILTER_TEMPORAL_STREAMING_MODE: "true"
     deploy:
       resources:
         reservations:

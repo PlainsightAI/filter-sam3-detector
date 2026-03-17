@@ -34,7 +34,7 @@ docker compose -f docker-compose.yaml down
 Outputs (host):
 
 - `./output/detections.jsonl`
-- `./output/intervals.json` (temporal intervals)
+- `./output/labels_coco.jsonl` (generated automatically on shutdown)
 
 ## Example 2: Multi prompt (`FILTER_TEXT_PROMPTS`)
 
@@ -58,7 +58,7 @@ docker compose -f docker-compose.yaml down
 Outputs (host):
 
 - `./output/detections.jsonl`
-- `./output/intervals.json`
+- `./output/labels_coco.jsonl` (generated automatically on shutdown)
 
 ## Example 3: Positive/negative reference images
 
@@ -83,6 +83,7 @@ docker compose -f docker-compose.exemplar.yaml down
 Outputs (host, default):
 
 - `./results/detections.jsonl`
+- `./results/labels_coco.jsonl` (generated automatically on shutdown)
 - `./results/frames/`
 
 ## Test-case style verification
@@ -99,14 +100,14 @@ For each run, verify with the same checklist:
 4. **Comparison**
    - Compare representative frames from your run against your expected result set (for example, chosen frame numbers or snapshots maintained by your team).
 
-## Optional: Export to COCO format
+## Optional: Manual COCO export
 
-If you need COCO-style output for dataset/evaluation workflows:
+COCO output is generated automatically when the filter stops. If you need to re-export manually:
 
 ```bash
 python scripts/convert_detections_jsonl_to_coco.py \
   --input ./output/detections.jsonl \
-  --output ./output/labels_coco_postprocessed.jsonl
+  --output ./output/labels_coco.jsonl
 ```
 
 Use `./results/detections.jsonl` as input when running `docker-compose.exemplar.yaml`.
