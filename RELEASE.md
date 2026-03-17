@@ -1,10 +1,12 @@
 # Changelog
 SAM3 Detector filter release notes
 
+## [Unreleased]
+
+
 ## v0.1.6 - 2026-03-17
 ### Added
 - Add filename to output filter subject data
-## [Unreleased]
 
 ## v0.1.5 - 2026-03-11
 ### Added
