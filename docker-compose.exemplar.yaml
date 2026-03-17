@@ -11,6 +11,7 @@
 #   ./results/detections.jsonl
 #   ./results/labels_coco.jsonl
 #   ./results/frames/
+#   ./results/annotated_frames/
 
 services:
   video_in:
@@ -44,10 +45,13 @@ services:
       FILTER_CONFIDENCE_THRESHOLD: ${FILTER_CONFIDENCE_THRESHOLD:-0.5}
       FILTER_OUTPUT_LABEL: detections
       # FILTER_VIZ_TOPIC: "viz"  # optional: separate topic for visualized frames; main stays original+meta
-      FILTER_OUTPUT_PATH: /output/detections.jsonl
-      FILTER_COCO_OUTPUT_PATH: /output/labels_coco.jsonl
+      FILTER_OUTPUT_PATH: ${FILTER_OUTPUT_PATH:-/output/detections.jsonl}
+      FILTER_COCO_OUTPUT_PATH: ${FILTER_COCO_OUTPUT_PATH:-/output/labels_coco.jsonl}
       FILTER_AUTO_EXPORT_COCO: ${FILTER_AUTO_EXPORT_COCO:-true}
-      FILTER_FRAMES_OUTPUT_DIR: /output/frames
+      FILTER_FRAMES_OUTPUT_DIR: ${FILTER_FRAMES_OUTPUT_DIR:-/output/frames}
+      FILTER_SAVE_ANNOTATED_FRAMES: ${FILTER_SAVE_ANNOTATED_FRAMES:-true}
+      FILTER_ANNOTATED_FRAMES_OUTPUT_DIR: ${FILTER_ANNOTATED_FRAMES_OUTPUT_DIR:-/output/annotated_frames}
+      FILTER_VISUALIZE: ${FILTER_VISUALIZE:-true}
       FILTER_ENABLE_TEMPORAL_INTERVALS: "false"
     deploy:
       resources:
@@ -69,7 +73,7 @@ services:
       FILTER_ID: Webvis
       FILTER_SOURCES: tcp://sam3_detector:5552
     ports:
-      - "8002:8000"
+      - "8004:8000"
     networks:
       - filter-network
 

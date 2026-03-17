@@ -13,6 +13,33 @@ You will run one of these pipelines:
 - NVIDIA GPU runtime configured (for default CUDA flow)
 - A local input video path (no download step required)
 
+## Device selection (`FILTER_DEVICE`)
+
+- Default is `cuda` in compose examples.
+- You can override with `cpu` (or `mps` on Apple Silicon when supported by your runtime).
+
+Examples:
+
+```bash
+# GPU (default)
+FILTER_DEVICE=cuda
+
+# CPU fallback
+FILTER_DEVICE=cpu
+```
+
+## Output artifact paths
+
+The compose examples expose output paths as env vars. Defaults:
+
+```bash
+FILTER_OUTPUT_PATH=/output/detections.jsonl
+FILTER_FRAMES_OUTPUT_DIR=/output/frames
+FILTER_SAVE_ANNOTATED_FRAMES=true
+FILTER_ANNOTATED_FRAMES_OUTPUT_DIR=/output/annotated_frames
+FILTER_COCO_OUTPUT_PATH=/output/labels_coco.jsonl
+```
+
 ## Example 1: Single prompt (`FILTER_TEXT_PROMPT`)
 
 Use this when detecting one class.
@@ -20,10 +47,11 @@ Use this when detecting one class.
 ```bash
 VIDEO_PATH=/absolute/path/to/video.mp4 \
 FILTER_TEXT_PROMPT=car \
+FILTER_DEVICE=cuda \
 docker compose -f docker-compose.yaml up -d
 ```
 
-Open Webvis at `http://localhost:8001`.
+Open Webvis at `http://localhost:8002`.
 
 Stop when done:
 
@@ -35,6 +63,8 @@ Outputs (host):
 
 - `./output/detections.jsonl`
 - `./output/labels_coco.jsonl` (generated automatically on shutdown)
+- `./output/frames/`
+- `./output/annotated_frames/` (when `FILTER_SAVE_ANNOTATED_FRAMES=true`)
 
 ## Example 2: Multi prompt (`FILTER_TEXT_PROMPTS`)
 
@@ -43,11 +73,12 @@ Use this when detecting multiple classes in a single run.
 ```bash
 VIDEO_PATH=/absolute/path/to/video.mp4 \
 FILTER_TEXT_PROMPTS="avocado,chicken,salmon,egg" \
+FILTER_DEVICE=cuda \
 FILTER_CONFIDENCE_THRESHOLD=0.2 \
 docker compose -f docker-compose.yaml up -d
 ```
 
-Open Webvis at `http://localhost:8001`.
+Open Webvis at `http://localhost:8002`.
 
 Stop when done:
 
@@ -59,6 +90,8 @@ Outputs (host):
 
 - `./output/detections.jsonl`
 - `./output/labels_coco.jsonl` (generated automatically on shutdown)
+- `./output/frames/`
+- `./output/annotated_frames/` (when `FILTER_SAVE_ANNOTATED_FRAMES=true`)
 
 ## Example 3: Positive/negative reference images
 
@@ -69,10 +102,11 @@ VIDEO_PATH=/absolute/path/to/video.mp4 \
 FILTER_TEXT_PROMPT="small plastic cup with lid" \
 FILTER_REF_IMAGES="/absolute/path/to/positive1.jpg,/absolute/path/to/positive2.jpg" \
 FILTER_REF_IMAGES_NEGATIVE="/absolute/path/to/negative1.jpg" \
+FILTER_DEVICE=cuda \
 docker compose -f docker-compose.exemplar.yaml up -d
 ```
 
-Open Webvis at `http://localhost:8002`.
+Open Webvis at `http://localhost:8004`.
 
 Stop when done:
 
@@ -85,6 +119,45 @@ Outputs (host, default):
 - `./results/detections.jsonl`
 - `./results/labels_coco.jsonl` (generated automatically on shutdown)
 - `./results/frames/`
+- `./results/annotated_frames/` (when `FILTER_SAVE_ANNOTATED_FRAMES=true`)
+
+## Alternative: run with Python script
+
+If you prefer running without Docker Compose, you can use:
+
+- `scripts/filter_object_detection.py` (text prompt or text prompts)
+
+Important for local script mode:
+
+- Use host paths like `./output/...` for output variables.
+- If your `.env` contains Docker paths (`/output/...`), the script auto-maps them to `./output/...`.
+
+Set env vars and run:
+
+```bash
+VIDEO_PATH=/absolute/path/to/video.mp4 \
+FILTER_TEXT_PROMPT=car \
+FILTER_DEVICE=cuda \
+FILTER_OUTPUT_DIR=./output \
+python scripts/filter_object_detection.py
+```
+
+Or multi-prompt:
+
+```bash
+VIDEO_PATH=/absolute/path/to/video.mp4 \
+FILTER_TEXT_PROMPTS="avocado,chicken,salmon,egg" \
+FILTER_DEVICE=cuda \
+FILTER_OUTPUT_DIR=./output \
+python scripts/filter_object_detection.py
+```
+
+Outputs (host):
+
+- `./output/detections.jsonl`
+- `./output/labels_coco.jsonl` (generated automatically on shutdown)
+- `./output/frames/`
+- `./output/annotated_frames/` (when `FILTER_SAVE_ANNOTATED_FRAMES=true`)
 
 ## Test-case style verification
 

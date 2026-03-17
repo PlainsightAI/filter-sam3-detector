@@ -7,7 +7,9 @@ Pipeline: VideoIn -> SAM3Detector -> Webvis.
 
 Required in .env:
     VIDEO_PATH: Path to the input video file
-    FILTER_TEXT_PROMPT: Text prompt (e.g., "person", "car")
+    One of:
+      FILTER_TEXT_PROMPT: Text prompt (e.g., "person", "car")
+      FILTER_TEXT_PROMPTS: Comma-separated prompts (e.g., "person,car,dog")
 
 Optional (ref boxes, JSON arrays of [x,y,w,h] in .env):
     FILTER_POSITIVE_BOXES, FILTER_NEGATIVE_BOXES
@@ -34,6 +36,7 @@ from openfilter.filter_runtime.filters.webvis import Webvis
 if __name__ == '__main__':
     video_path = os.getenv('VIDEO_PATH', '')
     output_dir = os.getenv('FILTER_OUTPUT_DIR', './output')
+    device = os.getenv('FILTER_DEVICE', 'cuda')
     visualize = os.getenv('FILTER_VISUALIZE', 'false').lower() == 'true'
 
     if not video_path:
@@ -44,8 +47,9 @@ if __name__ == '__main__':
         exit(1)
 
     print(f"Using VideoIn: {video_path}")
-    print(f"Text prompt: {os.getenv('FILTER_TEXT_PROMPT', 'NOT SET')}")
-    print(f"Device: {os.getenv('FILTER_DEVICE', 'cuda')}")
+    print(f"Text prompt: {os.getenv('FILTER_TEXT_PROMPT', '(none)')}")
+    print(f"Text prompts: {os.getenv('FILTER_TEXT_PROMPTS', '(none)')}")
+    print(f"Device: {device}")
     print(f"Visualize: {visualize}")
     print(f"Output: {output_dir}")
 
@@ -66,6 +70,8 @@ if __name__ == '__main__':
                 id="filter_sam3_detector",
                 sources="tcp://localhost:5550",
                 outputs="tcp://*:5552",
+                device=device,
+                visualize=visualize,
                 output_label="detections",
                 output_path=str(output_path / "detections.jsonl"),
                 frames_output_dir=str(output_path / "frames"),
