@@ -629,7 +629,7 @@ class FilterSAM3Detector(Filter):
             cmd.extend(["--output", str(self.coco_output_path)])
         else:
             # Default COCO output as sibling of detections JSONL, independent of CWD.
-            default_coco = input_path.parent / "labels_coco.jsonl"
+            default_coco = input_path.parent / "labels_coco.json"
             cmd.extend(["--output", str(default_coco)])
 
         try:

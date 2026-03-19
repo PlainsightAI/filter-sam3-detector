@@ -37,7 +37,7 @@ FILTER_OUTPUT_PATH=/output/detections.jsonl
 FILTER_FRAMES_OUTPUT_DIR=/output/frames
 FILTER_SAVE_ANNOTATED_FRAMES=true
 FILTER_ANNOTATED_FRAMES_OUTPUT_DIR=/output/annotated_frames
-FILTER_COCO_OUTPUT_PATH=/output/labels_coco.jsonl
+FILTER_COCO_OUTPUT_PATH=/output/labels_coco.json
 ```
 
 Use different output path styles depending on how you run:
@@ -51,7 +51,7 @@ FILTER_OUTPUT_PATH=/output/detections.jsonl
 FILTER_FRAMES_OUTPUT_DIR=/output/frames
 FILTER_SAVE_ANNOTATED_FRAMES=true
 FILTER_ANNOTATED_FRAMES_OUTPUT_DIR=/output/annotated_frames
-FILTER_COCO_OUTPUT_PATH=/output/labels_coco.jsonl
+FILTER_COCO_OUTPUT_PATH=/output/labels_coco.json
 ```
 
 ### `.env` for local script (`python scripts/filter_object_detection.py`)
@@ -63,7 +63,7 @@ FILTER_OUTPUT_PATH=./output/detections.jsonl
 FILTER_FRAMES_OUTPUT_DIR=./output/frames
 FILTER_SAVE_ANNOTATED_FRAMES=true
 FILTER_ANNOTATED_FRAMES_OUTPUT_DIR=./output/annotated_frames
-FILTER_COCO_OUTPUT_PATH=./output/labels_coco.jsonl
+FILTER_COCO_OUTPUT_PATH=./output/labels_coco.json
 ```
 
 ## Example 1: Single prompt (`FILTER_TEXT_PROMPT`)
@@ -88,7 +88,7 @@ docker compose -f docker-compose.yaml down
 Outputs (host):
 
 - `./output/detections.jsonl`
-- `./output/labels_coco.jsonl` (generated automatically on shutdown)
+- `./output/labels_coco.json` (generated automatically on shutdown)
 - `./output/frames/`
 - `./output/annotated_frames/` (when `FILTER_SAVE_ANNOTATED_FRAMES=true`)
 
@@ -115,7 +115,7 @@ docker compose -f docker-compose.yaml down
 Outputs (host):
 
 - `./output/detections.jsonl`
-- `./output/labels_coco.jsonl` (generated automatically on shutdown)
+- `./output/labels_coco.json` (generated automatically on shutdown)
 - `./output/frames/`
 - `./output/annotated_frames/` (when `FILTER_SAVE_ANNOTATED_FRAMES=true`)
 
@@ -142,7 +142,7 @@ docker compose -f docker-compose.exemplar.yaml down
 Outputs (host, default):
 
 - `./results/detections.jsonl`
-- `./results/labels_coco.jsonl` (generated automatically on shutdown)
+- `./results/labels_coco.json` (generated automatically on shutdown)
 - `./results/frames/`
 - `./results/annotated_frames/` (when `FILTER_SAVE_ANNOTATED_FRAMES=true`)
 
@@ -179,7 +179,7 @@ python scripts/filter_object_detection.py
 Outputs (host):
 
 - `./output/detections.jsonl`
-- `./output/labels_coco.jsonl` (generated automatically on shutdown)
+- `./output/labels_coco.json` (generated automatically on shutdown)
 - `./output/frames/`
 - `./output/annotated_frames/` (when `FILTER_SAVE_ANNOTATED_FRAMES=true`)
 
@@ -204,7 +204,7 @@ COCO output is generated automatically when the filter stops. If you need to re-
 ```bash
 python scripts/convert_detections_jsonl_to_coco.py \
   --input ./output/detections.jsonl \
-  --output ./output/labels_coco.jsonl
+  --output ./output/labels_coco.json
 ```
 
 Use `./results/detections.jsonl` as input when running `docker-compose.exemplar.yaml`.

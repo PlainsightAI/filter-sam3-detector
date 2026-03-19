@@ -5,7 +5,7 @@
 #   docker compose -f docker-compose.yaml down
 # Outputs (host):
 #   ./output/detections.jsonl
-#   ./output/labels_coco.jsonl
+#   ./output/labels_coco.json
 #   ./output/frames/
 #   ./output/annotated_frames/
 #
@@ -38,7 +38,7 @@ services:
       FILTER_CONFIDENCE_THRESHOLD: ${FILTER_CONFIDENCE_THRESHOLD:-0.3}
       FILTER_OUTPUT_LABEL: sam3_detections
       FILTER_OUTPUT_PATH: ${FILTER_OUTPUT_PATH:-/output/detections.jsonl}
-      FILTER_COCO_OUTPUT_PATH: ${FILTER_COCO_OUTPUT_PATH:-/output/labels_coco.jsonl}
+      FILTER_COCO_OUTPUT_PATH: ${FILTER_COCO_OUTPUT_PATH:-/output/labels_coco.json}
       FILTER_AUTO_EXPORT_COCO: ${FILTER_AUTO_EXPORT_COCO:-true}
       FILTER_FRAMES_OUTPUT_DIR: ${FILTER_FRAMES_OUTPUT_DIR:-/output/frames}
       FILTER_SAVE_ANNOTATED_FRAMES: ${FILTER_SAVE_ANNOTATED_FRAMES:-true}

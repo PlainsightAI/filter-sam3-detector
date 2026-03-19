@@ -9,7 +9,7 @@
 #   - Optional text prompt (FILTER_TEXT_PROMPT)
 # Outputs (host default):
 #   ./results/detections.jsonl
-#   ./results/labels_coco.jsonl
+#   ./results/labels_coco.json
 #   ./results/frames/
 #   ./results/annotated_frames/
 
@@ -46,7 +46,7 @@ services:
       FILTER_OUTPUT_LABEL: detections
       # FILTER_VIZ_TOPIC: "viz"  # optional: separate topic for visualized frames; main stays original+meta
       FILTER_OUTPUT_PATH: ${FILTER_OUTPUT_PATH:-/output/detections.jsonl}
-      FILTER_COCO_OUTPUT_PATH: ${FILTER_COCO_OUTPUT_PATH:-/output/labels_coco.jsonl}
+      FILTER_COCO_OUTPUT_PATH: ${FILTER_COCO_OUTPUT_PATH:-/output/labels_coco.json}
       FILTER_AUTO_EXPORT_COCO: ${FILTER_AUTO_EXPORT_COCO:-true}
       FILTER_FRAMES_OUTPUT_DIR: ${FILTER_FRAMES_OUTPUT_DIR:-/output/frames}
       FILTER_SAVE_ANNOTATED_FRAMES: ${FILTER_SAVE_ANNOTATED_FRAMES:-true}
