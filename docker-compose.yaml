@@ -16,7 +16,7 @@ services:
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       FILTER_ID: VideoIn
-      FILTER_SOURCES: file:///video.mp4
+      FILTER_SOURCES: file:///video.mp4!sync
       FILTER_OUTPUTS: tcp://*:5550
     volumes:
       - ${VIDEO_PATH:-./data/sample-video.mp4}:/video.mp4:ro
