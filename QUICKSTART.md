@@ -71,7 +71,7 @@ FILTER_COCO_OUTPUT_PATH=./output/labels_coco.jsonl
 Use this when detecting one class.
 
 ```bash
-VIDEO_PATH=/absolute/path/to/video.mp4 \
+VIDEO_PATH=/absolute/path/to/car.mp4 \
 FILTER_TEXT_PROMPT=car \
 FILTER_DEVICE=cuda \
 docker compose -f docker-compose.yaml up -d
@@ -97,8 +97,8 @@ Outputs (host):
 Use this when detecting multiple classes in a single run.
 
 ```bash
-VIDEO_PATH=/absolute/path/to/video.mp4 \
-FILTER_TEXT_PROMPTS="avocado,chicken,salmon,egg" \
+VIDEO_PATH=/absolute/path/to/car.mp4 \
+FILTER_TEXT_PROMPTS="car,truck" \
 FILTER_DEVICE=cuda \
 FILTER_CONFIDENCE_THRESHOLD=0.2 \
 docker compose -f docker-compose.yaml up -d
@@ -121,11 +121,10 @@ Outputs (host):
 
 ## Example 3: Positive/negative reference boxes (`child` video)
 
-Use this when you want geometric guidance with positive/negative boxes.
+Use this when you want geometric guidance with positive/negative boxes (without text prompt).
 
 ```bash
 VIDEO_PATH=/absolute/path/to/child.mp4 \
-FILTER_TEXT_PROMPT=person \
 FILTER_POSITIVE_BOXES='[[480, 290, 110, 360]]' \
 FILTER_NEGATIVE_BOXES='[[370, 280, 115, 375]]' \
 FILTER_DEVICE=cuda \

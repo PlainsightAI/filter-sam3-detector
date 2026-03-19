@@ -634,6 +634,10 @@ class FilterSAM3Detector(Filter):
         cmd = [sys.executable, str(script_path), "--input", str(input_path)]
         if self.coco_output_path:
             cmd.extend(["--output", str(self.coco_output_path)])
+        else:
+            # Default COCO output as sibling of detections JSONL, independent of CWD.
+            default_coco = input_path.parent / "labels_coco.jsonl"
+            cmd.extend(["--output", str(default_coco)])
 
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, check=False)
