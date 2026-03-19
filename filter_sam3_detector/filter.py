@@ -117,7 +117,6 @@ class FilterSAM3Detector(Filter):
             "exemplar_embeddings_cache": None,
             "confidence_threshold": 0.5,
             "mask_threshold": 0.5,
-            "nms_threshold": 0.5,  # IoU threshold for NMS (0 = disabled, lower = more aggressive)
             "max_detections": 100,
             "output_masks": False,  # Don't save masks by default (can be large)
             "output_boxes": True,
@@ -178,7 +177,6 @@ class FilterSAM3Detector(Filter):
             "exemplar_embeddings_cache": str,
             "confidence_threshold": float,
             "mask_threshold": float,
-            "nms_threshold": float,
             "max_detections": int,
             "output_masks": bool,
             "output_boxes": bool,
@@ -430,7 +428,6 @@ class FilterSAM3Detector(Filter):
         )
         self.confidence_threshold = config.get("confidence_threshold", 0.5)
         self.mask_threshold = config.get("mask_threshold", 0.5)
-        self.nms_threshold = config.get("nms_threshold", 0.5)
         self.max_detections = config.get("max_detections", 100)
         self.output_masks = config.get("output_masks", True)
         self.output_boxes = config.get("output_boxes", True)
