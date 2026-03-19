@@ -2,10 +2,7 @@
 
 This guide focuses on first-run success with Docker Compose and clear, reproducible examples.
 
-You will run one of these pipelines:
-
-- `docker-compose.yaml` for text prompt examples (`FILTER_TEXT_PROMPT` and `FILTER_TEXT_PROMPTS`)
-- `docker-compose.exemplar.yaml` for positive/negative reference images (and optional ref boxes)
+You will run the pipeline with `docker-compose.yaml` for all examples (`FILTER_TEXT_PROMPT`, `FILTER_TEXT_PROMPTS`, `FILTER_POSITIVE_BOXES`, and `FILTER_REF_IMAGES`).
 
 ## Prerequisites
 
@@ -72,7 +69,7 @@ Use this when detecting one class.
 
 ```bash
 VIDEO_PATH=./data/car.mp4 \
-FILTER_TEXT_PROMPT=car \
+FILTER_TEXT_PROMPT=post \
 FILTER_DEVICE=cuda \
 docker compose -f docker-compose.yaml up -d
 ```
@@ -85,12 +82,12 @@ Stop when done:
 docker compose -f docker-compose.yaml down
 ```
 
-Outputs (host):
+Outputs (host, default):
 
-- `./output/detections.jsonl`
-- `./output/labels_coco.json` (generated automatically on shutdown)
-- `./output/frames/`
-- `./output/annotated_frames/` (when `FILTER_SAVE_ANNOTATED_FRAMES=true`)
+- `./results/detections.jsonl`
+- `./results/labels_coco.json` (generated automatically on shutdown)
+- `./results/frames/`
+- `./results/annotated_frames/` (when `FILTER_SAVE_ANNOTATED_FRAMES=true`)
 
 ## Example 2: Multi prompt (`FILTER_TEXT_PROMPTS`)
 
@@ -100,7 +97,6 @@ Use this when detecting multiple classes in a single run.
 VIDEO_PATH=./data/car.mp4 \
 FILTER_TEXT_PROMPTS="car,truck" \
 FILTER_DEVICE=cuda \
-FILTER_CONFIDENCE_THRESHOLD=0.2 \
 docker compose -f docker-compose.yaml up -d
 ```
 
@@ -112,23 +108,22 @@ Stop when done:
 docker compose -f docker-compose.yaml down
 ```
 
-Outputs (host):
+Outputs (host, default):
 
-- `./output/detections.jsonl`
-- `./output/labels_coco.json` (generated automatically on shutdown)
-- `./output/frames/`
-- `./output/annotated_frames/` (when `FILTER_SAVE_ANNOTATED_FRAMES=true`)
+- `./results/detections.jsonl`
+- `./results/labels_coco.json` (generated automatically on shutdown)
+- `./results/frames/`
+- `./results/annotated_frames/` (when `FILTER_SAVE_ANNOTATED_FRAMES=true`)
 
-## Example 3: Positive/negative reference boxes (`child` video)
+## Example 3: Positive boxes (`FILTER_POSITIVE_BOXES`)
 
-Use this when you want geometric guidance with positive/negative boxes (without text prompt).
+Use this when you want geometric guidance with boxes (without text prompt).
 
 ```bash
-VIDEO_PATH=/absolute/path/to/child.mp4 \
-FILTER_POSITIVE_BOXES='[[480, 290, 110, 360]]' \
-FILTER_NEGATIVE_BOXES='[[370, 280, 115, 375]]' \
+VIDEO_PATH=./data/car.mp4 \
+FILTER_POSITIVE_BOXES='[[247, 59, 14, 169]]' \
 FILTER_DEVICE=cuda \
-docker compose -f docker-compose.exemplar.yaml up -d
+docker compose -f docker-compose.yaml up -d
 ```
 
 Open Webvis at `http://localhost:8004`.
@@ -136,7 +131,33 @@ Open Webvis at `http://localhost:8004`.
 Stop when done:
 
 ```bash
-docker compose -f docker-compose.exemplar.yaml down
+docker compose -f docker-compose.yaml down
+```
+
+Outputs (host, default):
+
+- `./results/detections.jsonl`
+- `./results/labels_coco.json` (generated automatically on shutdown)
+- `./results/frames/`
+- `./results/annotated_frames/` (when `FILTER_SAVE_ANNOTATED_FRAMES=true`)
+
+## Example 4: Reference image (`FILTER_REF_IMAGES`)
+
+Use this when you want to guide detections with a reference image only (without text prompt).
+
+```bash
+VIDEO_PATH=./data/car.mp4 \
+FILTER_REF_IMAGES=/data/electrical_post.png \
+FILTER_DEVICE=cuda \
+docker compose -f docker-compose.yaml up -d
+```
+
+Open Webvis at `http://localhost:8004`.
+
+Stop when done:
+
+```bash
+docker compose -f docker-compose.yaml down
 ```
 
 Outputs (host, default):
@@ -160,7 +181,7 @@ Set env vars and run:
 
 ```bash
 VIDEO_PATH=/absolute/path/to/video.mp4 \
-FILTER_TEXT_PROMPT=car \
+FILTER_TEXT_PROMPT=post \
 FILTER_DEVICE=cuda \
 FILTER_OUTPUT_DIR=./output \
 python scripts/filter_object_detection.py
@@ -207,4 +228,4 @@ python scripts/convert_detections_jsonl_to_coco.py \
   --output ./output/labels_coco.json
 ```
 
-Use `./results/detections.jsonl` as input when running `docker-compose.exemplar.yaml`.
+Use `./results/detections.jsonl` as input when running `docker-compose.yaml`.
