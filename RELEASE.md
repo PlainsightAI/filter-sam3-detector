@@ -5,6 +5,7 @@ SAM3 Detector filter release notes
 ### Added
 - Dual licensing documentation (`LICENSING.md`) and updated README badge
 - License files (`LICENSE`, `LICENSING.md`) now copied into Docker images for redistribution compliance
+- PyPI metadata updated with dual license expression and license file bundling
 
 ## v0.1.6 - 2026-03-17
 ### Added
