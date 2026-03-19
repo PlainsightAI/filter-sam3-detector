@@ -1,8 +1,10 @@
 # Changelog
 SAM3 Detector filter release notes
 
-## [Unreleased]
-
+## v0.1.7 - 2026-03-25
+### Added
+- Dual licensing documentation (`LICENSING.md`) and updated README badge
+- License files (`LICENSE`, `LICENSING.md`) now copied into Docker images for redistribution compliance
 
 ## v0.1.6 - 2026-03-17
 ### Added
