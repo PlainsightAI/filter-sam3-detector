@@ -71,7 +71,7 @@ FILTER_COCO_OUTPUT_PATH=./output/labels_coco.json
 Use this when detecting one class.
 
 ```bash
-VIDEO_PATH=./data/examples/car.mp4 \
+VIDEO_PATH=./data/car.mp4 \
 FILTER_TEXT_PROMPT=car \
 FILTER_DEVICE=cuda \
 docker compose -f docker-compose.yaml up -d
@@ -97,7 +97,7 @@ Outputs (host):
 Use this when detecting multiple classes in a single run.
 
 ```bash
-VIDEO_PATH=./data/examples/car.mp4 \
+VIDEO_PATH=./data/car.mp4 \
 FILTER_TEXT_PROMPTS="car,truck" \
 FILTER_DEVICE=cuda \
 FILTER_CONFIDENCE_THRESHOLD=0.2 \
@@ -166,11 +166,11 @@ FILTER_OUTPUT_DIR=./output \
 python scripts/filter_object_detection.py
 ```
 
-Or multi-prompt:
+Or positive-box prompt (without text prompt):
 
 ```bash
-VIDEO_PATH=/absolute/path/to/video.mp4 \
-FILTER_TEXT_PROMPTS="avocado,chicken,salmon,egg" \
+VIDEO_PATH=./data/car.mp4 \
+FILTER_POSITIVE_BOXES='[[247, 59, 14, 169]]' \
 FILTER_DEVICE=cuda \
 FILTER_OUTPUT_DIR=./output \
 python scripts/filter_object_detection.py
