@@ -626,12 +626,8 @@ class FilterSAM3Detector(Filter):
             logger.warning(f"COCO export skipped; input JSONL not found: {input_path}")
             return
 
-        script_path = Path(__file__).resolve().parent.parent / "scripts" / "convert_detections_jsonl_to_coco.py"
-        if not script_path.exists():
-            logger.warning(f"COCO export skipped; script not found: {script_path}")
-            return
-
-        cmd = [sys.executable, str(script_path), "--input", str(input_path)]
+        # Invoke package module so this works for editable, wheel, and container installs.
+        cmd = [sys.executable, "-m", "filter_sam3_detector.coco_export", "--input", str(input_path)]
         if self.coco_output_path:
             cmd.extend(["--output", str(self.coco_output_path)])
         else:
