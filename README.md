@@ -85,7 +85,7 @@ docker compose -f docker-compose.yaml up -d
 
 1. Copy the example environment file:
 ```bash
-cp env.example .env
+cp .env.example .env
 ```
 
 2. Edit `.env` file with your configuration:

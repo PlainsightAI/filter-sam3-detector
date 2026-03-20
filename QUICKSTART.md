@@ -10,6 +10,14 @@ You will run the pipeline with `docker-compose.yaml` for all examples (`FILTER_T
 - NVIDIA GPU runtime configured (for default CUDA flow)
 - A local input video path (no download step required)
 
+## Prepare `.env` from template
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` and enable one prompt mode per run (the examples below show exactly what to set).
+
 ## Device selection (`FILTER_DEVICE`)
 
 - Default is `cuda` in compose examples.
@@ -67,10 +75,19 @@ FILTER_COCO_OUTPUT_PATH=./output/labels_coco.json
 
 Use this when detecting one class.
 
+Set in `.env`:
+
 ```bash
-VIDEO_PATH=./data/car.mp4 \
-FILTER_TEXT_PROMPT=post \
-FILTER_DEVICE=cuda \
+VIDEO_PATH=./data/car.mp4
+FILTER_TEXT_PROMPT=post
+FILTER_TEXT_PROMPTS=
+FILTER_POSITIVE_BOXES=
+FILTER_REF_IMAGES=
+```
+
+Run:
+
+```bash
 docker compose -f docker-compose.yaml up -d
 ```
 
@@ -93,10 +110,19 @@ Outputs (host, default):
 
 Use this when detecting multiple classes in a single run.
 
+Set in `.env`:
+
 ```bash
-VIDEO_PATH=./data/car.mp4 \
-FILTER_TEXT_PROMPTS="car,truck" \
-FILTER_DEVICE=cuda \
+VIDEO_PATH=./data/car.mp4
+FILTER_TEXT_PROMPT=
+FILTER_TEXT_PROMPTS=car,truck
+FILTER_POSITIVE_BOXES=
+FILTER_REF_IMAGES=
+```
+
+Run:
+
+```bash
 docker compose -f docker-compose.yaml up -d
 ```
 
@@ -119,14 +145,23 @@ Outputs (host, default):
 
 Use this when you want geometric guidance with boxes (without text prompt).
 
+Set in `.env`:
+
 ```bash
-VIDEO_PATH=./data/car.mp4 \
-FILTER_POSITIVE_BOXES='[[247, 59, 14, 169]]' \
-FILTER_DEVICE=cuda \
+VIDEO_PATH=./data/car.mp4
+FILTER_TEXT_PROMPT=
+FILTER_TEXT_PROMPTS=
+FILTER_POSITIVE_BOXES='[[247, 59, 14, 169]]'
+FILTER_REF_IMAGES=
+```
+
+Run:
+
+```bash
 docker compose -f docker-compose.yaml up -d
 ```
 
-Open Webvis at `http://localhost:8004`.
+Open Webvis at `http://localhost:8002`.
 
 Stop when done:
 
@@ -145,14 +180,23 @@ Outputs (host, default):
 
 Use this when you want to guide detections with a reference image only (without text prompt).
 
+Set in `.env`:
+
 ```bash
-VIDEO_PATH=./data/car.mp4 \
-FILTER_REF_IMAGES=/data/electrical_post.png \
-FILTER_DEVICE=cuda \
+VIDEO_PATH=./data/car.mp4
+FILTER_TEXT_PROMPT=
+FILTER_TEXT_PROMPTS=
+FILTER_POSITIVE_BOXES=
+FILTER_REF_IMAGES=/data/electrical_post.png
+```
+
+Run:
+
+```bash
 docker compose -f docker-compose.yaml up -d
 ```
 
-Open Webvis at `http://localhost:8004`.
+Open Webvis at `http://localhost:8002`.
 
 Stop when done:
 
