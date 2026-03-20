@@ -1,3 +1,18 @@
+# Get Started pipeline: VideoIn -> SAM3Detector -> Webvis
+# Start:
+#   VIDEO_PATH=/absolute/path/to/video.mp4 docker compose -f docker-compose.yaml up -d
+# Stop:
+#   docker compose -f docker-compose.yaml down
+# Supports:
+#   - Positive/negative reference images (FILTER_REF_IMAGES / FILTER_REF_IMAGES_NEGATIVE)
+#   - Positive/negative reference boxes (FILTER_POSITIVE_BOXES / FILTER_NEGATIVE_BOXES)
+#   - Optional text prompt (FILTER_TEXT_PROMPT)
+# Outputs (host default):
+#   ./results/detections.jsonl
+#   ./results/labels_coco.json
+#   ./results/frames/
+#   ./results/annotated_frames/
+
 services:
   video_in:
     image: containers.openfilter.io/plainsightai/openfilter-video-in:v0.1.10
@@ -5,32 +20,39 @@ services:
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       FILTER_ID: VideoIn
-      FILTER_SOURCES: file:///video.mp4!loop!sync
+      FILTER_SOURCES: file:///video.mp4!sync
       FILTER_OUTPUTS: tcp://*:5550
     volumes:
-      - ./data/sample-video.mp4:/video.mp4:ro
+      - ${VIDEO_PATH:-./data/sample-video.mp4}:/video.mp4:ro
     networks:
       - filter-network
 
   sam3_detector:
     image: plainsightai/openfilter-sam3-detector:${SAM3_DETECTOR_VERSION:-latest}
     platform: linux/amd64
+    env_file: .env
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      FILTER_ID: SAM3Detector
+      FILTER_ID: filter_sam3_detector
       FILTER_SOURCES: tcp://video_in:5550
-      FILTER_OUTPUTS: tcp://*:5551
-      # SAM3 detection config
-      FILTER_TEXT_PROMPT: ${FILTER_TEXT_PROMPT:-person}
-      FILTER_CONFIDENCE_THRESHOLD: ${FILTER_CONFIDENCE_THRESHOLD:-0.3}
-      FILTER_OUTPUT_LABEL: sam3_detections
+      FILTER_OUTPUTS: tcp://*:5552
+      FILTER_TEXT_PROMPT: ${FILTER_TEXT_PROMPT:-}
+      FILTER_REF_IMAGES: ${FILTER_REF_IMAGES:-}
+      FILTER_REF_IMAGES_NEGATIVE: ${FILTER_REF_IMAGES_NEGATIVE:-}
+      FILTER_POSITIVE_BOXES: ${FILTER_POSITIVE_BOXES:-}
+      FILTER_NEGATIVE_BOXES: ${FILTER_NEGATIVE_BOXES:-}
+      FILTER_DEVICE: ${FILTER_DEVICE:-cuda}
+      FILTER_CONFIDENCE_THRESHOLD: ${FILTER_CONFIDENCE_THRESHOLD:-0.5}
+      FILTER_OUTPUT_LABEL: detections
       # FILTER_VIZ_TOPIC: "viz"  # optional: separate topic for visualized frames; main stays original+meta
-      # Integrated temporal interval tracking (no separate filter needed)
-      FILTER_ENABLE_TEMPORAL_INTERVALS: "true"
-      FILTER_TEMPORAL_HALF_LIFE: ${FILTER_HALF_LIFE:-5.0}
-      FILTER_TEMPORAL_PRESENCE_THRESHOLD: ${FILTER_PRESENCE_THRESHOLD:-0.4}
-      FILTER_TEMPORAL_OUTPUT_JSON_PATH: /output/intervals.json
-      FILTER_TEMPORAL_STREAMING_MODE: "true"
+      FILTER_OUTPUT_PATH: ${FILTER_OUTPUT_PATH:-/output/detections.jsonl}
+      FILTER_COCO_OUTPUT_PATH: ${FILTER_COCO_OUTPUT_PATH:-/output/labels_coco.json}
+      FILTER_AUTO_EXPORT_COCO: ${FILTER_AUTO_EXPORT_COCO:-true}
+      FILTER_FRAMES_OUTPUT_DIR: ${FILTER_FRAMES_OUTPUT_DIR:-/output/frames}
+      FILTER_SAVE_ANNOTATED_FRAMES: ${FILTER_SAVE_ANNOTATED_FRAMES:-true}
+      FILTER_ANNOTATED_FRAMES_OUTPUT_DIR: ${FILTER_ANNOTATED_FRAMES_OUTPUT_DIR:-/output/annotated_frames}
+      FILTER_VISUALIZE: ${FILTER_VISUALIZE:-true}
+      FILTER_ENABLE_TEMPORAL_INTERVALS: "false"
     deploy:
       resources:
         reservations:
@@ -39,7 +61,8 @@ services:
               count: 1
               capabilities: [gpu]
     volumes:
-      - ./output:/output
+      - ${FILTER_OUTPUT_DIR:-./results}:/output
+      - ./data:/data:ro
     networks:
       - filter-network
 
@@ -49,9 +72,9 @@ services:
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       FILTER_ID: Webvis
-      FILTER_SOURCES: tcp://sam3_detector:5551
+      FILTER_SOURCES: tcp://sam3_detector:5552
     ports:
-      - "8001:8000"
+      - "8002:8000"
     networks:
       - filter-network
 

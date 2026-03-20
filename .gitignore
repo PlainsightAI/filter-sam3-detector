@@ -36,6 +36,7 @@ Thumbs.db
 # Project specific
 *.mkv
 *.mp4
+!data/car.mp4
 *.jpg
 uv.lock
 

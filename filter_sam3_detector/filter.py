@@ -20,6 +20,7 @@ except RuntimeError:
 
 from openfilter.filter_runtime.filter import FilterConfig, Filter, Frame
 
+from .coco_export import convert_jsonl_to_coco
 from .temporal_intervals import EMATracker, DetectionInterval, IntervalTracker
 from .streaming_video_processor import StreamingVideoProcessor
 
@@ -115,13 +116,14 @@ class FilterSAM3Detector(Filter):
             "exemplar_embeddings_cache": None,
             "confidence_threshold": 0.5,
             "mask_threshold": 0.5,
-            "nms_threshold": 0.5,  # IoU threshold for NMS (0 = disabled, lower = more aggressive)
             "max_detections": 100,
             "output_masks": False,  # Don't save masks by default (can be large)
             "output_boxes": True,
             "output_scores": True,
             "output_label": "sam3_detections",
             "output_path": None,  # Path to save JSONL annotations
+            "auto_export_coco": False,  # Opt-in: export COCO JSON on shutdown when output_path is set
+            "coco_output_path": None,  # Optional explicit path for COCO JSON output
             "output_filter_name": "SAM3Detector",  # Filter name for event sink format
             # NMS (Non-Maximum Suppression) options
             "nms_enabled": True,  # Enable NMS to suppress overlapping detections
@@ -174,13 +176,14 @@ class FilterSAM3Detector(Filter):
             "exemplar_embeddings_cache": str,
             "confidence_threshold": float,
             "mask_threshold": float,
-            "nms_threshold": float,
             "max_detections": int,
             "output_masks": bool,
             "output_boxes": bool,
             "output_scores": bool,
             "output_label": str,
             "output_path": str,
+            "auto_export_coco": bool,
+            "coco_output_path": str,
             "nms_enabled": bool,
             "nms_threshold": float,
             "frames_output_dir": str,
@@ -424,13 +427,14 @@ class FilterSAM3Detector(Filter):
         )
         self.confidence_threshold = config.get("confidence_threshold", 0.5)
         self.mask_threshold = config.get("mask_threshold", 0.5)
-        self.nms_threshold = config.get("nms_threshold", 0.5)
         self.max_detections = config.get("max_detections", 100)
         self.output_masks = config.get("output_masks", True)
         self.output_boxes = config.get("output_boxes", True)
         self.output_scores = config.get("output_scores", True)
         self.output_label = config.get("output_label", "sam3_detections")
         self.output_path = config.get("output_path", None)
+        self.auto_export_coco = config.get("auto_export_coco", False)
+        self.coco_output_path = config.get("coco_output_path", None)
         self.output_filter_name = config.get("output_filter_name", "SAM3Detector")
         self.nms_enabled = config.get("nms_enabled", True)
         self.nms_threshold = config.get("nms_threshold", 0.5)
@@ -589,6 +593,8 @@ class FilterSAM3Detector(Filter):
                 self.jsonl_file.close()
                 if hasattr(self, 'output_path') and self.output_path:
                     logger.info(f"Closed annotation file: {self.output_path}")
+                    if self.auto_export_coco:
+                        self._run_coco_export()
             except Exception as e:
                 logger.warning(f"Error closing annotation file: {e}")
             self.jsonl_file = None
@@ -607,6 +613,32 @@ class FilterSAM3Detector(Filter):
             torch.cuda.empty_cache()
 
         logger.info("FilterSAM3Detector shutdown complete")
+
+    def _run_coco_export(self) -> None:
+        if not self.output_path:
+            return
+        input_path = Path(self.output_path)
+        if not input_path.exists():
+            logger.warning(f"COCO export skipped; input JSONL not found: {input_path}")
+            return
+
+        # Default COCO output as sibling of detections JSONL, independent of CWD.
+        if self.coco_output_path:
+            output_path = Path(self.coco_output_path)
+        else:
+            output_path = input_path.parent / "labels_coco.json"
+
+        try:
+            coco = convert_jsonl_to_coco(input_path, output_path, self.output_label)
+            logger.info(
+                "COCO export completed: %s (images=%d, annotations=%d, categories=%d)",
+                output_path,
+                len(coco.get("images", [])),
+                len(coco.get("annotations", [])),
+                len(coco.get("categories", [])),
+            )
+        except Exception as e:
+            logger.warning(f"COCO export failed: {e}", exc_info=True)
 
     def _process_temporal_intervals(self, frame: Frame, detections: list):
         """

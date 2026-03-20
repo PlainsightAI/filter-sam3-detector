@@ -65,11 +65,27 @@ uv pip install -e .
 uv pip install -e ".[dev]"
 ```
 
+## Get Started
+
+For a first run with Docker Compose, including examples for:
+
+- `FILTER_TEXT_PROMPT`
+- `FILTER_TEXT_PROMPTS`
+- positive reference boxes and reference images
+
+use [`QUICKSTART.md`](QUICKSTART.md).
+
+The quick start uses detached compose commands:
+
+```bash
+docker compose -f docker-compose.yaml up -d
+```
+
 ## Configuration
 
 1. Copy the example environment file:
 ```bash
-cp env.example .env
+cp .env.example .env
 ```
 
 2. Edit `.env` file with your configuration:
