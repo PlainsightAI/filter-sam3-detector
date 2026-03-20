@@ -179,6 +179,7 @@ Outputs (host, default):
 ## Example 4: Reference image (`FILTER_REF_IMAGES`)
 
 Use this when you want to guide detections with a reference image only (without text prompt).
+Note: `FILTER_REF_IMAGES=/data/...` uses a container path. In `docker-compose.yaml`, `./data` is mounted as `/data` (`./data:/data:ro`), so `./data/electrical_post.png` on host becomes `/data/electrical_post.png` in the container.
 
 Set in `.env`:
 
