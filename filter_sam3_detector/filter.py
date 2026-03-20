@@ -3,8 +3,6 @@ import os
 import json
 import multiprocessing
 import time
-import subprocess
-import sys
 from typing import Optional
 from pathlib import Path
 from datetime import datetime
@@ -22,6 +20,7 @@ except RuntimeError:
 
 from openfilter.filter_runtime.filter import FilterConfig, Filter, Frame
 
+from .coco_export import convert_jsonl_to_coco
 from .temporal_intervals import EMATracker, DetectionInterval, IntervalTracker
 from .streaming_video_processor import StreamingVideoProcessor
 
@@ -595,7 +594,7 @@ class FilterSAM3Detector(Filter):
                 if hasattr(self, 'output_path') and self.output_path:
                     logger.info(f"Closed annotation file: {self.output_path}")
                     if self.auto_export_coco:
-                        self._run_coco_export_script()
+                        self._run_coco_export()
             except Exception as e:
                 logger.warning(f"Error closing annotation file: {e}")
             self.jsonl_file = None
@@ -615,7 +614,7 @@ class FilterSAM3Detector(Filter):
 
         logger.info("FilterSAM3Detector shutdown complete")
 
-    def _run_coco_export_script(self) -> None:
+    def _run_coco_export(self) -> None:
         if not self.output_path:
             return
         input_path = Path(self.output_path)
@@ -623,27 +622,23 @@ class FilterSAM3Detector(Filter):
             logger.warning(f"COCO export skipped; input JSONL not found: {input_path}")
             return
 
-        # Invoke package module so this works for editable, wheel, and container installs.
-        cmd = [sys.executable, "-m", "filter_sam3_detector.coco_export", "--input", str(input_path)]
+        # Default COCO output as sibling of detections JSONL, independent of CWD.
         if self.coco_output_path:
-            cmd.extend(["--output", str(self.coco_output_path)])
+            output_path = Path(self.coco_output_path)
         else:
-            # Default COCO output as sibling of detections JSONL, independent of CWD.
-            default_coco = input_path.parent / "labels_coco.json"
-            cmd.extend(["--output", str(default_coco)])
+            output_path = input_path.parent / "labels_coco.json"
 
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, check=False)
-            if result.returncode == 0:
-                if result.stdout.strip():
-                    logger.info(result.stdout.strip())
-                else:
-                    logger.info("COCO export script completed successfully")
-            else:
-                stderr = result.stderr.strip() if result.stderr else "(no stderr)"
-                logger.warning(f"COCO export script failed (exit={result.returncode}): {stderr}")
+            coco = convert_jsonl_to_coco(input_path, output_path, self.output_label)
+            logger.info(
+                "COCO export completed: %s (images=%d, annotations=%d, categories=%d)",
+                output_path,
+                len(coco.get("images", [])),
+                len(coco.get("annotations", [])),
+                len(coco.get("categories", [])),
+            )
         except Exception as e:
-            logger.warning(f"Failed to run COCO export script: {e}")
+            logger.warning(f"COCO export failed: {e}", exc_info=True)
 
     def _process_temporal_intervals(self, frame: Frame, detections: list):
         """
