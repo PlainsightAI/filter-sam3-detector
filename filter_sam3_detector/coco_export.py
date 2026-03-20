@@ -12,8 +12,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 def _extract_bbox_xywh(det: dict[str, Any]) -> list[float] | None:
@@ -93,7 +96,12 @@ def convert_jsonl_to_coco(input_path: Path, output_path: Path, output_label: str
             try:
                 record = json.loads(line)
             except json.JSONDecodeError as exc:
-                raise ValueError(f"Invalid JSON at line {line_no}: {exc}") from exc
+                logger.warning("Skipping invalid JSON at line %d: %s", line_no, exc)
+                continue
+
+            if not isinstance(record, dict):
+                logger.warning("Skipping non-object JSON record at line %d", line_no)
+                continue
 
             data = record.get("data", {})
             if not isinstance(data, dict):
