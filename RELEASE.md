@@ -12,7 +12,7 @@ SAM3 Detector filter release notes
 ### Added
 - Quick start guide focused on compose-first onboarding with detached commands and three runnable examples: `FILTER_TEXT_PROMPT`, `FILTER_TEXT_PROMPTS`, and positive/negative reference images.
 - Optional utility script `scripts/convert_detections_jsonl_to_coco.py` to export `detections.jsonl` into COCO-style JSON (`images`, `annotations`, `categories` with `score`).
-- Automatic COCO export on filter shutdown when `FILTER_OUTPUT_PATH` is configured (`FILTER_AUTO_EXPORT_COCO=true` by default).
+- Automatic COCO export on filter shutdown when `FILTER_OUTPUT_PATH` is configured (`FILTER_AUTO_EXPORT_COCO` opt-in).
 
 ### Changed
 - Docker compose examples now surface get-started usage and output locations more clearly.

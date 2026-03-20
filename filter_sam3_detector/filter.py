@@ -122,7 +122,7 @@ class FilterSAM3Detector(Filter):
             "output_scores": True,
             "output_label": "sam3_detections",
             "output_path": None,  # Path to save JSONL annotations
-            "auto_export_coco": True,  # Export COCO JSON automatically on shutdown when output_path is set
+            "auto_export_coco": False,  # Opt-in: export COCO JSON on shutdown when output_path is set
             "coco_output_path": None,  # Optional explicit path for COCO JSON output
             "output_filter_name": "SAM3Detector",  # Filter name for event sink format
             # NMS (Non-Maximum Suppression) options
@@ -433,7 +433,7 @@ class FilterSAM3Detector(Filter):
         self.output_scores = config.get("output_scores", True)
         self.output_label = config.get("output_label", "sam3_detections")
         self.output_path = config.get("output_path", None)
-        self.auto_export_coco = config.get("auto_export_coco", True)
+        self.auto_export_coco = config.get("auto_export_coco", False)
         self.coco_output_path = config.get("coco_output_path", None)
         self.output_filter_name = config.get("output_filter_name", "SAM3Detector")
         self.nms_enabled = config.get("nms_enabled", True)
