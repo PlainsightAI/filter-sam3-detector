@@ -200,16 +200,16 @@ pip uninstall filter-sam3-detector
 
 After installation:
 
-1. Read the [README](README.md) for usage examples
-2. Check [Configuration Guide](docs/configuration.md) for options
+1. Read the [README](https://github.com/PlainsightAI/filter-sam3-detector/blob/main/README.md) for usage examples
+2. Check [Configuration Guide](https://github.com/PlainsightAI/filter-sam3-detector/blob/main/docs/configuration.md) for options
 3. Try the example scripts in `scripts/`
-4. See [Performance Tuning](docs/performance.md) for optimization
+4. See [Performance Tuning](https://github.com/PlainsightAI/filter-sam3-detector/blob/main/docs/performance.md) for optimization
 
 ## Support
 
 If you encounter issues:
 
-1. Check [Troubleshooting](README.md#troubleshooting) section
-2. Review [GitHub Issues](https://github.com/your-org/filter-sam3-detector/issues)
-3. Check [Documentation](docs/)
+1. Check [Troubleshooting](https://github.com/PlainsightAI/filter-sam3-detector/blob/main/README.md#troubleshooting) section
+2. Review [GitHub Issues](https://github.com/PlainsightAI/filter-sam3-detector/issues)
+3. Check [Documentation](https://github.com/PlainsightAI/filter-sam3-detector/tree/main/docs)
 
