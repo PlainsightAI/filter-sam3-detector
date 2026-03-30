@@ -1,3 +1,4 @@
+import hashlib
 import logging
 import os
 import json
@@ -2261,6 +2262,44 @@ class FilterSAM3Detector(Filter):
 
         return filtered_boxes, filtered_scores, filtered_masks
 
+    @staticmethod
+    def _viz_bgr_for_class_name(class_name: Optional[str]) -> tuple[int, int, int]:
+        """Stable BGR color per class; default blue when class unknown."""
+        if not class_name or not str(class_name).strip():
+            return (255, 0, 0)
+        digest = hashlib.md5(str(class_name).strip().lower().encode("utf-8")).digest()
+        b, g, r = digest[0], digest[1], digest[2]
+        return (max(int(b), 50), max(int(g), 50), max(int(r), 50))
+
+    def _viz_text_origin_xyxy(
+        self,
+        text: str,
+        x1: int,
+        y1: int,
+        x2: int,
+        y2: int,
+        img_h: int,
+        img_w: int,
+        *,
+        placement: str,
+        pad: int = 4,
+    ) -> tuple[int, int]:
+        """Fixed text placement: score above top-left, label below bottom-left (no overlap)."""
+        import cv2
+
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        scale = 0.5
+        thickness = 2
+        (tw, th), bl = cv2.getTextSize(text, font, scale, thickness)
+        if placement == "score":
+            tx, ty = x1, y1 - pad
+        else:
+            tx, ty = x1, y2 + th + pad
+        tx = int(max(0, min(tx, max(0, img_w - tw))))
+        ty_hi = max(th, img_h - bl - 1)
+        ty = int(max(th, min(ty, ty_hi)))
+        return tx, ty
+
     def _draw_ref_boxes_on_image(self, image: np.ndarray, positive_boxes: list, negative_boxes: list) -> None:
         """Draw reference boxes on image in-place: green for positive, red for negative. Boxes are [x, y, w, h]."""
         try:
@@ -2282,7 +2321,7 @@ class FilterSAM3Detector(Filter):
 
     def _visualize_detections(self, frame: Frame, detections: list, positive_boxes: list = None, negative_boxes: list = None) -> Frame:
         """
-        Draw detection results on the frame. Optionally draw ref boxes first (green=positive, red=negative); detections in blue.
+        Draw detection results on the frame. Optionally draw ref boxes first (green=positive, red=negative); detection BB color per class.
 
         Args:
             frame: Input frame
@@ -2300,32 +2339,43 @@ class FilterSAM3Detector(Filter):
             if positive_boxes or negative_boxes:
                 self._draw_ref_boxes_on_image(image, positive_boxes or [], negative_boxes or [])
 
-            color_detection = (255, 0, 0)  # Blue BGR for original detections
             boxes_drawn = 0
-            for i, det in enumerate(detections):
+            img_h, img_w = image.shape[:2]
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            font_scale = 0.5
+            thickness = 2
+            for det in detections:
                 # Draw bounding box
                 if 'box' in det:
-                    x1, y1, x2, y2 = det['box']
-                    cv2.rectangle(image, (x1, y1), (x2, y2), color_detection, 2)
+                    x1, y1, x2, y2 = (int(det['box'][0]), int(det['box'][1]), int(det['box'][2]), int(det['box'][3]))
+                    raw_cls = det.get('label') or det.get('class') or det.get('class_name')
+                    class_text = str(raw_cls) if raw_cls is not None and str(raw_cls) != '' else None
+                    color_bgr = self._viz_bgr_for_class_name(class_text)
+                    cv2.rectangle(image, (x1, y1), (x2, y2), color_bgr, thickness)
                     boxes_drawn += 1
 
-                    # Draw label with class name and score
-                    label_parts = []
-                    if 'label' in det:
-                        label_parts.append(det['label'])
-                    if 'score' in det:
-                        label_parts.append(f"{det['score']:.2f}")
-                    label = " ".join(label_parts) if label_parts else ""
-                    if label:
-                        cv2.putText(image, label, (x1, y1 - 10),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color_detection, 2)
+                    score_text = f"{det['score']:.2f}" if 'score' in det else None
 
-                # Draw mask overlay (semi-transparent blue)
+                    if score_text:
+                        sx, sy = self._viz_text_origin_xyxy(
+                            score_text, x1, y1, x2, y2, img_h, img_w, placement="score"
+                        )
+                        cv2.putText(image, score_text, (sx, sy), font, font_scale, color_bgr, thickness)
+                    if class_text:
+                        cx, cy = self._viz_text_origin_xyxy(
+                            class_text, x1, y1, x2, y2, img_h, img_w, placement="label"
+                        )
+                        cv2.putText(image, class_text, (cx, cy), font, font_scale, color_bgr, thickness)
+
+                # Draw mask overlay (semi-transparent, same hue as class BB)
                 if 'mask' in det:
                     mask = np.array(det['mask'], dtype=np.uint8)
                     if mask.shape == image.shape[:2]:
+                        raw_cls = det.get('label') or det.get('class') or det.get('class_name')
+                        class_text = str(raw_cls) if raw_cls is not None and str(raw_cls) != '' else None
+                        mbgr = self._viz_bgr_for_class_name(class_text)
                         color_mask = np.zeros_like(image)
-                        color_mask[mask > 0] = [255, 0, 0]  # Blue BGR
+                        color_mask[mask > 0] = mbgr
                         image = cv2.addWeighted(image, 1.0, color_mask, 0.3, 0)
 
             # Create new Frame with visualized image (Frame.image is read-only)
@@ -2343,7 +2393,7 @@ class FilterSAM3Detector(Filter):
 
     def _visualize_detections_on_image(self, image: np.ndarray, detections: list, positive_boxes: list = None, negative_boxes: list = None) -> np.ndarray:
         """
-        Draw detection results on an image array. Optionally draw ref boxes first (green=positive, red=negative); detections in blue.
+        Draw detection results on an image array. Optionally draw ref boxes first (green=positive, red=negative); detection BB color per class.
 
         Args:
             image: BGR image array
@@ -2361,20 +2411,37 @@ class FilterSAM3Detector(Filter):
             if positive_boxes or negative_boxes:
                 self._draw_ref_boxes_on_image(image, positive_boxes or [], negative_boxes or [])
 
-            color_detection = (255, 0, 0)  # Blue BGR for original detections
-            for i, det in enumerate(detections):
+            img_h, img_w = image.shape[:2]
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            font_scale = 0.5
+            thickness = 2
+            for det in detections:
                 # Draw bounding box
                 if 'box' in det:
-                    x1, y1, x2, y2 = det['box']
-                    cv2.rectangle(image, (x1, y1), (x2, y2), color_detection, 2)
-                    if 'score' in det:
-                        cv2.putText(image, f"{det['score']:.2f}", (x1, y1 - 10),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color_detection, 2)
+                    x1, y1, x2, y2 = (int(det['box'][0]), int(det['box'][1]), int(det['box'][2]), int(det['box'][3]))
+                    raw_cls = det.get('label') or det.get('class') or det.get('class_name')
+                    class_text = str(raw_cls) if raw_cls is not None and str(raw_cls) != '' else None
+                    color_bgr = self._viz_bgr_for_class_name(class_text)
+                    cv2.rectangle(image, (x1, y1), (x2, y2), color_bgr, thickness)
+                    score_text = f"{det['score']:.2f}" if 'score' in det else None
+                    if score_text:
+                        sx, sy = self._viz_text_origin_xyxy(
+                            score_text, x1, y1, x2, y2, img_h, img_w, placement="score"
+                        )
+                        cv2.putText(image, score_text, (sx, sy), font, font_scale, color_bgr, thickness)
+                    if class_text:
+                        cx, cy = self._viz_text_origin_xyxy(
+                            class_text, x1, y1, x2, y2, img_h, img_w, placement="label"
+                        )
+                        cv2.putText(image, class_text, (cx, cy), font, font_scale, color_bgr, thickness)
                 if 'mask' in det:
                     mask = np.array(det['mask'], dtype=np.uint8)
                     if mask.shape == image.shape[:2]:
+                        raw_cls = det.get('label') or det.get('class') or det.get('class_name')
+                        class_text = str(raw_cls) if raw_cls is not None and str(raw_cls) != '' else None
+                        mbgr = self._viz_bgr_for_class_name(class_text)
                         color_mask = np.zeros_like(image)
-                        color_mask[mask > 0] = [255, 0, 0]  # Blue BGR
+                        color_mask[mask > 0] = mbgr
                         image = cv2.addWeighted(image, 1.0, color_mask, 0.3, 0)
         except Exception as e:
             logger.warning(f"Failed to visualize detections on image: {e}")
