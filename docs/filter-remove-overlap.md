@@ -6,7 +6,7 @@ This page matches the behaviour described in **[plan-sam-stabilization.md](plan-
 
 - **Multi-prompt only:** set **`FILTER_TEXT_PROMPTS`** (comma-separated). Single **`FILTER_TEXT_PROMPT`** does not create cross-class duplicates for this path.
 - **Default:** **`FILTER_REMOVE_OVERLAP`** is **`false`** or unset → **no** cross-class removal; JSONL and overlays keep every box.
-- **Opt-in:** set **`FILTER_REMOVE_OVERLAP=true`** → after the run, the shutdown pass can **rewrite** `detections.jsonl` so that, per frame, only **one** box remains in each **cross-class** cluster above the IoU gate (winner = higher **`confidence`**).
+- **Opt-in:** set **`FILTER_REMOVE_OVERLAP=true`** → at shutdown the pass writes **`detections_cleaned.jsonl`** next to `detections.jsonl`, keeping one box per **cross-class** IoU cluster (winner = higher **`confidence`**). The original **`detections.jsonl`** is unchanged.
 
 ## `.env` snippet (compose-friendly)
 
@@ -44,7 +44,7 @@ docker compose -f docker-compose.yaml down
 | Setting | Overlays / JSONL during run | After shutdown |
 |--------|-----------------------------|----------------|
 | **`FILTER_REMOVE_OVERLAP` unset or `false`** (default) | Both **`car`** and **`truck`** can appear on the **same** vehicle when the model fires both prompts | **No** extra removal step; file on disk is as written frame-by-frame |
-| **`FILTER_REMOVE_OVERLAP=true`** | Same as above **until** shutdown | Shutdown pass re-reads JSONL, drops duplicate **cross-class** boxes per IoU rule, logs **`overlap_pairs`** (before / after / removed) and **detection counts** (before / after / removed), plus path to **`detections_cleaned.jsonl`**. |
+| **`FILTER_REMOVE_OVERLAP=true`** | Same as above **until** shutdown | Shutdown pass re-reads JSONL, writes **`detections_cleaned.jsonl`**, logs **`overlap_pairs`** (before / after / removed) and **detection counts** (before / after / removed). With **`FILTER_AUTO_EXPORT_COCO=true`**, **`labels_coco.json`** is built from the **cleaned** JSONL when that file was produced this run. |
 
 **Same-class** duplicates (e.g. two **`car`** boxes) are **not** handled by this flag — only existing **per-prompt NMS** applies.
 

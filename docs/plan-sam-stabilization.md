@@ -35,7 +35,7 @@ When the flag is unset or not truthy (same boolean rules as **`FILTER_NMS_ENABLE
 
 This plan adds:
 
-1. **Confusion / overlap handling finalized at shutdown** — mirrors `auto_export_coco` / `_run_coco_export()` in `shutdown()`: scan the written detections JSONL (same `output_path` input as COCO), compute cross-prompt overlap statistics, optionally remove overlapping boxes, and log a **single end-of-run summary** (overlapping count **before** vs **after** post-processing). **Do not** inject this pass inside `process()` (~line 1012); per-frame work there would duplicate the COCO pattern incorrectly (COCO conversion runs only on shutdown).
+1. **Confusion / overlap handling finalized at shutdown** — runs **before** `_run_coco_export()` when both apply: scan the written detections JSONL (`output_path`), compute cross-prompt overlap statistics, optionally write `*_cleaned.jsonl`, log **before** vs **after**. If `FILTER_REMOVE_OVERLAP` produced a cleaned file, COCO reads **that** file; otherwise the primary JSONL. **Do not** inject this pass inside `process()` (~line 1012).
 2. **Optional overlap removal** — **`FILTER_REMOVE_OVERLAP`**, **default `false`** (no removal). Relevant when **`FILTER_TEXT_PROMPTS`** (or equivalent) supplies **more than one class** so the same region can get **duplicate detections** with different labels. Implement **`remove_overlap`** in `defaults` + `env_mapping` (`bool`) like **`FILTER_NMS_ENABLED`** → `nms_enabled`. When **`FILTER_REMOVE_OVERLAP=true`** **and** `len(text_prompts) > 1` (or the matching multi-prompt mode), the shutdown pass **only** removes boxes in **cross-class** clusters with IoU ≥ threshold, keeping the **highest-`confidence`** detection per cluster. **Tie-break** (identical `confidence`): deterministic rule e.g. lexicographic `class` / `label`, or smaller original index — pick one and document it.
 3. **Post-processing analysis script** — reads JSONL output after the fact, aggregates confusion statistics across frames, and generates a report with resolution guidance (complements the shutdown summary).
 
@@ -164,7 +164,7 @@ Add a call to a new private method `_setup_confusion_detector(config)` just befo
 
 ## Step 4 — `shutdown()` integration in `filter.py` (~`shutdown()`, near `_run_coco_export`)
 
-**Do not** run confusion overlap analysis or removal inside `process()` (~line 1012). Follow the same lifecycle as COCO: after the filter has finished writing frames, invoke a private helper from `shutdown()` (e.g. `_finalize_cross_prompt_overlaps()`), **after** optional `_run_coco_export()` or in the same `try` block ordering as existing shutdown work.
+**Do not** run confusion overlap analysis or removal inside `process()` (~line 1012). After the JSONL file is closed, call `_finalize_cross_prompt_overlaps()` **before** `_run_coco_export()` so COCO can use `detections_cleaned.jsonl` when overlap removal runs.
 
 **Inputs:** same `output_path` JSONL that COCO export reads (must exist and be flushed).
 

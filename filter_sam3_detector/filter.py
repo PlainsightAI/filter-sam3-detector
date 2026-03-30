@@ -643,9 +643,9 @@ class FilterSAM3Detector(Filter):
                 self.jsonl_file.close()
                 if hasattr(self, 'output_path') and self.output_path:
                     logger.info(f"Closed annotation file: {self.output_path}")
+                    coco_jsonl = self._finalize_cross_prompt_overlaps()
                     if self.auto_export_coco:
-                        self._run_coco_export()
-                    self._finalize_cross_prompt_overlaps()
+                        self._run_coco_export(jsonl_source=coco_jsonl)
             except Exception as e:
                 logger.warning(f"Error closing annotation file: {e}")
             self.jsonl_file = None
@@ -665,56 +665,68 @@ class FilterSAM3Detector(Filter):
 
         logger.info("FilterSAM3Detector shutdown complete")
 
-    def _run_coco_export(self) -> None:
+    def _run_coco_export(self, jsonl_source: Optional[Path] = None) -> None:
         if not self.output_path:
             return
-        input_path = Path(self.output_path)
+        primary = Path(self.output_path)
+        if jsonl_source is not None and jsonl_source.exists():
+            input_path = jsonl_source
+            coco_from = "cleaned JSONL"
+        else:
+            input_path = primary
+            coco_from = "primary JSONL"
         if not input_path.exists():
             logger.warning(f"COCO export skipped; input JSONL not found: {input_path}")
             return
 
-        # Default COCO output as sibling of detections JSONL, independent of CWD.
+        # Default COCO output as sibling of primary detections JSONL, independent of CWD.
         if self.coco_output_path:
             output_path = Path(self.coco_output_path)
         else:
-            output_path = input_path.parent / "labels_coco.json"
+            output_path = primary.parent / "labels_coco.json"
 
         try:
             coco = convert_jsonl_to_coco(input_path, output_path, self.output_label)
             logger.info(
-                "COCO export completed: %s (images=%d, annotations=%d, categories=%d)",
+                "COCO export completed: %s (images=%d, annotations=%d, categories=%d) from %s (%s)",
                 output_path,
                 len(coco.get("images", [])),
                 len(coco.get("annotations", [])),
                 len(coco.get("categories", [])),
+                input_path,
+                coco_from,
             )
         except Exception as e:
             logger.warning(f"COCO export failed: {e}", exc_info=True)
 
-    def _finalize_cross_prompt_overlaps(self) -> None:
+    def _finalize_cross_prompt_overlaps(self) -> Optional[Path]:
         """Shutdown pass: count and optionally remove cross-class overlapping detections.
 
-        Mirrors the ``auto_export_coco`` / ``_run_coco_export()`` pattern: runs once
-        at shutdown after the JSONL is flushed.  When ``remove_overlap`` is False
-        (default), only counts are logged.  When True, the JSONL is rewritten with
+        Runs once at shutdown after the JSONL is flushed.  When ``remove_overlap`` is False
+        (default), only counts are logged.  When True, writes ``*_cleaned.jsonl`` with
         overlapping lower-confidence boxes removed per frame.
+
+        Returns:
+            Path to the cleaned JSONL when written this run; ``None`` otherwise.
+            ``_run_coco_export`` uses this so ``labels_coco.json`` matches the cleaned
+            stream when ``FILTER_REMOVE_OVERLAP=true``.
 
         A *cross-class overlap* is a pair of detections with **different** class/label
         and IoU ≥ ``confusion_iou_threshold``.  Same-class pairs are unchanged.
         """
         if not getattr(self, "confusion_detection_enabled", False):
-            return
+            return None
         if not getattr(self, "output_path", None):
-            return
+            return None
 
         input_path = Path(self.output_path)
         if not input_path.exists():
             logger.warning("Confusion pass skipped; JSONL not found: %s", input_path)
-            return
+            return None
 
         detector = getattr(self, "confusion_detector", None)
         if detector is None:
-            return
+            return None
 
         remove = getattr(self, "remove_overlap", False)
 
@@ -750,7 +762,7 @@ class FilterSAM3Detector(Filter):
 
         except Exception as e:
             logger.warning("Confusion pass failed during read: %s", e, exc_info=True)
-            return
+            return None
 
         after_count = before_count  # default: unchanged
 
@@ -772,7 +784,7 @@ class FilterSAM3Detector(Filter):
                     "detections total=%d (FILTER_REMOVE_OVERLAP=%s)",
                     before_count, after_count, total_detections_before, remove,
                 )
-                return
+                return None
 
             # Rewrite JSONL with overlapping detections removed
             cleaned_path = input_path.parent / (input_path.stem + "_cleaned" + input_path.suffix)
@@ -817,8 +829,10 @@ class FilterSAM3Detector(Filter):
                     cleaned_path,
                     remove,
                 )
+                return cleaned_path
             except Exception as e:
                 logger.warning("Confusion rewrite failed: %s", e, exc_info=True)
+                return None
         else:
             logger.info(
                 "Cross-prompt overlaps: overlap_pairs before=%d after=%d | detections total=%d "
@@ -836,6 +850,7 @@ class FilterSAM3Detector(Filter):
                     "or run: python scripts/analyze_confusions.py %s",
                     before_count, input_path,
                 )
+        return None
 
     @staticmethod
     def _extract_detections_from_record(record: dict) -> list:
