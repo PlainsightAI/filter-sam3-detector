@@ -174,7 +174,7 @@ Add a call to a new private method `_setup_confusion_detector(config)` just befo
 2. Stream the JSONL; for each frame, count **cross-class** overlap only: group by `class` / `class_name`, then score pairs from **different** classes with IoU ≥ `confusion_iou_threshold` (confusion events). **Do not** treat two **`car`** boxes as part of this metric unless comparing to a **different** class. Accumulate **before** totals across the run (pick one metric name and use it consistently in logs).
 3. If **`config["remove_overlap"]`** is true (**`FILTER_REMOVE_OVERLAP=true`**) **and** this run uses **more than one class** from **`FILTER_TEXT_PROMPTS`** (or equivalent), apply removal **per frame** using the policy below, rewrite detections in the structured records, and write back the JSONL (or emit `detections_cleaned.jsonl` — document the chosen approach). If **`remove_overlap`** is false (**default**), **never** remove boxes here.
 4. Re-count overlaps on the **post-processed** result and log a clear summary for the operator, e.g.  
-   `Cross-prompt overlaps: before=<N> after=<M> (FILTER_REMOVE_OVERLAP=<true|false>)`.
+   `Cross-prompt overlaps: overlap_pairs before=… after=… removed=… | detections before=… after=… removed=…` (plus cleaned path when removal runs).
 
 ### Removal policy: **IoU between different classes → keep highest `confidence`**
 

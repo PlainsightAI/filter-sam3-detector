@@ -718,8 +718,9 @@ class FilterSAM3Detector(Filter):
 
         remove = getattr(self, "remove_overlap", False)
 
-        # ---- First pass: count cross-class overlaps (before) ----
+        # ---- First pass: count cross-class overlaps (before) + total detections ----
         before_count = 0
+        total_detections_before = 0
         records: list[dict] = []
 
         try:
@@ -735,6 +736,7 @@ class FilterSAM3Detector(Filter):
                         continue
 
                     dets = self._extract_detections_from_record(record)
+                    total_detections_before += len(dets)
                     if len(dets) >= 2:
                         by_class: dict[str, list] = {}
                         for d in dets:
@@ -766,14 +768,17 @@ class FilterSAM3Detector(Filter):
 
             if len(all_classes) <= 1:
                 logger.info(
-                    "Cross-prompt overlaps: before=%d after=%d (single class — removal skipped; FILTER_REMOVE_OVERLAP=%s)",
-                    before_count, after_count, remove,
+                    "Cross-prompt overlaps: overlap_pairs before=%d after=%d (single class — removal skipped); "
+                    "detections total=%d (FILTER_REMOVE_OVERLAP=%s)",
+                    before_count, after_count, total_detections_before, remove,
                 )
                 return
 
             # Rewrite JSONL with overlapping detections removed
             cleaned_path = input_path.parent / (input_path.stem + "_cleaned" + input_path.suffix)
             after_count = 0
+            total_detections_after = 0
+            total_boxes_removed = 0
             try:
                 with open(cleaned_path, "w") as out_fh:
                     for rec in records:
@@ -783,6 +788,8 @@ class FilterSAM3Detector(Filter):
 
                         dets = self._extract_detections_from_record(rec)
                         kept, dropped = detector.remove_overlapping(dets)
+                        total_detections_after += len(kept)
+                        total_boxes_removed += len(dropped)
 
                         # Count remaining overlaps after removal
                         by_class: dict[str, list] = {}
@@ -797,16 +804,29 @@ class FilterSAM3Detector(Filter):
 
                         out_fh.write(json.dumps(rec) + "\n")
 
+                pairs_removed = before_count - after_count
                 logger.info(
-                    "Cross-prompt overlaps: before=%d after=%d — cleaned JSONL: %s (FILTER_REMOVE_OVERLAP=%s)",
-                    before_count, after_count, cleaned_path, remove,
+                    "Cross-prompt overlaps: overlap_pairs before=%d after=%d removed=%d | "
+                    "detections before=%d after=%d removed=%d — cleaned JSONL: %s (FILTER_REMOVE_OVERLAP=%s)",
+                    before_count,
+                    after_count,
+                    pairs_removed,
+                    total_detections_before,
+                    total_detections_after,
+                    total_boxes_removed,
+                    cleaned_path,
+                    remove,
                 )
             except Exception as e:
                 logger.warning("Confusion rewrite failed: %s", e, exc_info=True)
         else:
             logger.info(
-                "Cross-prompt overlaps: before=%d after=%d (FILTER_REMOVE_OVERLAP=%s)",
-                before_count, after_count, remove,
+                "Cross-prompt overlaps: overlap_pairs before=%d after=%d | detections total=%d "
+                "(FILTER_REMOVE_OVERLAP=%s)",
+                before_count,
+                after_count,
+                total_detections_before,
+                remove,
             )
 
             if before_count > 0:

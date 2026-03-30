@@ -44,7 +44,7 @@ docker compose -f docker-compose.yaml down
 | Setting | Overlays / JSONL during run | After shutdown |
 |--------|-----------------------------|----------------|
 | **`FILTER_REMOVE_OVERLAP` unset or `false`** (default) | Both **`car`** and **`truck`** can appear on the **same** vehicle when the model fires both prompts | **No** extra removal step; file on disk is as written frame-by-frame |
-| **`FILTER_REMOVE_OVERLAP=true`** | Same as above **until** shutdown | Shutdown pass re-reads JSONL, drops duplicate **cross-class** boxes per IoU rule, logs a line such as **`Cross-prompt overlaps: before=<N> after=<M> (FILTER_REMOVE_OVERLAP=true)`** |
+| **`FILTER_REMOVE_OVERLAP=true`** | Same as above **until** shutdown | Shutdown pass re-reads JSONL, drops duplicate **cross-class** boxes per IoU rule, logs **`overlap_pairs`** (before / after / removed) and **detection counts** (before / after / removed), plus path to **`detections_cleaned.jsonl`**. |
 
 **Same-class** duplicates (e.g. two **`car`** boxes) are **not** handled by this flag — only existing **per-prompt NMS** applies.
 
