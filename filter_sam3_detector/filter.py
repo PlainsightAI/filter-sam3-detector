@@ -160,6 +160,10 @@ class FilterSAM3Detector(Filter):
             "ref_layout": "overlay",  # "overlay" = refs on frame; "side_strips" = refs in lateral strips
             "ref_strip_width": 120,  # Width of each lateral strip when ref_layout == "side_strips"
             "ref_max_height": 80,  # Max height (px) of each ref image when pasted on composite
+            # Cross-prompt overlap detection (confusion detection)
+            "confusion_detection_enabled": None,  # None = auto (True when >1 prompt)
+            "confusion_iou_threshold": 0.95,  # IoU gate for cross-class overlap; 95% targets near-identical boxes
+            "remove_overlap": False,  # FILTER_REMOVE_OVERLAP; when true, shutdown pass removes lower-confidence duplicates
         }
         
         for key, default_value in defaults.items():
@@ -208,6 +212,10 @@ class FilterSAM3Detector(Filter):
             "enable_video_mode": bool,
             "video_detection_interval": int,
             "video_min_tracking_confidence": float,
+            # Cross-prompt overlap / confusion detection
+            "confusion_detection_enabled": bool,
+            "confusion_iou_threshold": float,
+            "remove_overlap": bool,
         }
 
         def _parse_boxes_env(env_val: str):
@@ -327,6 +335,10 @@ class FilterSAM3Detector(Filter):
         nms_threshold = config.get("nms_threshold", 0.5)
         if not (0.0 <= nms_threshold <= 1.0):
             raise ValueError(f"nms_threshold must be between 0 and 1, got {nms_threshold}")
+
+        confusion_iou_threshold = config.get("confusion_iou_threshold", 0.95)
+        if not (0.0 <= confusion_iou_threshold <= 1.0):
+            raise ValueError(f"confusion_iou_threshold must be between 0 and 1, got {confusion_iou_threshold}")
 
         # Parse text_prompts from comma-separated string to list
         text_prompts = config.get("text_prompts")
@@ -547,6 +559,8 @@ class FilterSAM3Detector(Filter):
         if self.enable_temporal_intervals:
             self._setup_temporal_intervals(config)
 
+        self._setup_confusion_detector(config)
+
         logger.info("FilterSAM3Detector setup complete")
 
     def _setup_temporal_intervals(self, config: FilterConfig):
@@ -573,6 +587,41 @@ class FilterSAM3Detector(Filter):
             f"streaming={config.get('temporal_streaming_mode', False)}"
         )
 
+    def _setup_confusion_detector(self, config: FilterConfig):
+        """Initialize cross-prompt confusion detector.
+
+        Auto-enabled when more than one text prompt is active (i.e. when
+        ``FILTER_TEXT_PROMPTS`` or ``prompt_sets`` produces multiple classes).
+        Single-prompt runs see zero overhead.
+        """
+        from .confusion_detector import ConfusionDetector
+
+        has_multi_text = bool(self.text_prompts and len(self.text_prompts) > 1)
+        has_multi_sets = bool(self.prompt_sets and len(self.prompt_sets) > 1)
+        auto_enabled = has_multi_text or has_multi_sets
+
+        cfg_enabled = config.get("confusion_detection_enabled")  # None = auto
+        if cfg_enabled is None:
+            self.confusion_detection_enabled = auto_enabled
+        else:
+            self.confusion_detection_enabled = bool(cfg_enabled)
+
+        self.confusion_iou_threshold = config.get("confusion_iou_threshold", 0.95)
+        self.remove_overlap = config.get("remove_overlap", False)
+        self.confusion_detector: ConfusionDetector | None = None
+
+        if self.confusion_detection_enabled:
+            self.confusion_detector = ConfusionDetector(iou_threshold=self.confusion_iou_threshold)
+            n_prompts = len(self.text_prompts or []) + sum(
+                len(ps.get("prompts", [])) for ps in (self.prompt_sets or [])
+            )
+            logger.info(
+                f"Confusion detection enabled (iou_threshold={self.confusion_iou_threshold}, "
+                f"remove_overlap={self.remove_overlap}, prompts={n_prompts})."
+            )
+        else:
+            logger.debug("Confusion detection disabled (single prompt or explicitly disabled).")
+
     def shutdown(self):
         """
         Clean up resources when the filter is stopped.
@@ -596,6 +645,7 @@ class FilterSAM3Detector(Filter):
                     logger.info(f"Closed annotation file: {self.output_path}")
                     if self.auto_export_coco:
                         self._run_coco_export()
+                    self._finalize_cross_prompt_overlaps()
             except Exception as e:
                 logger.warning(f"Error closing annotation file: {e}")
             self.jsonl_file = None
@@ -640,6 +690,156 @@ class FilterSAM3Detector(Filter):
             )
         except Exception as e:
             logger.warning(f"COCO export failed: {e}", exc_info=True)
+
+    def _finalize_cross_prompt_overlaps(self) -> None:
+        """Shutdown pass: count and optionally remove cross-class overlapping detections.
+
+        Mirrors the ``auto_export_coco`` / ``_run_coco_export()`` pattern: runs once
+        at shutdown after the JSONL is flushed.  When ``remove_overlap`` is False
+        (default), only counts are logged.  When True, the JSONL is rewritten with
+        overlapping lower-confidence boxes removed per frame.
+
+        A *cross-class overlap* is a pair of detections with **different** class/label
+        and IoU ≥ ``confusion_iou_threshold``.  Same-class pairs are unchanged.
+        """
+        if not getattr(self, "confusion_detection_enabled", False):
+            return
+        if not getattr(self, "output_path", None):
+            return
+
+        input_path = Path(self.output_path)
+        if not input_path.exists():
+            logger.warning("Confusion pass skipped; JSONL not found: %s", input_path)
+            return
+
+        detector = getattr(self, "confusion_detector", None)
+        if detector is None:
+            return
+
+        remove = getattr(self, "remove_overlap", False)
+
+        # ---- First pass: count cross-class overlaps (before) ----
+        before_count = 0
+        records: list[dict] = []
+
+        try:
+            with open(input_path, "r") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        record = json.loads(line)
+                    except json.JSONDecodeError:
+                        records.append({"_raw": line})
+                        continue
+
+                    dets = self._extract_detections_from_record(record)
+                    if len(dets) >= 2:
+                        by_class: dict[str, list] = {}
+                        for d in dets:
+                            cls = d.get("class") or d.get("class_name") or d.get("label") or ""
+                            by_class.setdefault(cls, []).append(d)
+                        if len(by_class) > 1:
+                            confusions = detector.detect(by_class)
+                            before_count += len(confusions)
+
+                    records.append(record)
+
+        except Exception as e:
+            logger.warning("Confusion pass failed during read: %s", e, exc_info=True)
+            return
+
+        after_count = before_count  # default: unchanged
+
+        # ---- Optional rewrite pass ----
+        if remove and before_count > 0:
+            # Identify unique prompt count — skip removal on single-class runs
+            all_classes: set[str] = set()
+            for rec in records:
+                if "_raw" in rec:
+                    continue
+                for d in self._extract_detections_from_record(rec):
+                    cls = d.get("class") or d.get("class_name") or d.get("label") or ""
+                    if cls:
+                        all_classes.add(cls)
+
+            if len(all_classes) <= 1:
+                logger.info(
+                    "Cross-prompt overlaps: before=%d after=%d (single class — removal skipped; FILTER_REMOVE_OVERLAP=%s)",
+                    before_count, after_count, remove,
+                )
+                return
+
+            # Rewrite JSONL with overlapping detections removed
+            cleaned_path = input_path.parent / (input_path.stem + "_cleaned" + input_path.suffix)
+            after_count = 0
+            try:
+                with open(cleaned_path, "w") as out_fh:
+                    for rec in records:
+                        if "_raw" in rec:
+                            out_fh.write(rec["_raw"] + "\n")
+                            continue
+
+                        dets = self._extract_detections_from_record(rec)
+                        kept, dropped = detector.remove_overlapping(dets)
+
+                        # Count remaining overlaps after removal
+                        by_class: dict[str, list] = {}
+                        for d in kept:
+                            cls = d.get("class") or d.get("class_name") or d.get("label") or ""
+                            by_class.setdefault(cls, []).append(d)
+                        if len(by_class) > 1:
+                            after_count += len(detector.detect(by_class))
+
+                        if dropped:
+                            rec = self._rewrite_record_detections(rec, kept)
+
+                        out_fh.write(json.dumps(rec) + "\n")
+
+                logger.info(
+                    "Cross-prompt overlaps: before=%d after=%d — cleaned JSONL: %s (FILTER_REMOVE_OVERLAP=%s)",
+                    before_count, after_count, cleaned_path, remove,
+                )
+            except Exception as e:
+                logger.warning("Confusion rewrite failed: %s", e, exc_info=True)
+        else:
+            logger.info(
+                "Cross-prompt overlaps: before=%d after=%d (FILTER_REMOVE_OVERLAP=%s)",
+                before_count, after_count, remove,
+            )
+
+            if before_count > 0:
+                logger.warning(
+                    "%d cross-class overlap(s) detected at shutdown. "
+                    "Set FILTER_REMOVE_OVERLAP=true to keep only the highest-confidence class per pair, "
+                    "or run: python scripts/analyze_confusions.py %s",
+                    before_count, input_path,
+                )
+
+    @staticmethod
+    def _extract_detections_from_record(record: dict) -> list:
+        """Extract the flat detections list from a JSONL event record."""
+        data = record.get("data", record)
+        meta = data.get("meta", {})
+        # Try common keys in order of preference
+        for key in ("detections", "sam3_detections"):
+            dets = meta.get(key)
+            if isinstance(dets, list):
+                return dets
+        return []
+
+    @staticmethod
+    def _rewrite_record_detections(record: dict, kept: list) -> dict:
+        """Return a shallow-copy of record with detections replaced by kept."""
+        import copy
+        record = copy.deepcopy(record)
+        data = record.get("data", record)
+        meta = data.get("meta", {})
+        for key in ("detections", "sam3_detections"):
+            if key in meta:
+                meta[key] = kept
+        return record
 
     def _process_temporal_intervals(self, frame: Frame, detections: list):
         """
