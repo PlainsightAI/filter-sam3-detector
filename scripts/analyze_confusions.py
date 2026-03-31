@@ -26,6 +26,7 @@ import sys
 from collections import defaultdict
 from itertools import combinations
 from pathlib import Path
+from typing import List, Optional
 
 
 # ---------------------------------------------------------------------------
@@ -47,7 +48,7 @@ def _compute_iou(box_a: list, box_b: list) -> float:
     return inter_area / union if union > 0 else 0.0
 
 
-def _get_box(det: dict) -> list | None:
+def _get_box(det: dict) -> Optional[List[float]]:
     """Extract [x1, y1, x2, y2] from a detection dict."""
     if "box" in det:
         b = det["box"]
