@@ -608,7 +608,7 @@ class FilterSAM3Detector(Filter):
 
         self.confusion_iou_threshold = config.get("confusion_iou_threshold", 0.95)
         self.remove_overlap = config.get("remove_overlap", False)
-        self.confusion_detector: ConfusionDetector | None = None
+        self.confusion_detector: Optional[ConfusionDetector] = None
 
         if self.confusion_detection_enabled:
             self.confusion_detector = ConfusionDetector(iou_threshold=self.confusion_iou_threshold)
