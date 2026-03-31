@@ -107,6 +107,21 @@ class ConfusionDetector:
 
         return None
 
+    @staticmethod
+    def _detection_strength(det: dict) -> float:
+        """Prefer ``score`` if present, else ``confidence``, else 0.0.
+
+        Uses explicit ``None`` checks so ``0.0`` is not treated as missing
+        (unlike chaining with ``or``, which treats ``0.0`` as falsy).
+        """
+        s = det.get("score")
+        if s is not None:
+            return float(s)
+        c = det.get("confidence")
+        if c is not None:
+            return float(c)
+        return 0.0
+
     # ------------------------------------------------------------------
     # Main detection
     # ------------------------------------------------------------------
@@ -142,14 +157,14 @@ class ConfusionDetector:
                 box_a = self._get_box(det_a)
                 if box_a is None:
                     continue
-                score_a = float(det_a.get("score") or det_a.get("confidence") or 0.0)
+                score_a = self._detection_strength(det_a)
                 id_a = det_a.get("id")
 
                 for det_b in dets_b:
                     box_b = self._get_box(det_b)
                     if box_b is None:
                         continue
-                    score_b = float(det_b.get("score") or det_b.get("confidence") or 0.0)
+                    score_b = self._detection_strength(det_b)
                     id_b = det_b.get("id")
 
                     iou = self.compute_iou(box_a, box_b)
@@ -326,7 +341,7 @@ class ConfusionDetector:
             # Cross-class cluster: keep highest confidence; tie-break by class name then id
             def sort_key(idx: int):
                 d = detections[idx]
-                conf = float(d.get("confidence") or d.get("score") or 0.0)
+                conf = self._detection_strength(d)
                 label = d.get("class") or d.get("class_name") or d.get("label") or ""
                 det_id = d.get("id") or 0
                 # Higher confidence first; ties: lex smaller class first; then smaller id
