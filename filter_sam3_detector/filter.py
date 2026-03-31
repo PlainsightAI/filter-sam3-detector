@@ -637,17 +637,25 @@ class FilterSAM3Detector(Filter):
         if self.interval_tracker is not None:
             self.interval_tracker.finalize()
 
-        # Close JSONL file if open
+        # Close JSONL file if open; overlap finalize + COCO run after successful close only
         if hasattr(self, 'jsonl_file') and self.jsonl_file is not None:
             try:
                 self.jsonl_file.close()
-                if hasattr(self, 'output_path') and self.output_path:
-                    logger.info(f"Closed annotation file: {self.output_path}")
-                    coco_jsonl = self._finalize_cross_prompt_overlaps()
-                    if self.auto_export_coco:
-                        self._run_coco_export(jsonl_source=coco_jsonl)
             except Exception as e:
                 logger.warning(f"Error closing annotation file: {e}")
+            else:
+                if hasattr(self, 'output_path') and self.output_path:
+                    logger.info(f"Closed annotation file: {self.output_path}")
+                    try:
+                        coco_jsonl = self._finalize_cross_prompt_overlaps()
+                        if self.auto_export_coco:
+                            self._run_coco_export(jsonl_source=coco_jsonl)
+                    except Exception as e:
+                        logger.warning(
+                            "Post-close annotation processing failed (overlap finalize or COCO export): %s",
+                            e,
+                            exc_info=True,
+                        )
             self.jsonl_file = None
 
         # Release model resources

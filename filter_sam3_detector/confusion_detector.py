@@ -23,6 +23,7 @@ Usage (called from ``shutdown()`` in filter.py via ``_finalize_cross_prompt_over
 """
 
 import logging
+from collections import defaultdict
 from itertools import combinations
 
 __all__ = ["ConfusionDetector"]
@@ -106,6 +107,10 @@ class ConfusionDetector:
             return [x, y, x + w, y + h]
 
         return None
+
+    @staticmethod
+    def _class_label(det: dict) -> str:
+        return det.get("class") or det.get("class_name") or det.get("label") or ""
 
     @staticmethod
     def _detection_strength(det: dict) -> float:
@@ -277,22 +282,28 @@ class ConfusionDetector:
 
         n = len(detections)
 
-        # Build adjacency: pairs of different classes with IoU >= threshold
+        # Indices grouped by class — only cross-class pairs can form edges (same as detect()).
+        by_class: dict[str, list[int]] = defaultdict(list)
+        for idx in range(n):
+            by_class[self._class_label(detections[idx])].append(idx)
+
+        if len(by_class) < 2:
+            return list(detections), []
+
+        # Build adjacency: cross-class pairs only, O(sum |Ca|*|Cb|) not O(n²).
         edges: list[tuple[int, int]] = []
-        for i in range(n):
-            for j in range(i + 1, n):
-                det_i = detections[i]
-                det_j = detections[j]
-                class_i = det_i.get("class") or det_i.get("class_name") or det_i.get("label") or ""
-                class_j = det_j.get("class") or det_j.get("class_name") or det_j.get("label") or ""
-                if class_i == class_j:
-                    continue  # same-class — handled by NMS
-                box_i = self._get_box(det_i)
-                box_j = self._get_box(det_j)
-                if box_i is None or box_j is None:
-                    continue
-                if self.compute_iou(box_i, box_j) >= self.iou_threshold:
-                    edges.append((i, j))
+        for class_a, class_b in combinations(by_class.keys(), 2):
+            for i in by_class[class_a]:
+                for j in by_class[class_b]:
+                    det_i = detections[i]
+                    det_j = detections[j]
+                    box_i = self._get_box(det_i)
+                    box_j = self._get_box(det_j)
+                    if box_i is None or box_j is None:
+                        continue
+                    if self.compute_iou(box_i, box_j) >= self.iou_threshold:
+                        i_lo, i_hi = (i, j) if i < j else (j, i)
+                        edges.append((i_lo, i_hi))
 
         if not edges:
             return list(detections), []
@@ -329,9 +340,7 @@ class ConfusionDetector:
             # Check if the cluster actually has cross-class pairs
             classes_in_cluster = set()
             for idx in indices:
-                d = detections[idx]
-                c = d.get("class") or d.get("class_name") or d.get("label") or ""
-                classes_in_cluster.add(c)
+                classes_in_cluster.add(self._class_label(detections[idx]))
 
             if len(classes_in_cluster) == 1:
                 # All same class — not a cross-class cluster; keep all
@@ -342,7 +351,7 @@ class ConfusionDetector:
             def sort_key(idx: int):
                 d = detections[idx]
                 conf = self._detection_strength(d)
-                label = d.get("class") or d.get("class_name") or d.get("label") or ""
+                label = self._class_label(d)
                 det_id = d.get("id") or 0
                 # Higher confidence first; ties: lex smaller class first; then smaller id
                 return (-conf, label, det_id)
