@@ -742,6 +742,7 @@ class FilterSAM3Detector(Filter):
         # ---- Streaming pass: counts, overlap pairs (before), class set — no full-file buffer ----
         before_count = 0
         total_detections_before = 0
+        invalid_jsonl_lines = 0
         all_classes: set[str] = set()
 
         def _accumulate_frame_stats(record: dict) -> None:
@@ -770,6 +771,7 @@ class FilterSAM3Detector(Filter):
                     try:
                         record = json.loads(line)
                     except json.JSONDecodeError:
+                        invalid_jsonl_lines += 1
                         continue
 
                     _accumulate_frame_stats(record)
@@ -778,6 +780,19 @@ class FilterSAM3Detector(Filter):
             logger.warning("Confusion pass failed during read: %s", e, exc_info=True)
             return None
 
+        if invalid_jsonl_lines:
+            logger.warning(
+                "Confusion overlap pass: %d JSONL line(s) skipped (invalid JSON); "
+                "detection totals below count only successfully parsed lines.",
+                invalid_jsonl_lines,
+            )
+
+        skip_note = (
+            f" invalid_jsonl_lines_skipped={invalid_jsonl_lines}"
+            if invalid_jsonl_lines
+            else ""
+        )
+
         after_count = before_count  # default: unchanged
 
         # ---- Optional rewrite: stream input → cleaned JSONL line by line ----
@@ -785,8 +800,8 @@ class FilterSAM3Detector(Filter):
             if len(all_classes) <= 1:
                 logger.info(
                     "Cross-prompt overlaps: overlap_pairs before=%d after=%d (single class — removal skipped); "
-                    "detections total=%d (FILTER_REMOVE_OVERLAP=%s)",
-                    before_count, after_count, total_detections_before, remove,
+                    "detections total=%d (FILTER_REMOVE_OVERLAP=%s)%s",
+                    before_count, after_count, total_detections_before, remove, skip_note,
                 )
                 return None
 
@@ -826,7 +841,7 @@ class FilterSAM3Detector(Filter):
                 pairs_removed = before_count - after_count
                 logger.info(
                     "Cross-prompt overlaps: overlap_pairs before=%d after=%d removed=%d | "
-                    "detections before=%d after=%d removed=%d — cleaned JSONL: %s (FILTER_REMOVE_OVERLAP=%s)",
+                    "detections before=%d after=%d removed=%d — cleaned JSONL: %s (FILTER_REMOVE_OVERLAP=%s)%s",
                     before_count,
                     after_count,
                     pairs_removed,
@@ -835,6 +850,7 @@ class FilterSAM3Detector(Filter):
                     total_boxes_removed,
                     cleaned_path,
                     remove,
+                    skip_note,
                 )
                 return cleaned_path
             except Exception as e:
@@ -843,11 +859,12 @@ class FilterSAM3Detector(Filter):
         else:
             logger.info(
                 "Cross-prompt overlaps: overlap_pairs before=%d after=%d | detections total=%d "
-                "(FILTER_REMOVE_OVERLAP=%s)",
+                "(FILTER_REMOVE_OVERLAP=%s)%s",
                 before_count,
                 after_count,
                 total_detections_before,
                 remove,
+                skip_note,
             )
 
             if before_count > 0:
