@@ -1,3 +1,4 @@
+import hashlib
 import logging
 import os
 import json
@@ -159,6 +160,10 @@ class FilterSAM3Detector(Filter):
             "ref_layout": "overlay",  # "overlay" = refs on frame; "side_strips" = refs in lateral strips
             "ref_strip_width": 120,  # Width of each lateral strip when ref_layout == "side_strips"
             "ref_max_height": 80,  # Max height (px) of each ref image when pasted on composite
+            # Cross-prompt overlap detection (confusion detection)
+            "confusion_detection_enabled": None,  # None = auto (True when >1 prompt)
+            "confusion_iou_threshold": 0.95,  # IoU gate for cross-class overlap; 95% targets near-identical boxes
+            "remove_overlap": False,  # FILTER_REMOVE_OVERLAP; when true, shutdown pass removes lower-confidence duplicates
         }
         
         for key, default_value in defaults.items():
@@ -207,6 +212,10 @@ class FilterSAM3Detector(Filter):
             "enable_video_mode": bool,
             "video_detection_interval": int,
             "video_min_tracking_confidence": float,
+            # Cross-prompt overlap / confusion detection
+            "confusion_detection_enabled": bool,
+            "confusion_iou_threshold": float,
+            "remove_overlap": bool,
         }
 
         def _parse_boxes_env(env_val: str):
@@ -326,6 +335,10 @@ class FilterSAM3Detector(Filter):
         nms_threshold = config.get("nms_threshold", 0.5)
         if not (0.0 <= nms_threshold <= 1.0):
             raise ValueError(f"nms_threshold must be between 0 and 1, got {nms_threshold}")
+
+        confusion_iou_threshold = config.get("confusion_iou_threshold", 0.95)
+        if not (0.0 <= confusion_iou_threshold <= 1.0):
+            raise ValueError(f"confusion_iou_threshold must be between 0 and 1, got {confusion_iou_threshold}")
 
         # Parse text_prompts from comma-separated string to list
         text_prompts = config.get("text_prompts")
@@ -546,6 +559,8 @@ class FilterSAM3Detector(Filter):
         if self.enable_temporal_intervals:
             self._setup_temporal_intervals(config)
 
+        self._setup_confusion_detector(config)
+
         logger.info("FilterSAM3Detector setup complete")
 
     def _setup_temporal_intervals(self, config: FilterConfig):
@@ -572,6 +587,41 @@ class FilterSAM3Detector(Filter):
             f"streaming={config.get('temporal_streaming_mode', False)}"
         )
 
+    def _setup_confusion_detector(self, config: FilterConfig):
+        """Initialize cross-prompt confusion detector.
+
+        Auto-enabled when more than one text prompt is active (i.e. when
+        ``FILTER_TEXT_PROMPTS`` or ``prompt_sets`` produces multiple classes).
+        Single-prompt runs see zero overhead.
+        """
+        from .confusion_detector import ConfusionDetector
+
+        has_multi_text = bool(self.text_prompts and len(self.text_prompts) > 1)
+        has_multi_sets = bool(self.prompt_sets and len(self.prompt_sets) > 1)
+        auto_enabled = has_multi_text or has_multi_sets
+
+        cfg_enabled = config.get("confusion_detection_enabled")  # None = auto
+        if cfg_enabled is None:
+            self.confusion_detection_enabled = auto_enabled
+        else:
+            self.confusion_detection_enabled = bool(cfg_enabled)
+
+        self.confusion_iou_threshold = config.get("confusion_iou_threshold", 0.95)
+        self.remove_overlap = config.get("remove_overlap", False)
+        self.confusion_detector: Optional[ConfusionDetector] = None
+
+        if self.confusion_detection_enabled:
+            self.confusion_detector = ConfusionDetector(iou_threshold=self.confusion_iou_threshold)
+            n_prompts = len(self.text_prompts or []) + sum(
+                len(ps.get("prompts", [])) for ps in (self.prompt_sets or [])
+            )
+            logger.info(
+                f"Confusion detection enabled (iou_threshold={self.confusion_iou_threshold}, "
+                f"remove_overlap={self.remove_overlap}, prompts={n_prompts})."
+            )
+        else:
+            logger.debug("Confusion detection disabled (single prompt or explicitly disabled).")
+
     def shutdown(self):
         """
         Clean up resources when the filter is stopped.
@@ -587,16 +637,25 @@ class FilterSAM3Detector(Filter):
         if self.interval_tracker is not None:
             self.interval_tracker.finalize()
 
-        # Close JSONL file if open
+        # Close JSONL file if open; overlap finalize + COCO run after successful close only
         if hasattr(self, 'jsonl_file') and self.jsonl_file is not None:
             try:
                 self.jsonl_file.close()
-                if hasattr(self, 'output_path') and self.output_path:
-                    logger.info(f"Closed annotation file: {self.output_path}")
-                    if self.auto_export_coco:
-                        self._run_coco_export()
             except Exception as e:
                 logger.warning(f"Error closing annotation file: {e}")
+            else:
+                if hasattr(self, 'output_path') and self.output_path:
+                    logger.info(f"Closed annotation file: {self.output_path}")
+                    try:
+                        coco_jsonl = self._finalize_cross_prompt_overlaps()
+                        if self.auto_export_coco:
+                            self._run_coco_export(jsonl_source=coco_jsonl)
+                    except Exception as e:
+                        logger.warning(
+                            "Post-close annotation processing failed (overlap finalize or COCO export): %s",
+                            e,
+                            exc_info=True,
+                        )
             self.jsonl_file = None
 
         # Release model resources
@@ -614,31 +673,232 @@ class FilterSAM3Detector(Filter):
 
         logger.info("FilterSAM3Detector shutdown complete")
 
-    def _run_coco_export(self) -> None:
+    def _run_coco_export(self, jsonl_source: Optional[Path] = None) -> None:
         if not self.output_path:
             return
-        input_path = Path(self.output_path)
+        primary = Path(self.output_path)
+        if jsonl_source is not None and jsonl_source.exists():
+            input_path = jsonl_source
+            coco_from = "cleaned JSONL"
+        else:
+            input_path = primary
+            coco_from = "primary JSONL"
         if not input_path.exists():
             logger.warning(f"COCO export skipped; input JSONL not found: {input_path}")
             return
 
-        # Default COCO output as sibling of detections JSONL, independent of CWD.
+        # Default COCO output as sibling of primary detections JSONL, independent of CWD.
         if self.coco_output_path:
             output_path = Path(self.coco_output_path)
         else:
-            output_path = input_path.parent / "labels_coco.json"
+            output_path = primary.parent / "labels_coco.json"
 
         try:
             coco = convert_jsonl_to_coco(input_path, output_path, self.output_label)
             logger.info(
-                "COCO export completed: %s (images=%d, annotations=%d, categories=%d)",
+                "COCO export completed: %s (images=%d, annotations=%d, categories=%d) from %s (%s)",
                 output_path,
                 len(coco.get("images", [])),
                 len(coco.get("annotations", [])),
                 len(coco.get("categories", [])),
+                input_path,
+                coco_from,
             )
         except Exception as e:
             logger.warning(f"COCO export failed: {e}", exc_info=True)
+
+    def _finalize_cross_prompt_overlaps(self) -> Optional[Path]:
+        """Shutdown pass: count and optionally remove cross-class overlapping detections.
+
+        Runs once at shutdown after the JSONL is flushed.  Uses a **streaming** read
+        (no full-file list of records).  When ``remove_overlap`` is False (default), only
+        counts are logged.  When True, writes ``*_cleaned.jsonl`` with overlapping
+        lower-confidence boxes removed per frame (second streaming pass over the file).
+
+        Returns:
+            Path to the cleaned JSONL when written this run; ``None`` otherwise.
+            ``_run_coco_export`` uses this so ``labels_coco.json`` matches the cleaned
+            stream when ``FILTER_REMOVE_OVERLAP=true``.
+
+        A *cross-class overlap* is a pair of detections with **different** class/label
+        and IoU ≥ ``confusion_iou_threshold``.  Same-class pairs are unchanged.
+        """
+        if not self.confusion_detection_enabled:
+            return None
+        if not self.output_path:
+            return None
+
+        input_path = Path(self.output_path)
+        if not input_path.exists():
+            logger.warning("Confusion pass skipped; JSONL not found: %s", input_path)
+            return None
+
+        detector = self.confusion_detector
+        if detector is None:
+            return None
+
+        remove = self.remove_overlap
+
+        # ---- Streaming pass: counts, overlap pairs (before), class set — no full-file buffer ----
+        before_count = 0
+        total_detections_before = 0
+        invalid_jsonl_lines = 0
+        all_classes: set[str] = set()
+
+        def _accumulate_frame_stats(record: dict) -> None:
+            nonlocal before_count, total_detections_before
+            dets = self._extract_detections_from_record(record)
+            total_detections_before += len(dets)
+            for d in dets:
+                cls = d.get("class") or d.get("class_name") or d.get("label") or ""
+                if cls:
+                    all_classes.add(cls)
+            if len(dets) >= 2:
+                by_class: dict[str, list] = {}
+                for d in dets:
+                    cls = d.get("class") or d.get("class_name") or d.get("label") or ""
+                    by_class.setdefault(cls, []).append(d)
+                if len(by_class) > 1:
+                    confusions = detector.detect(by_class)
+                    before_count += len(confusions)
+
+        try:
+            with open(input_path, "r") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        record = json.loads(line)
+                    except json.JSONDecodeError:
+                        invalid_jsonl_lines += 1
+                        continue
+
+                    _accumulate_frame_stats(record)
+
+        except Exception as e:
+            logger.warning("Confusion pass failed during read: %s", e, exc_info=True)
+            return None
+
+        if invalid_jsonl_lines:
+            logger.warning(
+                "Confusion overlap pass: %d JSONL line(s) skipped (invalid JSON); "
+                "detection totals below count only successfully parsed lines.",
+                invalid_jsonl_lines,
+            )
+
+        skip_note = (
+            f" invalid_jsonl_lines_skipped={invalid_jsonl_lines}"
+            if invalid_jsonl_lines
+            else ""
+        )
+
+        after_count = before_count  # default: unchanged
+
+        # ---- Optional rewrite: stream input → cleaned JSONL line by line ----
+        if remove and before_count > 0:
+            if len(all_classes) <= 1:
+                logger.info(
+                    "Cross-prompt overlaps: overlap_pairs before=%d after=%d (single class — removal skipped); "
+                    "detections total=%d (FILTER_REMOVE_OVERLAP=%s)%s",
+                    before_count, after_count, total_detections_before, remove, skip_note,
+                )
+                return None
+
+            cleaned_path = input_path.parent / (input_path.stem + "_cleaned" + input_path.suffix)
+            after_count = 0
+            total_detections_after = 0
+            total_boxes_removed = 0
+            try:
+                with open(input_path, "r") as in_fh, open(cleaned_path, "w") as out_fh:
+                    for line in in_fh:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            record = json.loads(line)
+                        except json.JSONDecodeError:
+                            out_fh.write(line + "\n")
+                            continue
+
+                        dets = self._extract_detections_from_record(record)
+                        kept, dropped = detector.remove_overlapping(dets)
+                        total_detections_after += len(kept)
+                        total_boxes_removed += len(dropped)
+
+                        by_class: dict[str, list] = {}
+                        for d in kept:
+                            cls = d.get("class") or d.get("class_name") or d.get("label") or ""
+                            by_class.setdefault(cls, []).append(d)
+                        if len(by_class) > 1:
+                            after_count += len(detector.detect(by_class))
+
+                        if dropped:
+                            record = self._rewrite_record_detections(record, kept)
+
+                        out_fh.write(json.dumps(record) + "\n")
+
+                pairs_removed = before_count - after_count
+                logger.info(
+                    "Cross-prompt overlaps: overlap_pairs before=%d after=%d removed=%d | "
+                    "detections before=%d after=%d removed=%d — cleaned JSONL: %s (FILTER_REMOVE_OVERLAP=%s)%s",
+                    before_count,
+                    after_count,
+                    pairs_removed,
+                    total_detections_before,
+                    total_detections_after,
+                    total_boxes_removed,
+                    cleaned_path,
+                    remove,
+                    skip_note,
+                )
+                return cleaned_path
+            except Exception as e:
+                logger.warning("Confusion rewrite failed: %s", e, exc_info=True)
+                return None
+        else:
+            logger.info(
+                "Cross-prompt overlaps: overlap_pairs before=%d after=%d | detections total=%d "
+                "(FILTER_REMOVE_OVERLAP=%s)%s",
+                before_count,
+                after_count,
+                total_detections_before,
+                remove,
+                skip_note,
+            )
+
+            if before_count > 0:
+                logger.warning(
+                    "%d cross-class overlap(s) detected at shutdown. "
+                    "Set FILTER_REMOVE_OVERLAP=true to keep only the highest-confidence class per pair, "
+                    "or run: python scripts/analyze_confusions.py %s",
+                    before_count, input_path,
+                )
+        return None
+
+    @staticmethod
+    def _extract_detections_from_record(record: dict) -> list:
+        """Extract the flat detections list from a JSONL event record."""
+        data = record.get("data", record)
+        meta = data.get("meta", {})
+        # Try common keys in order of preference
+        for key in ("detections", "sam3_detections"):
+            dets = meta.get(key)
+            if isinstance(dets, list):
+                return dets
+        return []
+
+    @staticmethod
+    def _rewrite_record_detections(record: dict, kept: list) -> dict:
+        """Return a deep copy of record with detections replaced by kept."""
+        import copy
+        record = copy.deepcopy(record)
+        data = record.get("data", record)
+        meta = data.get("meta", {})
+        for key in ("detections", "sam3_detections"):
+            if key in meta:
+                meta[key] = kept
+        return record
 
     def _process_temporal_intervals(self, frame: Frame, detections: list):
         """
@@ -2261,6 +2521,44 @@ class FilterSAM3Detector(Filter):
 
         return filtered_boxes, filtered_scores, filtered_masks
 
+    @staticmethod
+    def _viz_bgr_for_class_name(class_name: Optional[str]) -> tuple[int, int, int]:
+        """Stable BGR color per class; default blue when class unknown."""
+        if not class_name or not str(class_name).strip():
+            return (255, 0, 0)
+        digest = hashlib.md5(str(class_name).strip().lower().encode("utf-8")).digest()
+        b, g, r = digest[0], digest[1], digest[2]
+        return (max(int(b), 50), max(int(g), 50), max(int(r), 50))
+
+    def _viz_text_origin_xyxy(
+        self,
+        text: str,
+        x1: int,
+        y1: int,
+        x2: int,
+        y2: int,
+        img_h: int,
+        img_w: int,
+        *,
+        placement: str,
+        pad: int = 4,
+    ) -> tuple[int, int]:
+        """Fixed text placement: score above top-left, label below bottom-left (no overlap)."""
+        import cv2
+
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        scale = 0.5
+        thickness = 2
+        (tw, th), bl = cv2.getTextSize(text, font, scale, thickness)
+        if placement == "score":
+            tx, ty = x1, y1 - pad
+        else:
+            tx, ty = x1, y2 + th + pad
+        tx = int(max(0, min(tx, max(0, img_w - tw))))
+        ty_hi = max(th, img_h - bl - 1)
+        ty = int(max(th, min(ty, ty_hi)))
+        return tx, ty
+
     def _draw_ref_boxes_on_image(self, image: np.ndarray, positive_boxes: list, negative_boxes: list) -> None:
         """Draw reference boxes on image in-place: green for positive, red for negative. Boxes are [x, y, w, h]."""
         try:
@@ -2282,7 +2580,7 @@ class FilterSAM3Detector(Filter):
 
     def _visualize_detections(self, frame: Frame, detections: list, positive_boxes: list = None, negative_boxes: list = None) -> Frame:
         """
-        Draw detection results on the frame. Optionally draw ref boxes first (green=positive, red=negative); detections in blue.
+        Draw detection results on the frame. Optionally draw ref boxes first (green=positive, red=negative); detection BB color per class.
 
         Args:
             frame: Input frame
@@ -2300,32 +2598,43 @@ class FilterSAM3Detector(Filter):
             if positive_boxes or negative_boxes:
                 self._draw_ref_boxes_on_image(image, positive_boxes or [], negative_boxes or [])
 
-            color_detection = (255, 0, 0)  # Blue BGR for original detections
             boxes_drawn = 0
-            for i, det in enumerate(detections):
+            img_h, img_w = image.shape[:2]
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            font_scale = 0.5
+            thickness = 2
+            for det in detections:
                 # Draw bounding box
                 if 'box' in det:
-                    x1, y1, x2, y2 = det['box']
-                    cv2.rectangle(image, (x1, y1), (x2, y2), color_detection, 2)
+                    x1, y1, x2, y2 = (int(det['box'][0]), int(det['box'][1]), int(det['box'][2]), int(det['box'][3]))
+                    raw_cls = det.get('label') or det.get('class') or det.get('class_name')
+                    class_text = str(raw_cls) if raw_cls is not None and str(raw_cls) != '' else None
+                    color_bgr = self._viz_bgr_for_class_name(class_text)
+                    cv2.rectangle(image, (x1, y1), (x2, y2), color_bgr, thickness)
                     boxes_drawn += 1
 
-                    # Draw label with class name and score
-                    label_parts = []
-                    if 'label' in det:
-                        label_parts.append(det['label'])
-                    if 'score' in det:
-                        label_parts.append(f"{det['score']:.2f}")
-                    label = " ".join(label_parts) if label_parts else ""
-                    if label:
-                        cv2.putText(image, label, (x1, y1 - 10),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color_detection, 2)
+                    score_text = f"{det['score']:.2f}" if 'score' in det else None
 
-                # Draw mask overlay (semi-transparent blue)
+                    if score_text:
+                        sx, sy = self._viz_text_origin_xyxy(
+                            score_text, x1, y1, x2, y2, img_h, img_w, placement="score"
+                        )
+                        cv2.putText(image, score_text, (sx, sy), font, font_scale, color_bgr, thickness)
+                    if class_text:
+                        cx, cy = self._viz_text_origin_xyxy(
+                            class_text, x1, y1, x2, y2, img_h, img_w, placement="label"
+                        )
+                        cv2.putText(image, class_text, (cx, cy), font, font_scale, color_bgr, thickness)
+
+                # Draw mask overlay (semi-transparent, same hue as class BB)
                 if 'mask' in det:
                     mask = np.array(det['mask'], dtype=np.uint8)
                     if mask.shape == image.shape[:2]:
+                        raw_cls = det.get('label') or det.get('class') or det.get('class_name')
+                        class_text = str(raw_cls) if raw_cls is not None and str(raw_cls) != '' else None
+                        mbgr = self._viz_bgr_for_class_name(class_text)
                         color_mask = np.zeros_like(image)
-                        color_mask[mask > 0] = [255, 0, 0]  # Blue BGR
+                        color_mask[mask > 0] = mbgr
                         image = cv2.addWeighted(image, 1.0, color_mask, 0.3, 0)
 
             # Create new Frame with visualized image (Frame.image is read-only)
@@ -2343,7 +2652,7 @@ class FilterSAM3Detector(Filter):
 
     def _visualize_detections_on_image(self, image: np.ndarray, detections: list, positive_boxes: list = None, negative_boxes: list = None) -> np.ndarray:
         """
-        Draw detection results on an image array. Optionally draw ref boxes first (green=positive, red=negative); detections in blue.
+        Draw detection results on an image array. Optionally draw ref boxes first (green=positive, red=negative); detection BB color per class.
 
         Args:
             image: BGR image array
@@ -2361,20 +2670,37 @@ class FilterSAM3Detector(Filter):
             if positive_boxes or negative_boxes:
                 self._draw_ref_boxes_on_image(image, positive_boxes or [], negative_boxes or [])
 
-            color_detection = (255, 0, 0)  # Blue BGR for original detections
-            for i, det in enumerate(detections):
+            img_h, img_w = image.shape[:2]
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            font_scale = 0.5
+            thickness = 2
+            for det in detections:
                 # Draw bounding box
                 if 'box' in det:
-                    x1, y1, x2, y2 = det['box']
-                    cv2.rectangle(image, (x1, y1), (x2, y2), color_detection, 2)
-                    if 'score' in det:
-                        cv2.putText(image, f"{det['score']:.2f}", (x1, y1 - 10),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color_detection, 2)
+                    x1, y1, x2, y2 = (int(det['box'][0]), int(det['box'][1]), int(det['box'][2]), int(det['box'][3]))
+                    raw_cls = det.get('label') or det.get('class') or det.get('class_name')
+                    class_text = str(raw_cls) if raw_cls is not None and str(raw_cls) != '' else None
+                    color_bgr = self._viz_bgr_for_class_name(class_text)
+                    cv2.rectangle(image, (x1, y1), (x2, y2), color_bgr, thickness)
+                    score_text = f"{det['score']:.2f}" if 'score' in det else None
+                    if score_text:
+                        sx, sy = self._viz_text_origin_xyxy(
+                            score_text, x1, y1, x2, y2, img_h, img_w, placement="score"
+                        )
+                        cv2.putText(image, score_text, (sx, sy), font, font_scale, color_bgr, thickness)
+                    if class_text:
+                        cx, cy = self._viz_text_origin_xyxy(
+                            class_text, x1, y1, x2, y2, img_h, img_w, placement="label"
+                        )
+                        cv2.putText(image, class_text, (cx, cy), font, font_scale, color_bgr, thickness)
                 if 'mask' in det:
                     mask = np.array(det['mask'], dtype=np.uint8)
                     if mask.shape == image.shape[:2]:
+                        raw_cls = det.get('label') or det.get('class') or det.get('class_name')
+                        class_text = str(raw_cls) if raw_cls is not None and str(raw_cls) != '' else None
+                        mbgr = self._viz_bgr_for_class_name(class_text)
                         color_mask = np.zeros_like(image)
-                        color_mask[mask > 0] = [255, 0, 0]  # Blue BGR
+                        color_mask[mask > 0] = mbgr
                         image = cv2.addWeighted(image, 1.0, color_mask, 0.3, 0)
         except Exception as e:
             logger.warning(f"Failed to visualize detections on image: {e}")

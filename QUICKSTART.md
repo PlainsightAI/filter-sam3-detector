@@ -141,6 +141,12 @@ Outputs (host, default):
 - `./results/frames/`
 - `./results/annotated_frames/` (when `FILTER_SAVE_ANNOTATED_FRAMES=true`)
 
+### Optional: cross-class overlap removal (`FILTER_REMOVE_OVERLAP`)
+
+With **`FILTER_TEXT_PROMPTS=car,truck`**, the same vehicle can get **both** a **car** and a **truck** box on **one** region. By default **`FILTER_REMOVE_OVERLAP`** is **`false`**: nothing removes those pairs. Set **`FILTER_REMOVE_OVERLAP=true`** to opt into a **shutdown** pass that keeps the **higher-`confidence`** class per overlapping pair (IoU gate; see plan). Typical test settings: **`VIDEO_PATH=./data/car.mp4`**, **`FILTER_CONFIDENCE_THRESHOLD=0.3`**, plus the `FILTER_TEXT_PROMPTS` line above.
+
+Step-by-step expectations and a copy-paste **`.env`** block: **[docs/filter-remove-overlap.md](docs/filter-remove-overlap.md)**.
+
 ## Example 3: Positive boxes (`FILTER_POSITIVE_BOXES`)
 
 Use this when you want geometric guidance with boxes (without text prompt).

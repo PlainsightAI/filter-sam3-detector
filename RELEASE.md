@@ -1,6 +1,21 @@
 # Changelog
 SAM3 Detector filter release notes
 
+## v0.1.8 - 2026-03-31
+### Added
+- **Cross-class overlap detection** (`ConfusionDetector`): new `filter_sam3_detector/confusion_detector.py` module that computes pairwise IoU between detections from different text prompts and flags near-identical regions (default threshold: IoU ≥ 0.95).
+- **`FILTER_REMOVE_OVERLAP`** (default `false`): opt-in shutdown pass that keeps the highest-confidence detection per cross-class overlapping cluster and writes `detections_cleaned.jsonl`. Same-class boxes are unchanged (still handled by per-prompt NMS).
+- **`FILTER_CONFUSION_IOU_THRESHOLD`** (default `0.95`): configurable IoU gate for overlap detection and removal.
+- **Shutdown summary**: at end-of-run, logs cross-class **overlap pair** counts (before / after / removed) and **detection** totals (before / after / removed), plus cleaned JSONL path when `FILTER_REMOVE_OVERLAP=true`.
+- **`scripts/analyze_confusions.py`**: standalone post-processing script that reads `detections.jsonl`, aggregates per-pair confusion statistics (rate, avg/max IoU, example frames), and emits tiered resolution guidance (`text` or `json` output).
+- **`docs/filter-remove-overlap.md`**: operator walkthrough for `FILTER_TEXT_PROMPTS=car,truck` + `FILTER_REMOVE_OVERLAP=true` with expected JSONL and shutdown log.
+- **Visualization (`FILTER_VISUALIZE`)**: annotated frames and viz topic now draw the **detection class label** (`label` / `class` / `class_name`) on each box in addition to the score, with a **stable color per class** so multi-prompt runs (e.g. `car` vs `truck`) are easy to read in Webvis and saved annotated frames.
+
+### Changed
+- `QUICKSTART.md` Example 2 now references `FILTER_REMOVE_OVERLAP` and links to `docs/filter-remove-overlap.md`.
+- Confusion detection is auto-enabled (stats only, no removal) when `FILTER_TEXT_PROMPTS` contains more than one class; single-prompt runs see zero overhead.
+- **Shutdown order:** cross-prompt overlap finalize runs **before** automatic COCO export. When `FILTER_REMOVE_OVERLAP=true` and `detections_cleaned.jsonl` is written, **`labels_coco.json`** is generated from the **cleaned** JSONL (otherwise from the primary `detections.jsonl`).
+
 ## v0.1.7 - 2026-03-25
 ### Added
 - Dual licensing documentation (`LICENSING.md`) and updated README badge
