@@ -68,6 +68,21 @@ def _get_class(det: dict) -> str:
     return det.get("class") or det.get("class_name") or det.get("label") or "unknown"
 
 
+def _detection_strength(det: dict) -> float:
+    """Prefer ``score`` if present, else ``confidence``, else 0.0.
+
+    Uses explicit ``None`` checks so ``0.0`` is not treated as missing (unlike ``or``).
+    Matches ``ConfusionDetector._detection_strength``.
+    """
+    s = det.get("score")
+    if s is not None:
+        return float(s)
+    c = det.get("confidence")
+    if c is not None:
+        return float(c)
+    return 0.0
+
+
 # ---------------------------------------------------------------------------
 # Per-frame confusion extraction
 # ---------------------------------------------------------------------------
@@ -115,12 +130,12 @@ def _confusions_from_record(record: dict, iou_threshold: float) -> list[dict]:
             box_a = _get_box(det_a)
             if box_a is None:
                 continue
-            score_a = float(det_a.get("score") or det_a.get("confidence") or 0.0)
+            score_a = _detection_strength(det_a)
             for det_b in by_class[class_b]:
                 box_b = _get_box(det_b)
                 if box_b is None:
                     continue
-                score_b = float(det_b.get("score") or det_b.get("confidence") or 0.0)
+                score_b = _detection_strength(det_b)
                 iou = _compute_iou(box_a, box_b)
                 if iou >= iou_threshold:
                     confusions.append({

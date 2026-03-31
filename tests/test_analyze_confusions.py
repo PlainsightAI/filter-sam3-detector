@@ -3,6 +3,8 @@
 import importlib.util
 from pathlib import Path
 
+import pytest
+
 
 def _load_module():
     root = Path(__file__).resolve().parent.parent
@@ -35,3 +37,8 @@ def test_suggest_equal_avg_tie_uses_pa_as_winner() -> None:
     s = ac._suggest("car", "truck", rate=0.6, avg_iou=0.9, avg_sa=0.5, avg_sb=0.5)
     # avg_sa >= avg_sb → winner=pa=car, loser=truck
     assert "drop 'truck'" in s
+
+
+def test_detection_strength_zero_score_not_confidence() -> None:
+    ac = _load_module()
+    assert ac._detection_strength({"score": 0.0, "confidence": 0.9}) == pytest.approx(0.0)
