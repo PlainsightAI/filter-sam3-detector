@@ -723,9 +723,9 @@ class FilterSAM3Detector(Filter):
         A *cross-class overlap* is a pair of detections with **different** class/label
         and IoU ≥ ``confusion_iou_threshold``.  Same-class pairs are unchanged.
         """
-        if not getattr(self, "confusion_detection_enabled", False):
+        if not self.confusion_detection_enabled:
             return None
-        if not getattr(self, "output_path", None):
+        if not self.output_path:
             return None
 
         input_path = Path(self.output_path)
@@ -733,11 +733,11 @@ class FilterSAM3Detector(Filter):
             logger.warning("Confusion pass skipped; JSONL not found: %s", input_path)
             return None
 
-        detector = getattr(self, "confusion_detector", None)
+        detector = self.confusion_detector
         if detector is None:
             return None
 
-        remove = getattr(self, "remove_overlap", False)
+        remove = self.remove_overlap
 
         # ---- Streaming pass: counts, overlap pairs (before), class set — no full-file buffer ----
         before_count = 0
