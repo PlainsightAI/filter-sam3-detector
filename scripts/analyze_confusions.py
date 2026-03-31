@@ -236,7 +236,8 @@ def compute_stats(jsonl_path: Path, iou_threshold: float) -> dict:
 # ---------------------------------------------------------------------------
 
 def _suggest(pa: str, pb: str, rate: float, avg_iou: float, avg_sa: float, avg_sb: float) -> str:
-    loser, winner = (pa, pb) if avg_sa >= avg_sb else (pb, pa)
+    # Higher average score for a prompt ⇒ that prompt "wins" the overlap comparison.
+    winner, loser = (pa, pb) if avg_sa >= avg_sb else (pb, pa)
     loser_score = min(avg_sa, avg_sb)
     winner_score = max(avg_sa, avg_sb)
 
