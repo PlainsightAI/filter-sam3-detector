@@ -182,6 +182,9 @@ def compute_stats(jsonl_path: Path, iou_threshold: float) -> dict:
             data = record.get("data", record)
             frame_id = data.get("id") or data.get("meta", {}).get("id")
 
+            # One entry per confusion *event* (overlapping pair of boxes). A single frame can
+            # emit multiple events for the same prompt pair, so avg_iou / avg_score_* are means
+            # over events — unlike frames_with_confusion below, which is de-duped per frame.
             for c in confusions:
                 pa, pb = c.get("prompt_a", "?"), c.get("prompt_b", "?")
                 key = (pa, pb)

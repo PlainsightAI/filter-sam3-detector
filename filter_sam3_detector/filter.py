@@ -890,7 +890,7 @@ class FilterSAM3Detector(Filter):
 
     @staticmethod
     def _rewrite_record_detections(record: dict, kept: list) -> dict:
-        """Return a shallow-copy of record with detections replaced by kept."""
+        """Return a deep copy of record with detections replaced by kept."""
         import copy
         record = copy.deepcopy(record)
         data = record.get("data", record)
