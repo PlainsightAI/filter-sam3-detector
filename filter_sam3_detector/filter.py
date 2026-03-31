@@ -702,9 +702,10 @@ class FilterSAM3Detector(Filter):
     def _finalize_cross_prompt_overlaps(self) -> Optional[Path]:
         """Shutdown pass: count and optionally remove cross-class overlapping detections.
 
-        Runs once at shutdown after the JSONL is flushed.  When ``remove_overlap`` is False
-        (default), only counts are logged.  When True, writes ``*_cleaned.jsonl`` with
-        overlapping lower-confidence boxes removed per frame.
+        Runs once at shutdown after the JSONL is flushed.  Uses a **streaming** read
+        (no full-file list of records).  When ``remove_overlap`` is False (default), only
+        counts are logged.  When True, writes ``*_cleaned.jsonl`` with overlapping
+        lower-confidence boxes removed per frame (second streaming pass over the file).
 
         Returns:
             Path to the cleaned JSONL when written this run; ``None`` otherwise.
@@ -730,10 +731,27 @@ class FilterSAM3Detector(Filter):
 
         remove = getattr(self, "remove_overlap", False)
 
-        # ---- First pass: count cross-class overlaps (before) + total detections ----
+        # ---- Streaming pass: counts, overlap pairs (before), class set — no full-file buffer ----
         before_count = 0
         total_detections_before = 0
-        records: list[dict] = []
+        all_classes: set[str] = set()
+
+        def _accumulate_frame_stats(record: dict) -> None:
+            nonlocal before_count, total_detections_before
+            dets = self._extract_detections_from_record(record)
+            total_detections_before += len(dets)
+            for d in dets:
+                cls = d.get("class") or d.get("class_name") or d.get("label") or ""
+                if cls:
+                    all_classes.add(cls)
+            if len(dets) >= 2:
+                by_class: dict[str, list] = {}
+                for d in dets:
+                    cls = d.get("class") or d.get("class_name") or d.get("label") or ""
+                    by_class.setdefault(cls, []).append(d)
+                if len(by_class) > 1:
+                    confusions = detector.detect(by_class)
+                    before_count += len(confusions)
 
         try:
             with open(input_path, "r") as fh:
@@ -744,21 +762,9 @@ class FilterSAM3Detector(Filter):
                     try:
                         record = json.loads(line)
                     except json.JSONDecodeError:
-                        records.append({"_raw": line})
                         continue
 
-                    dets = self._extract_detections_from_record(record)
-                    total_detections_before += len(dets)
-                    if len(dets) >= 2:
-                        by_class: dict[str, list] = {}
-                        for d in dets:
-                            cls = d.get("class") or d.get("class_name") or d.get("label") or ""
-                            by_class.setdefault(cls, []).append(d)
-                        if len(by_class) > 1:
-                            confusions = detector.detect(by_class)
-                            before_count += len(confusions)
-
-                    records.append(record)
+                    _accumulate_frame_stats(record)
 
         except Exception as e:
             logger.warning("Confusion pass failed during read: %s", e, exc_info=True)
@@ -766,18 +772,8 @@ class FilterSAM3Detector(Filter):
 
         after_count = before_count  # default: unchanged
 
-        # ---- Optional rewrite pass ----
+        # ---- Optional rewrite: stream input → cleaned JSONL line by line ----
         if remove and before_count > 0:
-            # Identify unique prompt count — skip removal on single-class runs
-            all_classes: set[str] = set()
-            for rec in records:
-                if "_raw" in rec:
-                    continue
-                for d in self._extract_detections_from_record(rec):
-                    cls = d.get("class") or d.get("class_name") or d.get("label") or ""
-                    if cls:
-                        all_classes.add(cls)
-
             if len(all_classes) <= 1:
                 logger.info(
                     "Cross-prompt overlaps: overlap_pairs before=%d after=%d (single class — removal skipped); "
@@ -786,24 +782,27 @@ class FilterSAM3Detector(Filter):
                 )
                 return None
 
-            # Rewrite JSONL with overlapping detections removed
             cleaned_path = input_path.parent / (input_path.stem + "_cleaned" + input_path.suffix)
             after_count = 0
             total_detections_after = 0
             total_boxes_removed = 0
             try:
-                with open(cleaned_path, "w") as out_fh:
-                    for rec in records:
-                        if "_raw" in rec:
-                            out_fh.write(rec["_raw"] + "\n")
+                with open(input_path, "r") as in_fh, open(cleaned_path, "w") as out_fh:
+                    for line in in_fh:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            record = json.loads(line)
+                        except json.JSONDecodeError:
+                            out_fh.write(line + "\n")
                             continue
 
-                        dets = self._extract_detections_from_record(rec)
+                        dets = self._extract_detections_from_record(record)
                         kept, dropped = detector.remove_overlapping(dets)
                         total_detections_after += len(kept)
                         total_boxes_removed += len(dropped)
 
-                        # Count remaining overlaps after removal
                         by_class: dict[str, list] = {}
                         for d in kept:
                             cls = d.get("class") or d.get("class_name") or d.get("label") or ""
@@ -812,9 +811,9 @@ class FilterSAM3Detector(Filter):
                             after_count += len(detector.detect(by_class))
 
                         if dropped:
-                            rec = self._rewrite_record_detections(rec, kept)
+                            record = self._rewrite_record_detections(record, kept)
 
-                        out_fh.write(json.dumps(rec) + "\n")
+                        out_fh.write(json.dumps(record) + "\n")
 
                 pairs_removed = before_count - after_count
                 logger.info(
