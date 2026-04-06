@@ -1,6 +1,6 @@
 # filter-sam3-detector
 
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://github.com/your-org/filter-sam3-detector/blob/main/LICENSE)
+[![License: Apache 2.0 + SAM](https://img.shields.io/badge/License-Apache%202.0%20%2B%20SAM-blue.svg)](LICENSING.md)
 
 OpenFilter implementation for SAM3 (Segment Anything Model 3) object detection with open-set capabilities.
 
@@ -65,11 +65,27 @@ uv pip install -e .
 uv pip install -e ".[dev]"
 ```
 
+## Get Started
+
+For a first run with Docker Compose, including examples for:
+
+- `FILTER_TEXT_PROMPT`
+- `FILTER_TEXT_PROMPTS`
+- positive reference boxes and reference images
+
+use [`QUICKSTART.md`](QUICKSTART.md).
+
+The quick start uses detached compose commands:
+
+```bash
+docker compose -f docker-compose.yaml up -d
+```
+
 ## Configuration
 
 1. Copy the example environment file:
 ```bash
-cp env.example .env
+cp .env.example .env
 ```
 
 2. Edit `.env` file with your configuration:
@@ -620,7 +636,7 @@ For more detailed information, configuration examples, and advanced usage scenar
 
 ## License
 
-See LICENSE file for details.
+This project uses dual licensing. The filter wrapper code is licensed under **Apache 2.0**, and the vendorized SAM3 library (`sam3/`) is licensed under the **SAM License**, which includes trade control restrictions. See [LICENSING.md](LICENSING.md) for full details.
 
 ## References
 

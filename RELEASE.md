@@ -1,18 +1,50 @@
 # Changelog
 SAM3 Detector filter release notes
 
-## v0.1.6 - 2026-04-05
+## v0.1.9 - 2026-04-06
 ### Added
 - **Batched backbone inference** (FILTER-369): `process_batch()` runs the SAM3 vision backbone on accumulated frames in a single `set_image_batch()` call, then fans out per-frame grounding. Configurable via `FILTER_BATCH_SIZE` and `FILTER_ACCUMULATE_TIMEOUT_MS` (requires openfilter >= 0.1.16).
 
-## v0.1.5 - 2026-03-12
+### Removed
+- Vestigial `multiprocessing.set_start_method("spawn")` workaround (vidgear removed from openfilter).
+
+## v0.1.8 - 2026-03-31
+### Added
+- **Cross-class overlap detection** (`ConfusionDetector`): new `filter_sam3_detector/confusion_detector.py` module that computes pairwise IoU between detections from different text prompts and flags near-identical regions (default threshold: IoU ≥ 0.95).
+- **`FILTER_REMOVE_OVERLAP`** (default `false`): opt-in shutdown pass that keeps the highest-confidence detection per cross-class overlapping cluster and writes `detections_cleaned.jsonl`. Same-class boxes are unchanged (still handled by per-prompt NMS).
+- **`FILTER_CONFUSION_IOU_THRESHOLD`** (default `0.95`): configurable IoU gate for overlap detection and removal.
+- **Shutdown summary**: at end-of-run, logs cross-class **overlap pair** counts (before / after / removed) and **detection** totals (before / after / removed), plus cleaned JSONL path when `FILTER_REMOVE_OVERLAP=true`.
+- **`scripts/analyze_confusions.py`**: standalone post-processing script that reads `detections.jsonl`, aggregates per-pair confusion statistics (rate, avg/max IoU, example frames), and emits tiered resolution guidance (`text` or `json` output).
+- **`docs/filter-remove-overlap.md`**: operator walkthrough for `FILTER_TEXT_PROMPTS=car,truck` + `FILTER_REMOVE_OVERLAP=true` with expected JSONL and shutdown log.
+- **Visualization (`FILTER_VISUALIZE`)**: annotated frames and viz topic now draw the **detection class label** (`label` / `class` / `class_name`) on each box in addition to the score, with a **stable color per class** so multi-prompt runs (e.g. `car` vs `truck`) are easy to read in Webvis and saved annotated frames.
+
+### Changed
+- `QUICKSTART.md` Example 2 now references `FILTER_REMOVE_OVERLAP` and links to `docs/filter-remove-overlap.md`.
+- Confusion detection is auto-enabled (stats only, no removal) when `FILTER_TEXT_PROMPTS` contains more than one class; single-prompt runs see zero overhead.
+- **Shutdown order:** cross-prompt overlap finalize runs **before** automatic COCO export. When `FILTER_REMOVE_OVERLAP=true` and `detections_cleaned.jsonl` is written, **`labels_coco.json`** is generated from the **cleaned** JSONL (otherwise from the primary `detections.jsonl`).
+
+## v0.1.7 - 2026-03-25
+### Added
+- Dual licensing documentation (`LICENSING.md`) and updated README badge
+- License files (`LICENSE`, `LICENSING.md`) now copied into Docker images for redistribution compliance
+- PyPI metadata updated with dual license expression and license file bundling
+
+## v0.1.6 - 2026-03-17
+### Added
+- Quick start guide focused on compose-first onboarding with detached commands and runnable examples: `FILTER_TEXT_PROMPT`, `FILTER_TEXT_PROMPTS`, `FILTER_POSITIVE_BOXES`, and `FILTER_REF_IMAGES`.
+- Optional utility script `scripts/convert_detections_jsonl_to_coco.py` to export `detections.jsonl` into COCO-style JSON (`images`, `annotations`, `categories` with `score`).
+- Automatic COCO export on filter shutdown when `FILTER_OUTPUT_PATH` is configured (`FILTER_AUTO_EXPORT_COCO` opt-in).
+
+### Changed
+- Docker compose examples now surface get-started usage and output locations more clearly.
+- Main compose example now accepts `VIDEO_PATH` and prompt variants, writes `FILTER_OUTPUT_PATH`, and defaults to non-temporal get-started flow.
+
+## v0.1.5 - 2026-03-11
 ### Added
 - Add filename to output filter subject data
 
 ### Fixed
 - **prompt_sets frame saving** (FILTER-349): `_process_multi_output` now saves original frames (once per frame) and annotated frames (per prompt set) when `FILTER_FRAMES_OUTPUT_DIR` / `FILTER_ANNOTATED_FRAMES_OUTPUT_DIR` are configured
-
-## [Unreleased]
 
 ## v0.1.4 - 2026-02-24
 ### Added
