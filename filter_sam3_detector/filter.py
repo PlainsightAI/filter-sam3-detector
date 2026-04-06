@@ -2,7 +2,6 @@ import copy
 import logging
 import os
 import json
-import multiprocessing
 import time
 from typing import Optional
 from pathlib import Path
@@ -11,13 +10,6 @@ from datetime import datetime
 import torch
 import numpy as np
 from PIL import Image
-
-# Fix CUDA multiprocessing issue - set spawn method before any CUDA operations
-try:
-    multiprocessing.set_start_method("spawn", force=True)  # CUDA doesn't like fork()
-except RuntimeError:
-    # Method already set, ignore
-    pass
 
 from openfilter.filter_runtime.filter import FilterConfig, Filter, Frame
 

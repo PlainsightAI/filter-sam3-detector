@@ -1,4 +1,3 @@
-import multiprocessing
 import unittest
 from unittest.mock import MagicMock, patch, PropertyMock
 from types import SimpleNamespace
@@ -6,11 +5,6 @@ from types import SimpleNamespace
 import numpy as np
 import torch
 from PIL import Image
-
-try:
-    multiprocessing.set_start_method('spawn')  # Required for CUDA compatibility
-except RuntimeError:
-    pass
 
 from filter_sam3_detector.filter import FilterSAM3Detector
 from openfilter.filter_runtime.filter import FilterConfig
