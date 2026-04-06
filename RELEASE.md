@@ -1,6 +1,10 @@
 # Changelog
 SAM3 Detector filter release notes
 
+## v0.1.6 - 2026-04-05
+### Added
+- **Batched backbone inference** (FILTER-369): `process_batch()` runs the SAM3 vision backbone on accumulated frames in a single `set_image_batch()` call, then fans out per-frame grounding. Configurable via `FILTER_BATCH_SIZE` and `FILTER_ACCUMULATE_TIMEOUT_MS` (requires openfilter >= 0.1.16).
+
 ## v0.1.5 - 2026-03-12
 ### Added
 - Add filename to output filter subject data

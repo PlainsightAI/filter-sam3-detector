@@ -1,3 +1,4 @@
+import copy
 import logging
 import os
 import json
@@ -1350,6 +1351,7 @@ class FilterSAM3Detector(Filter):
 
     # -- Batched backbone inference (FILTER-369) ----------------------------------
 
+    @torch.no_grad()
     def process_batch(
         self, batch: list[dict[str, Frame]]
     ) -> list[dict[str, Frame] | Frame | None]:
@@ -1376,7 +1378,9 @@ class FilterSAM3Detector(Filter):
             results: list[dict[str, Frame] | Frame | None] = [None] * len(batch)
             for i in range(len(batch)):
                 if i in valid_indices:
-                    self._cached_backbone_state = per_frame_states[batch_idx_map[i]]
+                    self._cached_backbone_state = copy.deepcopy(
+                        per_frame_states[batch_idx_map[i]]
+                    )
                     try:
                         results[i] = self.process(batch[i])
                     except Exception as frame_err:
@@ -1389,6 +1393,11 @@ class FilterSAM3Detector(Filter):
 
             return results
 
+        except torch.cuda.OutOfMemoryError as e:
+            logger.warning(f"set_image_batch OOM: {e}. Clearing cache and falling back to per-frame.")
+            self._cached_backbone_state = None
+            torch.cuda.empty_cache()
+            return [self.process(frames) for frames in batch]
         except Exception as e:
             logger.warning(f"set_image_batch failed: {e}. Falling back to per-frame.")
             self._cached_backbone_state = None
@@ -1410,7 +1419,10 @@ class FilterSAM3Detector(Filter):
         return has_prompts or has_visual
 
     def _extract_pil_image(self, frames: dict[str, Frame]) -> Optional[Image.Image]:
-        for _topic, frame in frames.items():
+        for topic, frame in frames.items():
+            # Skip auxiliary topics (e.g. _filter, SourceName___filter)
+            if topic == "_filter" or topic.endswith("___filter"):
+                continue
             if frame is not None and frame.has_image:
                 image_bgr = frame.rw_bgr.image
                 image_rgb = image_bgr[:, :, ::-1]
@@ -1430,6 +1442,14 @@ class FilterSAM3Detector(Filter):
         ]
 
     def _split_tensor_dict(self, d: dict, n: int) -> list[dict]:
+        """Split a dict of batched tensors into a list of per-frame dicts.
+
+        Return shape per value type:
+        - Tensor (dim >= 1): split along dim 0 → each frame gets a (1, ...) tensor
+        - list[Tensor]: transposed → each frame gets a list of (1, ...) tensors
+        - dict: recursed → each frame gets a nested dict with the same structure
+        - scalar: replicated → each frame gets the same value
+        """
         split_vals: dict[str, list] = {}
         for key, val in d.items():
             if isinstance(val, torch.Tensor) and val.dim() >= 1:
