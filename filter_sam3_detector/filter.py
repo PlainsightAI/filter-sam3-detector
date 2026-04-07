@@ -1954,9 +1954,11 @@ class FilterSAM3Detector(Filter):
             results: list[dict[str, Frame] | Frame | None] = [None] * len(batch)
             for i in range(len(batch)):
                 if i in valid_indices:
-                    self._cached_backbone_state = copy.deepcopy(
-                        per_frame_states[batch_idx_map[i]]
-                    )
+                    frame_state = per_frame_states[batch_idx_map[i]]
+                    self._cached_backbone_state = {
+                        **frame_state,
+                        "backbone_out": {**frame_state["backbone_out"]},
+                    }
                     try:
                         results[i] = self.process(batch[i])
                     except Exception as frame_err:
@@ -1995,6 +1997,9 @@ class FilterSAM3Detector(Filter):
         return has_prompts or has_visual
 
     def _extract_pil_image(self, frames: dict[str, Frame]) -> Optional[Image.Image]:
+        # Returns the first non-auxiliary image topic. Standard pipelines have
+        # one image topic; if multiple exist, dict iteration order determines
+        # which is used for backbone inference.
         for topic, frame in frames.items():
             # Skip auxiliary topics (e.g. _filter, SourceName___filter)
             if topic == "_filter" or topic.endswith("___filter"):

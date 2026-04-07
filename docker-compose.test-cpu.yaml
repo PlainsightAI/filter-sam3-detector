@@ -1,58 +1,11 @@
+# CPU-only overlay — removes GPU reservation and forces FILTER_DEVICE=cpu.
+# Usage:
+#   docker compose -f docker-compose.test.yaml -f docker-compose.test-cpu.yaml up
 services:
-  video_in:
-    image: containers.openfilter.io/plainsightai/openfilter-video-in:v0.1.10
-    platform: linux/amd64
-    environment:
-      LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      FILTER_ID: VideoIn
-      FILTER_SOURCES: file:///video.mp4!no-loop!sync
-      FILTER_OUTPUTS: tcp://*:5550
-    volumes:
-      - ./data/sample-video.mp4:/video.mp4:ro
-    networks:
-      - filter-network
-
   sam3_detector:
-    image: ${SAM3_IMAGE:-filter-sam3-detector:local}
-    platform: linux/amd64
     environment:
-      LOG_LEVEL: ${LOG_LEVEL:-DEBUG}
-      FILTER_ID: SAM3Detector
-      FILTER_SOURCES: tcp://video_in:5550
-      FILTER_OUTPUTS: tcp://*:5551
-      FILTER_TEXT_PROMPT: ${FILTER_TEXT_PROMPT:-food bowl . hand . receipt . person}
-      FILTER_CONFIDENCE_THRESHOLD: ${FILTER_CONFIDENCE_THRESHOLD:-0.25}
-      FILTER_OUTPUT_LABEL: sam3_detections
       FILTER_DEVICE: cpu
-      FILTER_BATCH_SIZE: ${FILTER_BATCH_SIZE:-1}
-      FILTER_ACCUMULATE_TIMEOUT_MS: ${FILTER_ACCUMULATE_TIMEOUT_MS:-100}
-      FILTER_OUTPUT_PATH: /output/detections.jsonl
-      FILTER_FRAMES_OUTPUT_DIR: /output/frames
-      FILTER_SAVE_ANNOTATED_FRAMES: "true"
-      FILTER_ANNOTATED_FRAMES_OUTPUT_DIR: /output/frames_annotated
-      FILTER_VISUALIZE: "true"
-      FILTER_VIZ_TOPIC: viz
-      FILTER_ENABLE_TEMPORAL_INTERVALS: "true"
-      FILTER_TEMPORAL_HALF_LIFE: ${FILTER_HALF_LIFE:-5.0}
-      FILTER_TEMPORAL_PRESENCE_THRESHOLD: ${FILTER_PRESENCE_THRESHOLD:-0.4}
-      FILTER_TEMPORAL_OUTPUT_JSON_PATH: /output/intervals.json
-      FILTER_TEMPORAL_STREAMING_MODE: "true"
-    volumes:
-      - ./output:/output
-    networks:
-      - filter-network
-
-  webvis:
-    image: containers.openfilter.io/plainsightai/openfilter-webvis:v0.1.10
-    platform: linux/amd64
-    environment:
-      LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      FILTER_ID: Webvis
-      FILTER_SOURCES: tcp://sam3_detector:5551
-    ports:
-      - "8001:8000"
-    networks:
-      - filter-network
-
-networks:
-  filter-network:
+    deploy:
+      resources:
+        reservations:
+          devices: []
