@@ -502,6 +502,7 @@ class FilterSAM3Detector(Filter):
 
         # Mixed precision: bfloat16 autocast on CUDA (matches SAM3 video path)
         self.mixed_precision = config.get("mixed_precision", True) and self.device.type == "cuda"
+        self._autocast_persistent = None  # initialized in _load_model()
         if self.mixed_precision:
             logger.info("Mixed precision enabled: bfloat16 autocast for inference")
 
