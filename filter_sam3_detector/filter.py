@@ -2135,13 +2135,21 @@ class FilterSAM3Detector(Filter):
             # Enable persistent bfloat16 autocast for all subsequent inference
             # (mirrors SAM3 video path in sam3_tracking_predictor.py)
             if self.mixed_precision:
-                self._autocast_persistent = torch.autocast(device_type="cuda", dtype=torch.bfloat16)
-                self._autocast_persistent.__enter__()
-                logger.info("Entered persistent bfloat16 autocast context for inference")
+                if not torch.cuda.is_bf16_supported():
+                    logger.warning("bfloat16 not natively supported on this GPU, disabling mixed precision")
+                    self.mixed_precision = False
+                else:
+                    self._autocast_persistent = torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+                    self._autocast_persistent.__enter__()
+                    logger.info("Entered persistent bfloat16 autocast context for inference")
 
             logger.info(f"SAM3 model loaded successfully on {self.device}")
 
         except Exception as e:
+            # Clean up autocast context if it was entered before the failure
+            if self._autocast_persistent is not None:
+                self._autocast_persistent.__exit__(None, None, None)
+                self._autocast_persistent = None
             logger.error(f"Failed to load SAM3 model: {e}")
             import traceback
             logger.error(traceback.format_exc())
