@@ -1,6 +1,11 @@
 # Changelog
 SAM3 Detector filter release notes
 
+## v0.1.10 - 2026-04-08
+### Added
+- Bfloat16 mixed-precision inference for image path via persistent `torch.autocast` context, matching SAM3 video path pattern (FILTER-394)
+- `FILTER_MIXED_PRECISION` config flag (default: true on CUDA, no-op on CPU/MPS)
+
 ## v0.1.9 - 2026-04-06
 ### Added
 - **Batched backbone inference** (FILTER-369): `process_batch()` runs the SAM3 vision backbone on accumulated frames in a single `set_image_batch()` call, then fans out per-frame grounding. Configurable via `FILTER_BATCH_SIZE` and `FILTER_ACCUMULATE_TIMEOUT_MS` (requires openfilter >= 0.1.16).
