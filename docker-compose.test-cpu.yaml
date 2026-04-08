@@ -1,0 +1,11 @@
+# CPU-only overlay — removes GPU reservation and forces FILTER_DEVICE=cpu.
+# Usage:
+#   docker compose -f docker-compose.test.yaml -f docker-compose.test-cpu.yaml up
+services:
+  sam3_detector:
+    environment:
+      FILTER_DEVICE: cpu
+    deploy:
+      resources:
+        reservations:
+          devices: []

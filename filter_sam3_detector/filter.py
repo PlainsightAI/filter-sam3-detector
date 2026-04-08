@@ -1,8 +1,8 @@
+import copy
 import hashlib
 import logging
 import os
 import json
-import multiprocessing
 import time
 from typing import Optional
 from pathlib import Path
@@ -12,12 +12,6 @@ import torch
 import numpy as np
 from PIL import Image
 
-# Fix CUDA multiprocessing issue - set spawn method before any CUDA operations
-try:
-    multiprocessing.set_start_method('spawn', force=True)  # CUDA doesn't like fork()
-except RuntimeError:
-    # Method already set, ignore
-    pass
 
 from openfilter.filter_runtime.filter import FilterConfig, Filter, Frame
 
@@ -560,6 +554,9 @@ class FilterSAM3Detector(Filter):
             self._setup_temporal_intervals(config)
 
         self._setup_confusion_detector(config)
+
+        # Batched backbone state: set by process_batch() so process() can skip set_image()
+        self._cached_backbone_state = None
 
         logger.info("FilterSAM3Detector setup complete")
 
@@ -1207,7 +1204,10 @@ class FilterSAM3Detector(Filter):
                 else:
                     # Standard mode: set image once, then loop over prompts (and optionally visual exemplars)
                     detections = []
-                    state = self.processor.set_image(pil_image)
+                    if self._cached_backbone_state is not None:
+                        state = self._cached_backbone_state
+                    else:
+                        state = self.processor.set_image(pil_image)
 
                     # Process each prompt using cached image features
                     if prompts_to_use:
@@ -1924,6 +1924,145 @@ class FilterSAM3Detector(Filter):
             state['geometric_prompt'] = self.model._get_dummy_prompt()
 
         return state
+
+    # -- Batched backbone inference (FILTER-369) ----------------------------------
+
+    @torch.no_grad()
+    def process_batch(
+        self, batch: list[dict[str, Frame]]
+    ) -> list[dict[str, Frame] | Frame | None]:
+        if not self._can_batch():
+            return [self.process(frames) for frames in batch]
+
+        pil_images = []
+        valid_indices: set[int] = set()
+        batch_idx_map: dict[int, int] = {}
+        for i, frames in enumerate(batch):
+            pil = self._extract_pil_image(frames)
+            if pil is not None:
+                batch_idx_map[i] = len(pil_images)
+                pil_images.append(pil)
+                valid_indices.add(i)
+
+        if not pil_images:
+            return [self.process(frames) for frames in batch]
+
+        try:
+            batched_state = self.processor.set_image_batch(pil_images)
+            per_frame_states = self._split_backbone_states(batched_state)
+
+            results: list[dict[str, Frame] | Frame | None] = [None] * len(batch)
+            for i in range(len(batch)):
+                if i in valid_indices:
+                    frame_state = per_frame_states[batch_idx_map[i]]
+                    self._cached_backbone_state = {
+                        **frame_state,
+                        "backbone_out": {**frame_state["backbone_out"]},
+                    }
+                    try:
+                        results[i] = self.process(batch[i])
+                    except Exception as frame_err:
+                        logger.error(f"Batched frame {i} failed: {frame_err}")
+                        results[i] = batch[i]
+                    finally:
+                        self._cached_backbone_state = None
+                else:
+                    results[i] = self.process(batch[i])
+
+            return results
+
+        except torch.cuda.OutOfMemoryError as e:
+            logger.warning(f"set_image_batch OOM: {e}. Clearing cache and falling back to per-frame.")
+            self._cached_backbone_state = None
+            torch.cuda.empty_cache()
+            return [self.process(frames) for frames in batch]
+        except Exception as e:
+            logger.warning(f"set_image_batch failed: {e}. Falling back to per-frame.")
+            self._cached_backbone_state = None
+            return [self.process(frames) for frames in batch]
+
+    def _can_batch(self) -> bool:
+        if self.model is None or self.processor is None:
+            return False
+        if self.prompt_sets:
+            return False
+        if self.positive_boxes or self.negative_boxes:
+            return False
+        if self.ref_images_paths or self.ref_images_negative_paths:
+            return False
+        if self.enable_video_mode:
+            return False
+        has_prompts = bool(self.text_prompts or self.text_prompt)
+        has_visual = self.visual_prompt_embed is not None
+        return has_prompts or has_visual
+
+    def _extract_pil_image(self, frames: dict[str, Frame]) -> Optional[Image.Image]:
+        # Returns the first non-auxiliary image topic. Standard pipelines have
+        # one image topic; if multiple exist, dict iteration order determines
+        # which is used for backbone inference.
+        for topic, frame in frames.items():
+            # Skip auxiliary topics (e.g. _filter, SourceName___filter)
+            if topic == "_filter" or topic.endswith("___filter"):
+                continue
+            if frame is not None and frame.has_image:
+                image_bgr = frame.rw_bgr.image
+                image_rgb = image_bgr[:, :, ::-1]
+                return Image.fromarray(image_rgb)
+        return None
+
+    def _split_backbone_states(self, batched_state: dict) -> list[dict]:
+        n = len(batched_state["original_heights"])
+        split_backbone = self._split_tensor_dict(batched_state["backbone_out"], n)
+        return [
+            {
+                "original_height": batched_state["original_heights"][i],
+                "original_width": batched_state["original_widths"][i],
+                "backbone_out": split_backbone[i],
+            }
+            for i in range(n)
+        ]
+
+    def _split_tensor_dict(self, d: dict, n: int) -> list[dict]:
+        """Split a dict of batched tensors into a list of per-frame dicts.
+
+        Return shape per value type:
+        - Tensor (dim >= 1): split along dim 0 → each frame gets a (1, ...) tensor
+        - list[Tensor]: transposed → each frame gets a list of (1, ...) tensors
+        - dict: recursed → each frame gets a nested dict with the same structure
+        - scalar: replicated → each frame gets the same value
+        """
+        split_vals: dict[str, list] = {}
+        for key, val in d.items():
+            if isinstance(val, torch.Tensor) and val.dim() >= 1:
+                split_vals[key] = val.split(1, dim=0)
+            elif isinstance(val, list):
+                split_vals[key] = list(
+                    zip(
+                        *(
+                            t.split(1, dim=0)
+                            if isinstance(t, torch.Tensor) and t.dim() >= 1
+                            else (t,) * n
+                            for t in val
+                        )
+                    )
+                )
+            elif isinstance(val, dict):
+                split_vals[key] = self._split_tensor_dict(val, n)
+            else:
+                split_vals[key] = (val,) * n
+
+        keys = list(split_vals.keys())
+        return [
+            {
+                k: split_vals[k][i]
+                if not isinstance(d[k], list)
+                else list(split_vals[k][i])
+                for k in keys
+            }
+            for i in range(n)
+        ]
+
+    # -- End batched backbone inference -------------------------------------------
 
     def _load_model(self):
         """

@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 
 import logging
-import multiprocessing
 import os
 import sys
 import unittest
@@ -38,11 +37,6 @@ class TestFilterSAM3Detector(unittest.TestCase):
         self.assertFalse(config["debug"])
         self.assertFalse(config["visualize"])
 
-
-try:
-    multiprocessing.set_start_method('spawn')  # Required for some platforms
-except Exception:
-    pass
 
 if __name__ == '__main__':
     unittest.main()

@@ -40,6 +40,13 @@ export FILTER_OUTPUT_BOXES=true
 export FILTER_OUTPUT_SCORES=true
 export FILTER_OUTPUT_LABEL=sam3_detections
 
+# Batched backbone inference (requires openfilter >= 0.1.16)
+# These are consumed by the openfilter runtime, not by FilterSAM3Detector directly.
+# Accumulates N frames and runs the SAM3 vision backbone once for the batch,
+# then fans out per-frame grounding. Reduces backbone overhead ~proportional to batch_size.
+export FILTER_BATCH_SIZE=1              # 1 = disabled (default), 4 = good starting point
+export FILTER_ACCUMULATE_TIMEOUT_MS=100 # Flush partial batch after this many ms
+
 # Visualization and debugging
 export FILTER_VISUALIZE=false
 # When set (e.g. viz): main=original+meta, this topic=drawn frame+meta

@@ -1,6 +1,13 @@
 # Changelog
 SAM3 Detector filter release notes
 
+## v0.1.9 - 2026-04-06
+### Added
+- **Batched backbone inference** (FILTER-369): `process_batch()` runs the SAM3 vision backbone on accumulated frames in a single `set_image_batch()` call, then fans out per-frame grounding. Configurable via `FILTER_BATCH_SIZE` and `FILTER_ACCUMULATE_TIMEOUT_MS` (requires openfilter >= 0.1.16).
+
+### Removed
+- Vestigial `multiprocessing.set_start_method("spawn")` workaround (vidgear removed from openfilter).
+
 ## v0.1.8 - 2026-03-31
 ### Added
 - **Cross-class overlap detection** (`ConfusionDetector`): new `filter_sam3_detector/confusion_detector.py` module that computes pairwise IoU between detections from different text prompts and flags near-identical regions (default threshold: IoU ≥ 0.95).
