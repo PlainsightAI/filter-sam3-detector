@@ -158,6 +158,8 @@ class FilterSAM3Detector(Filter):
             "confusion_detection_enabled": None,  # None = auto (True when >1 prompt)
             "confusion_iou_threshold": 0.95,  # IoU gate for cross-class overlap; 95% targets near-identical boxes
             "remove_overlap": False,  # FILTER_REMOVE_OVERLAP; when true, shutdown pass removes lower-confidence duplicates
+            # Mixed precision inference
+            "mixed_precision": True,  # Use bfloat16 autocast for inference (CUDA only)
         }
         
         for key, default_value in defaults.items():
@@ -210,6 +212,7 @@ class FilterSAM3Detector(Filter):
             "confusion_detection_enabled": bool,
             "confusion_iou_threshold": float,
             "remove_overlap": bool,
+            "mixed_precision": bool,
         }
 
         def _parse_boxes_env(env_val: str):
@@ -497,6 +500,12 @@ class FilterSAM3Detector(Filter):
         else:
             self.device = torch.device("cpu")
 
+        # Mixed precision: bfloat16 autocast on CUDA (matches SAM3 video path)
+        self.mixed_precision = config.get("mixed_precision", True) and self.device.type == "cuda"
+        self._autocast_persistent = None  # initialized in _load_model()
+        if self.mixed_precision:
+            logger.info("Mixed precision enabled: bfloat16 autocast for inference")
+
         logger.info(f"Using device: {self.device}")
         logger.info(f"NMS enabled: {self.nms_enabled}, threshold: {self.nms_threshold}")
 
@@ -654,6 +663,11 @@ class FilterSAM3Detector(Filter):
                             exc_info=True,
                         )
             self.jsonl_file = None
+
+        # Exit persistent autocast context if active
+        if hasattr(self, '_autocast_persistent') and self._autocast_persistent is not None:
+            self._autocast_persistent.__exit__(None, None, None)
+            self._autocast_persistent = None
 
         # Release model resources
         if self.model is not None:
@@ -2118,9 +2132,24 @@ class FilterSAM3Detector(Filter):
                 confidence_threshold=self.confidence_threshold
             )
 
+            # Enable persistent bfloat16 autocast for all subsequent inference
+            # (mirrors SAM3 video path in sam3_tracking_predictor.py)
+            if self.mixed_precision:
+                if not torch.cuda.is_bf16_supported():
+                    logger.warning("bfloat16 not natively supported on this GPU, disabling mixed precision")
+                    self.mixed_precision = False
+                else:
+                    self._autocast_persistent = torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+                    self._autocast_persistent.__enter__()
+                    logger.info("Entered persistent bfloat16 autocast context for inference")
+
             logger.info(f"SAM3 model loaded successfully on {self.device}")
 
         except Exception as e:
+            # Clean up autocast context if it was entered before the failure
+            if self._autocast_persistent is not None:
+                self._autocast_persistent.__exit__(None, None, None)
+                self._autocast_persistent = None
             logger.error(f"Failed to load SAM3 model: {e}")
             import traceback
             logger.error(traceback.format_exc())
