@@ -54,6 +54,9 @@ dev = [
 [project.scripts]
 filter-sam3-detector = "filter_sam3_detector.filter:FilterSAM3Detector.run"
 
+[tool.uv]
+override-dependencies = ["numpy>=1.26.4,<3"]
+
 [tool.uv.sources]
 sam3 = { path = "sam3" }
 
