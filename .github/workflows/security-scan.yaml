@@ -14,4 +14,4 @@ jobs:
     uses: PlainsightAI/gh-actions-public/.github/workflows/security-scan.yaml@main
     with:
       gcloud_auth: true
-
+      python_versions: '["3.10", "3.11", "3.12"]'
