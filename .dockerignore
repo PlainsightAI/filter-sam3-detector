@@ -13,6 +13,7 @@ docs/
 examples/
 *.md
 !README.md
+!LICENSING.md
 Makefile
 .env
 .env.*
