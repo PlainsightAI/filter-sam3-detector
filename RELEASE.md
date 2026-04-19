@@ -1,6 +1,10 @@
 # Changelog
 SAM3 Detector filter release notes
 
+## v0.1.11 - 2026-04-19
+### Fixed
+- **Air-gapped deploys** (FILTER-422): bake `HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1` into the Dockerfile. The SAM3 config + checkpoint are already cached into the image at build time (`Dockerfile:44`), so the HEAD revalidation `huggingface_hub` fires against `huggingface.co` on every `hf_hub_download(...)` call has no load-bearing purpose — it just fails DNS in offline environments and stalls initialization. The OFFLINE directives tell the library to serve directly from the cache.
+
 ## v0.1.10 - 2026-04-08
 ### Added
 - Bfloat16 mixed-precision inference for image path via persistent `torch.autocast` context, matching SAM3 video path pattern (FILTER-394)
