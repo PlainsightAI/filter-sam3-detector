@@ -1,6 +1,16 @@
 # Changelog
 SAM3 Detector filter release notes
 
+## v0.1.13 - 2026-04-20
+
+### Changed
+- Add create-release.yaml for GAR premium publishing
+- Add shared security-scan workflow
+- Remove old version-check.yaml
+- Add Makefile IMAGE for premium-filters/
+- Bump openfilter to >=0.1.27
+- Update docker-compose.yaml to openfilter 0.1.27
+
 ## v0.1.12 - 2026-04-19
 ### Fixed
 - **Air-gapped deploys** (FILTER-422): set `HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1` in the Dockerfile so `huggingface_hub` skips HEAD revalidation against `huggingface.co` and serves the baked-in SAM3 cache directly. Unblocks `docker run --network=none` and offline deployments.
