@@ -1,3 +1,4 @@
+IMAGE ?= us-west1-docker.pkg.dev/plainsightai-prod/premium-filters/filter-sam3-detector
 .PHONY: help install install-dev test test-cov lint format clean
 
 help:
