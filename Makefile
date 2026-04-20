@@ -12,7 +12,7 @@ help:
 	@echo "  clean        - Clean build artifacts"
 
 install:
-	pip install -e .
+	pip install -e ".[dev]"
 
 install-dev:
 	pip install -e ".[dev]"
