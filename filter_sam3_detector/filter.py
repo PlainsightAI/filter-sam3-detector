@@ -99,13 +99,18 @@ class FilterSAM3Detector(Filter):
         # First, call parent normalize_config to handle sources, outputs, etc.
         config = super().normalize_config(config)
         config = FilterSAM3DetectorConfig(config)
+
+        # NOTE: Existing comma-separated configs may need updating
+        # NOTE: List inputs are treated as raw prompts (no class mapping)
         
         # Set defaults if not present
         defaults = {
             "model_id": "facebook/sam3",
             "device": "cuda",
             "text_prompt": None,  # Single prompt (backward compatible)
-            "text_prompts": None,  # Multiple prompts for parallel detection
+            "text_prompts": None,  # Delimiter-separated prompts, e.g. "vehicle:car,truck;animal:cat, dogs"
+            "prompt_delimiter": ";",  # Multiple prompts separated by ';'
+            "class_delimiter": ":",  # Separates class label from prompt, e.g. "vehicle:car"
             "prompt_sets": None,  # Multi-output mode: list of {name, prompts, topic, ...}
             "exemplars_path": None,
             "exemplar_embeddings_cache": None,
@@ -171,7 +176,9 @@ class FilterSAM3Detector(Filter):
             "model_id": str,
             "device": str,
             "text_prompt": str,
-            "text_prompts": str,  # Comma-separated list of prompts
+            "text_prompts": str,  # delimiter separated list of prompts
+            "class_delimiter": str,
+            "prompt_delimiter": str,
             "prompt_sets": str,  # JSON array of prompt set configs
             "exemplars_path": str,
             "exemplar_embeddings_cache": str,
@@ -337,14 +344,42 @@ class FilterSAM3Detector(Filter):
         if not (0.0 <= confusion_iou_threshold <= 1.0):
             raise ValueError(f"confusion_iou_threshold must be between 0 and 1, got {confusion_iou_threshold}")
 
-        # Parse text_prompts from comma-separated string to list
+        # Map detected prompt text to output label/class
+        config["prompt_label_map"] = {} 
+
+        class_delimiter = config.get("class_delimiter")
+        prompt_delimiter = config.get("prompt_delimiter")
+        if not class_delimiter or not prompt_delimiter:
+            raise ValueError("Delimiters must be non-empty")
+
+        if class_delimiter == prompt_delimiter:
+            raise ValueError("class_delimiter and prompt_delimiter must differ")
+
+        # Parse text_prompts from a string using a configurable delimiter into a list
         text_prompts = config.get("text_prompts")
         if isinstance(text_prompts, str):
-            config["text_prompts"] = [p.strip() for p in text_prompts.split(",") if p.strip()]
+            items = [item.strip() for item in text_prompts.split(prompt_delimiter) if item.strip()] 
+            for item in items:
+                if not item:
+                    continue
+                if class_delimiter in item:
+                    k, v = item.split(class_delimiter, 1)
+                    prompt = v.strip()
+                    label = k.strip()
+
+                    if prompt in config["prompt_label_map"]:
+                        raise ValueError( f"Duplicate prompt mapping for '{prompt}': " f"'{config['prompt_label_map'][prompt]}' vs '{label}'")
+                    config["prompt_label_map"][prompt] = label
+                else:
+                    config["prompt_label_map"][item] = item
+            config["text_prompts"] = [ 
+                    item.split(class_delimiter, 1)[1].strip() if class_delimiter in item else item 
+                    for item in items 
+            ]
         elif text_prompts is None:
             config["text_prompts"] = None
         elif not isinstance(text_prompts, list):
-            raise ValueError(f"text_prompts must be a list or comma-separated string, got {type(text_prompts)}")
+            raise ValueError(f"text_prompts must be a list or delimiter separated string, got {type(text_prompts)}")
 
         # Parse prompt_sets from JSON string to list of dicts
         # Format: [{"name": "bowl", "prompts": ["bowl"], "topic": "main", "confidence_threshold": 0.5, "max_detections": 1}, ...]
@@ -395,6 +430,8 @@ class FilterSAM3Detector(Filter):
         self.model_id = config.get("model_id", "facebook/sam3")
         self.text_prompt = config.get("text_prompt")  # Single prompt (backward compatible)
         self.text_prompts = config.get("text_prompts")  # Multiple prompts for parallel detection
+        self.class_delimiter = config.get("class_delimiter")  # Delimiter for labels/class names
+        self.prompt_delimiter = config.get("prompt_delimiter") 
         self.prompt_sets = config.get("prompt_sets")  # Multi-output mode
         self.exemplars_path = config.get("exemplars_path")
         # Reference boxes on original image: list of [x, y, w, h] in pixels (SAM3-style)
@@ -1646,7 +1683,8 @@ class FilterSAM3Detector(Filter):
         class_max_scores: dict[str, float] = {}  # Track max score per class for classification block
 
         for det in detections:
-            label = det.get('class') or det.get('class_name') or 'object'
+            prompt = det.get('class') or det.get('class_name') or 'object'
+            label = self.config.get("prompt_label_map", {}).get(prompt, prompt)
             box = det.get('box')  # [x1, y1, x2, y2] pixel coordinates
             score = det.get('score', 0.0)
 
@@ -1671,6 +1709,7 @@ class FilterSAM3Detector(Filter):
             # aggregator-compatible format (class, rois) in same detection
             output_detections.append({
                 'label': label,
+                'prompt': prompt,
                 'confidence': score,
                 'bbox': bbox,
                 # Aggregator-compatible fields:
