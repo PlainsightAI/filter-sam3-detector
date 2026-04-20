@@ -1,6 +1,10 @@
 # Changelog
 SAM3 Detector filter release notes
 
+## v0.1.12 - 2026-04-19
+### Fixed
+- **Air-gapped deploys** (FILTER-422): set `HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1` in the Dockerfile so `huggingface_hub` skips HEAD revalidation against `huggingface.co` and serves the baked-in SAM3 cache directly. Unblocks `docker run --network=none` and offline deployments.
+
 ## v0.1.11 - 2026-04-19
 ### Changed
 - SPDX license expression in `pyproject.toml` normalized to `Apache-2.0 AND LicenseRef-SAM`; redundant `License ::` classifiers dropped.
