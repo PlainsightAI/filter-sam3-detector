@@ -1,6 +1,14 @@
 # Changelog
 SAM3 Detector filter release notes
 
+## v0.1.11 - 2026-04-20
+
+### Changed
+- Add create-release.yaml for GAR premium publishing
+- Add ci.yaml and security-scan.yaml
+- Add Makefile IMAGE for premium-filters/
+- Bump openfilter to >=0.1.27
+
 ## v0.1.10 - 2026-04-08
 ### Added
 - Bfloat16 mixed-precision inference for image path via persistent `torch.autocast` context, matching SAM3 video path pattern (FILTER-394)
