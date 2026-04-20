@@ -215,8 +215,13 @@ cp your_video.mp4 data/sample-video.mp4
 # 2. Set your HuggingFace token (required for gated SAM3 model)
 export HF_TOKEN="your_huggingface_token"
 
-# 3. Build the container (bakes model weights into image)
-docker compose build sam3_detector
+# 3. Build the container (bakes model weights into image).
+#    HF_TOKEN is passed as a BuildKit secret, not an env var or build arg,
+#    so it never ends up in an image layer. Compose does not forward the
+#    token, so invoke `docker build` directly and tag it to match the
+#    image referenced in docker-compose.yaml.
+docker build --secret id=hf_token,env=HF_TOKEN \
+  -t plainsightai/openfilter-sam3-detector:latest .
 
 # 4. Run the pipeline
 FILTER_TEXT_PROMPT="person" docker compose up
@@ -313,7 +318,9 @@ Convert noisy per-frame detections into stable presence/absence intervals using 
 # Run the integrated pipeline (temporal intervals built into SAM3 detector)
 cp your_video.mp4 data/sample-video.mp4
 export HF_TOKEN="your_token"
-docker compose build sam3_detector
+# Build directly; HF_TOKEN goes in as a BuildKit secret (compose can't forward it).
+docker build --secret id=hf_token,env=HF_TOKEN \
+  -t plainsightai/openfilter-sam3-detector:latest .
 FILTER_TEXT_PROMPT="person" docker compose up
 
 # Intervals stream to output/intervals.json as detection progresses
