@@ -1,9 +1,18 @@
 # Changelog
 SAM3 Detector filter release notes
 
-## v0.1.11 - 2026-04-19
+## v0.1.12 - 2026-04-19
 ### Fixed
-- **Air-gapped deploys** (FILTER-422): bake `HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1` into the Dockerfile. The SAM3 config + checkpoint are already cached into the image at build time (`Dockerfile:44`), so the HEAD revalidation `huggingface_hub` fires against `huggingface.co` on every `hf_hub_download(...)` call has no load-bearing purpose — it just fails DNS in offline environments and stalls initialization. The OFFLINE directives tell the library to serve directly from the cache.
+- **Air-gapped deploys** (FILTER-422): set `HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1` in the Dockerfile so `huggingface_hub` skips HEAD revalidation against `huggingface.co` and serves the baked-in SAM3 cache directly. Unblocks `docker run --network=none` and offline deployments.
+
+## v0.1.11 - 2026-04-19
+### Changed
+- SPDX license expression in `pyproject.toml` normalized to `Apache-2.0 AND LicenseRef-SAM`; redundant `License ::` classifiers dropped.
+- `.dockerignore` now allow-lists `LICENSING.md` so redistribution compliance files ship with built images.
+- Pinned `numpy>=1.26.4,<3` via `[tool.uv] override-dependencies` to keep transitive resolution stable across SAM3 / torch wheels.
+
+### CI
+- `version-check.yaml` gates `check-release-log` behind a `dorny/paths-filter` step; pure docs/CI-only PRs (e.g. `.github/**`, `*.md`, `.dockerignore`-only edits) no longer require a VERSION/RELEASE.md bump. Mirrors the pattern in `PlainsightAI/protege-ml`.
 
 ## v0.1.10 - 2026-04-08
 ### Added

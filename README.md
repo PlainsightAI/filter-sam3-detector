@@ -245,6 +245,8 @@ video_in → sam3_detector (with integrated temporal intervals) → webvis
 | `FILTER_HALF_LIFE` | 5.0 | EMA decay rate (frames) |
 | `FILTER_PRESENCE_THRESHOLD` | 0.4 | Detection threshold |
 
+> Note: SAM3 weights are baked into the image at build time, and the container runs with `HF_HUB_OFFLINE=1` / `TRANSFORMERS_OFFLINE=1`. No network or `HF_TOKEN` is needed at runtime — the image is safe to run with `--network=none`.
+
 **Output Format (intervals.json):**
 ```json
 {
