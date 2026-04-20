@@ -12,10 +12,10 @@ help:
 	@echo "  clean        - Clean build artifacts"
 
 install:
-	uv pip install -e .
+	pip install -e .
 
 install-dev:
-	uv pip install -e ".[dev]"
+	pip install -e ".[dev]"
 
 test:
 	python -m unittest discover -s tests -p "test_*.py" -v
