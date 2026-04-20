@@ -1,6 +1,15 @@
 # Changelog
 SAM3 Detector filter release notes
 
+## v0.1.11 - 2026-04-19
+### Changed
+- SPDX license expression in `pyproject.toml` normalized to `Apache-2.0 AND LicenseRef-SAM`; redundant `License ::` classifiers dropped.
+- `.dockerignore` now allow-lists `LICENSING.md` so redistribution compliance files ship with built images.
+- Pinned `numpy>=1.26.4,<3` via `[tool.uv] override-dependencies` to keep transitive resolution stable across SAM3 / torch wheels.
+
+### CI
+- `version-check.yaml` gates `check-release-log` behind a `dorny/paths-filter` step; pure docs/CI-only PRs (e.g. `.github/**`, `*.md`, `.dockerignore`-only edits) no longer require a VERSION/RELEASE.md bump. Mirrors the pattern in `PlainsightAI/protege-ml`.
+
 ## v0.1.10 - 2026-04-08
 ### Added
 - Bfloat16 mixed-precision inference for image path via persistent `torch.autocast` context, matching SAM3 video path pattern (FILTER-394)
