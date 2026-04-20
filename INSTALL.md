@@ -160,10 +160,12 @@ uv pip install -e . --force-reinstall
 
 **Problem**: Model fails to download from HuggingFace
 
+SAM3 weights are fetched **at image build time** and baked into the Docker image; runtime is air-gap-safe (`HF_HUB_OFFLINE=1` / `TRANSFORMERS_OFFLINE=1`), so failures here are almost always build-time auth issues, not runtime network issues.
+
 **Solutions**:
-1. Check internet connection
-2. Set HuggingFace token if needed: `export HF_TOKEN=your_token`
-3. Use VPN if HuggingFace is blocked in your region
+1. Ensure your HuggingFace token is passed to the build via the `hf_token` BuildKit secret (not `HF_TOKEN` at runtime): `docker build --secret id=hf_token,env=HF_TOKEN ...`
+2. Confirm your account has accepted the gated-model license for `facebook/sam3` on huggingface.co
+3. If your build host can't reach huggingface.co, build on a networked host and distribute the resulting image; the running container does not require network access
 
 ## Development Setup
 

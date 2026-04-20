@@ -12,7 +12,7 @@ version = { file = "VERSION" }
 name = "filter_sam3_detector"
 readme = "README.md"
 requires-python = ">=3.10, <3.13"
-license = {text = "Apache-2.0 (filter code); SAM License (sam3/)"}
+license = "Apache-2.0 AND LicenseRef-SAM"
 license-files = ["LICENSE", "LICENSING.md", "sam3/LICENSE"]
 
 classifiers = [
@@ -20,8 +20,6 @@ classifiers = [
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
-  "License :: OSI Approved :: Apache Software License",
-  "License :: Other/Proprietary License",
 ]
 
 dynamic = ["version"]
@@ -55,6 +53,9 @@ dev = [
 
 [project.scripts]
 filter-sam3-detector = "filter_sam3_detector.filter:FilterSAM3Detector.run"
+
+[tool.uv]
+override-dependencies = ["numpy>=1.26.4,<3"]
 
 [tool.uv.sources]
 sam3 = { path = "sam3" }
