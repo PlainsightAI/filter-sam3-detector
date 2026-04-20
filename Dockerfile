@@ -11,10 +11,6 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     UV_COMPILE_BYTECODE=1 \
     UV_PYTHON_DOWNLOADS=never
 
-# Serve SAM3 weights from baked cache; skip hub revalidation for air-gapped runs.
-ENV HF_HUB_OFFLINE=1 \
-    TRANSFORMERS_OFFLINE=1
-
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     git \
@@ -45,6 +41,12 @@ token = open('/run/secrets/hf_token').read().strip(); \
 print(f'Token present: {bool(token)}'); \
 snapshot_download(repo_id='facebook/sam3', token=token); \
 print('SAM3 model weights baked into container')"
+
+# Serve SAM3 weights from baked cache; skip hub revalidation for air-gapped runs.
+# Placed after snapshot_download so the build step is never gated by these flags,
+# regardless of future huggingface_hub behavior around explicit `token=` + offline.
+ENV HF_HUB_OFFLINE=1 \
+    TRANSFORMERS_OFFLINE=1
 
 # Default: run SAM3 detector filter
 CMD ["python", "-m", "filter_sam3_detector.filter"]
