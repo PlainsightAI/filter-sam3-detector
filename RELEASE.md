@@ -1,6 +1,15 @@
 # Changelog
 SAM3 Detector filter release notes
 
+## v0.1.14 - 2026-04-21
+
+### Changed
+- **Test tooling** (FILTER-425): `make test` / `make test-cov` now shell out to plain `pytest` (matching `openfilter` and `filter-template`), assuming `make install-dev` has populated the env. Drops the legacy `unittest discover` invocation and the `uv run` wrapper on `test-cov`.
+- Loosen stale `[dev]` build-tool pins (`setuptools`, `wheel`) to lower bounds so `openfilter[all]>=0.1.27`'s transitive `openlineage-python` can resolve; `pytest` / `pytest-cov` stay pinned to keep test behavior stable.
+
+### CI
+- New `.github/workflows/test.yaml` gates PRs and pushes to `main` on `pytest` across Python 3.10 / 3.11 / 3.12, using `astral-sh/setup-uv` for install + caching.
+
 ## v0.1.13 - 2026-04-20
 
 ### Changed

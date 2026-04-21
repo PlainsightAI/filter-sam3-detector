@@ -538,6 +538,9 @@ filter-sam3-detector/
 ### Testing
 
 ```bash
+# One-time: install dev dependencies (pytest, coverage, build tooling)
+make install-dev
+
 # Run tests
 make test
 
@@ -550,6 +553,10 @@ make lint
 # Format code
 make format
 ```
+
+Both `make test` and `make test-cov` assume `make install-dev` has populated the environment; they invoke `pytest` directly with no wrapper. If you use `uv`, substitute `uv sync --extra dev` for `make install-dev` and run `uv run pytest -v tests/`.
+
+`pytest` is gated in CI via `.github/workflows/test.yaml`, which runs the suite on Python 3.10 / 3.11 / 3.12 for every PR and push to `main`.
 
 ## Known Issues
 

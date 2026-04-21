@@ -5,8 +5,8 @@ help:
 	@echo "Available targets:"
 	@echo "  install      - Install the package"
 	@echo "  install-dev  - Install with development dependencies"
-	@echo "  test         - Run tests"
-	@echo "  test-cov     - Run tests with coverage"
+	@echo "  test         - Run pytest (requires 'make install-dev' first)"
+	@echo "  test-cov     - Run pytest with coverage (requires 'make install-dev' first)"
 	@echo "  lint         - Check code quality"
 	@echo "  format       - Format code"
 	@echo "  clean        - Clean build artifacts"
@@ -18,10 +18,10 @@ install-dev:
 	pip install -e ".[dev]"
 
 test:
-	python -m unittest discover -s tests -p "test_*.py" -v
+	pytest -v tests/
 
 test-cov:
-	uv run pytest --cov=filter_sam3_detector --cov-report=html --cov-report=term tests/
+	pytest --cov=filter_sam3_detector --cov-report=html --cov-report=term tests/
 
 lint:
 	uv run ruff check .
