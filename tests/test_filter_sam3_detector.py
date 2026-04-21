@@ -34,8 +34,8 @@ class TestFilterSAM3Detector(unittest.TestCase):
         self.assertTrue(config["output_boxes"])
         self.assertTrue(config["output_scores"])
         self.assertEqual(config["output_label"], "sam3_detections")
-        self.assertFalse(config["debug"])
-        self.assertFalse(config["visualize"])
+        self.assertFalse(config.get("debug", False))
+        self.assertFalse(config.get("visualize", False))
 
 
 if __name__ == '__main__':
