@@ -573,6 +573,7 @@ class TemporalIntervalFilter(Filter):
             full_decay_life=config.full_decay_life,
             presence_threshold=config.presence_threshold,
             output_json_path=config.output_json_path if config.emit_on_complete else None,
+            streaming_mode=config.get('streaming_mode', False),
         )
 
         logger.info(f"TemporalIntervalFilter initialized with alpha={self.interval_tracker.tracker.alpha:.4f}")

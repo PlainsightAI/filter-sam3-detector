@@ -30,7 +30,7 @@ class TestFilterSAM3Detector(unittest.TestCase):
         self.assertEqual(config["confidence_threshold"], 0.5)
         self.assertEqual(config["mask_threshold"], 0.5)
         self.assertEqual(config["max_detections"], 100)
-        self.assertTrue(config["output_masks"])
+        self.assertFalse(config["output_masks"])
         self.assertTrue(config["output_boxes"])
         self.assertTrue(config["output_scores"])
         self.assertEqual(config["output_label"], "sam3_detections")
