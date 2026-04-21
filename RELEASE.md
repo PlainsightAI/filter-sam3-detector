@@ -1,6 +1,15 @@
 # Changelog
 SAM3 Detector filter release notes
 
+## v0.1.14 - 2026-04-21
+
+### Changed
+- Switch create-release.yaml from premium to public shared workflow (Docker Hub publishing)
+
+### Fixed
+- Fix test_config_defaults: update expected model_id from `facebook/sam2-hiera-large` to `facebook/sam3`
+- Fix test_output_json_file: enable streaming_mode so output file is written
+
 ## v0.1.13 - 2026-04-20
 
 ### Changed
