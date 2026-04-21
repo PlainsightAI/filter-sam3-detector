@@ -558,6 +558,10 @@ Both `make test` and `make test-cov` assume `make install-dev` has populated the
 
 `pytest` is gated in CI via `.github/workflows/test.yaml`, which runs the suite on Python 3.10 / 3.11 / 3.12 for every PR and push to `main`.
 
+### Contributing
+
+PRs follow the template in [`.github/pull_request_template.md`](.github/pull_request_template.md); every commit must carry a `Signed-off-by:` trailer per the [Developer Certificate of Origin](https://developercertificate.org/) (use `git commit --signoff`), which is enforced in CI by the `dco` workflow.
+
 ## Known Issues
 
 ### Exemplar-Based Detection Not Working

@@ -9,6 +9,7 @@ SAM3 Detector filter release notes
 
 ### CI
 - New `.github/workflows/test.yaml` gates PRs and pushes to `main` on `pytest` across Python 3.10 / 3.11 / 3.12, using `astral-sh/setup-uv` for install + caching.
+- **OSS contribution guardrails** (FILTER-425): added `.github/pull_request_template.md` with a DCO checkbox + standard summary/test-plan/checklist sections; added `.github/workflows/dco.yaml` (gates PRs to `main` via `PlainsightAI/gh-actions/dco-check@main`) and `.github/workflows/review-freshness.yaml` (dismisses stale external approvals on `pull_request_target: synchronize` via `PlainsightAI/gh-actions/external-review-freshness@main`). README picks up a one-line Contributing note pointing at the template + DCO. Review-freshness falls back to `GITHUB_TOKEN` until the `ORG_MEMBER_READ_PAT` secret is provisioned.
 
 ## v0.1.13 - 2026-04-20
 

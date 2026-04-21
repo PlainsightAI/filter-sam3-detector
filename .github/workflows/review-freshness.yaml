@@ -1,0 +1,17 @@
+name: review-freshness
+
+on:
+  pull_request_target:
+    types: [synchronize]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  dismiss-external-approvals:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: PlainsightAI/gh-actions/external-review-freshness@main
+        with:
+          organization: PlainsightAI
+          github-token: ${{ secrets.ORG_MEMBER_READ_PAT || secrets.GITHUB_TOKEN }}
