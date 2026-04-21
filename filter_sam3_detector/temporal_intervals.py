@@ -568,11 +568,14 @@ class TemporalIntervalFilter(Filter):
         self.event_topic_name = config.event_topic_name
 
         # Use reusable IntervalTracker for all tracking logic
+        # streaming_mode opens the ndjson file so _close_interval writes incrementally;
+        # finalize() then closes any open intervals and the file on shutdown.
         self.interval_tracker = IntervalTracker(
             half_life=config.half_life,
             full_decay_life=config.full_decay_life,
             presence_threshold=config.presence_threshold,
             output_json_path=config.output_json_path if config.emit_on_complete else None,
+            streaming_mode=bool(config.output_json_path and config.emit_on_complete),
         )
 
         logger.info(f"TemporalIntervalFilter initialized with alpha={self.interval_tracker.tracker.alpha:.4f}")
