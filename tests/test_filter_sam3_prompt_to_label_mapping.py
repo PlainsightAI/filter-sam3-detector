@@ -92,6 +92,19 @@ class TestFilterSAM3PromptToLabelMapping(unittest.TestCase):
             "truck": "truck",
         })
 
+    def test_backward_compatibility(self):
+        config = self.detector.normalize_config(
+            make_base_config(
+                text_prompts="car,dog,truck",
+                prompt_delimiter=",",
+            )
+        )
+        self.assertEqual(config["text_prompts"], ["car", "dog", "truck"])
+        self.assertEqual(config["prompt_label_map"], {
+            "car": "car",
+            "dog": "dog",
+            "truck": "truck",
+        })
     def test_empty_delimiters(self):
         with self.assertRaises(ValueError):
             self.detector.normalize_config(
