@@ -1,5 +1,5 @@
 IMAGE ?= us-west1-docker.pkg.dev/plainsightai-prod/premium-filters/filter-sam3-detector
-.PHONY: help install install-dev test test-cov lint format clean
+.PHONY: help install install-dev test test-coverage test-cov lint format clean
 
 help:
 	@echo "Available targets:"
@@ -19,6 +19,10 @@ install-dev:
 
 test:
 	python -m unittest discover -s tests -p "test_*.py" -v
+
+test-coverage:
+	@mkdir -p Reports
+	@python -m pytest -v --cov=filter_sam3_detector --junitxml=Reports/coverage.xml --cov-report=json:Reports/coverage.json tests/
 
 test-cov:
 	uv run pytest --cov=filter_sam3_detector --cov-report=html --cov-report=term tests/
