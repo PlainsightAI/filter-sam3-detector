@@ -541,8 +541,8 @@ filter-sam3-detector/
 # Run tests
 make test
 
-# Run tests with coverage
-make test-cov
+# Run tests with coverage (pass extra pytest args via PYTEST_ARGS)
+make test PYTEST_ARGS="--cov=filter_sam3_detector --cov-report=term"
 
 # Check code quality
 make lint
