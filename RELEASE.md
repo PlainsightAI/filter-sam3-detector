@@ -4,11 +4,14 @@ SAM3 Detector filter release notes
 ## v0.1.14 - 2026-04-21
 
 ### Changed
-- Switch create-release.yaml from premium to public shared workflow (Docker Hub publishing)
+- Bump openfilter SDK to >=0.1.30
+- Add source-paths release gate to CI workflow
+- Add test-coverage Makefile target for Testmo composite action
 
 ### Fixed
 - Fix test_config_defaults: update expected model_id from `facebook/sam2-hiera-large` to `facebook/sam3`
-- Fix test_output_json_file: enable streaming_mode so output file is written
+- Fix test_output_json_file: auto-enable streaming_mode when output_json_path + emit_on_complete are set
+- Add `debug: False` to SAM3 filter defaults
 
 ## v0.1.13 - 2026-04-20
 
