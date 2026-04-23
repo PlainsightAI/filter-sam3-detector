@@ -17,5 +17,5 @@ jobs:
       docker_image: plainsightai/openfilter-sam3-detector
       python_versions: '["3.11", "3.12"]'
     secrets:
-      PYPI_API_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
-      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+      PYPI_API_TOKEN: ${{ secrets.PLAINSIGHT_PYPI_TOKEN }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_ACCESS_TOKEN }}
