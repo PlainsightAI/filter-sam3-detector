@@ -1,6 +1,26 @@
 # Changelog
 SAM3 Detector filter release notes
 
+## Unreleased
+
+### CI
+- Consolidate `make test` onto a single pytest path; coverage flags pass through `PYTEST_ARGS=`.
+- Loosen `[dev]` pins (setuptools/wheel/pytest/pytest-cov) from `==` to `~=` so `uv` can resolve against the current openfilter transitive tree, while still capping the current major.
+- Drop duplicate `test.yaml` workflow — `release / run-tests` already gates every PR.
+- Apply main-branch merge gate via `.github/rulesets/main.json` + `apply-rulesets.yaml` (rulesets-as-code).
+
+## v0.1.14 - 2026-04-21
+
+### Changed
+- Bump openfilter SDK to >=0.1.30
+- Add source-paths release gate to CI workflow
+- Add test-coverage Makefile target for Testmo composite action
+
+### Fixed
+- Fix test_config_defaults: update expected model_id from `facebook/sam2-hiera-large` to `facebook/sam3`
+- Fix test_output_json_file: auto-enable streaming_mode when output_json_path + emit_on_complete are set
+- Add `debug: False` to SAM3 filter defaults
+
 ## v0.1.13 - 2026-04-20
 
 ### Changed

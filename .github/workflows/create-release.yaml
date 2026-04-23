@@ -17,6 +17,11 @@ jobs:
       pull-requests: read
     with:
       python_versions: '["3.11", "3.12"]'
+      source-paths: |
+        filter_*/**
+        pyproject.toml
+        Dockerfile*
+        requirements*.txt
     secrets:
       TESTMO_PLAINSIGHT_URL: ${{ secrets.TESTMO_PLAINSIGHT_URL }}
       TESTMO_PLAINSIGHT_TESTING_API_KEY: ${{ secrets.TESTMO_PLAINSIGHT_TESTING_API_KEY }}
