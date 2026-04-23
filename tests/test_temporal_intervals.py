@@ -547,7 +547,6 @@ class TestTemporalIntervalFilter(TestCase):
                 'half_life': 0.5,
                 'output_json_path': str(output_path),
                 'emit_on_complete': True,
-                'streaming_mode': True,
             })
             filter_instance = TemporalIntervalFilter(config=config)
             filter_instance.setup(config)
