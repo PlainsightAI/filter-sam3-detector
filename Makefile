@@ -1,3 +1,4 @@
+IMAGE ?= us-west1-docker.pkg.dev/plainsightai-prod/premium-filters/filter-sam3-detector
 .PHONY: help install install-dev test test-cov lint format clean
 
 help:
@@ -11,10 +12,10 @@ help:
 	@echo "  clean        - Clean build artifacts"
 
 install:
-	uv pip install -e .
+	pip install -e ".[dev]"
 
 install-dev:
-	uv pip install -e ".[dev]"
+	pip install -e ".[dev]"
 
 test:
 	python -m unittest discover -s tests -p "test_*.py" -v
