@@ -22,7 +22,7 @@ class TestFilterSAM3Detector(unittest.TestCase):
         """Test that default configuration values are set correctly."""
         config = FilterSAM3Detector.normalize_config(FilterConfig({}))
         
-        self.assertEqual(config["model_id"], "facebook/sam2-hiera-large")
+        self.assertEqual(config["model_id"], "facebook/sam3")
         # Default is "cuda" but we don't test actual GPU usage in CI
         self.assertIn(config["device"], ["cuda", "cpu", "mps"])
         self.assertIsNone(config["text_prompt"])
@@ -30,7 +30,7 @@ class TestFilterSAM3Detector(unittest.TestCase):
         self.assertEqual(config["confidence_threshold"], 0.5)
         self.assertEqual(config["mask_threshold"], 0.5)
         self.assertEqual(config["max_detections"], 100)
-        self.assertTrue(config["output_masks"])
+        self.assertFalse(config["output_masks"])
         self.assertTrue(config["output_boxes"])
         self.assertTrue(config["output_scores"])
         self.assertEqual(config["output_label"], "sam3_detections")
