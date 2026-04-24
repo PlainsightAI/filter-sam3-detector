@@ -63,6 +63,10 @@ build-image:
 		--secret id=hf_token,src="$$TMPFILE" \
 		.
 
+# Requires the caller to have docker auth configured for $(IMAGE)'s registry
+# (e.g. `gcloud auth configure-docker us-west1-docker.pkg.dev` for GAR).
+# The reusable premium-release workflow runs this in its `Configure Docker for GAR`
+# step before invoking this target; direct callers must do the equivalent.
 publish-image:
 	docker push $(IMAGE):$(DOCKER_TAG)
 
