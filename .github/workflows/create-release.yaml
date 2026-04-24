@@ -23,10 +23,7 @@ jobs:
         Dockerfile*
         requirements*.txt
         Makefile
-    secrets:
-      TESTMO_PLAINSIGHT_URL: ${{ secrets.TESTMO_PLAINSIGHT_URL }}
-      TESTMO_PLAINSIGHT_TESTING_API_KEY: ${{ secrets.TESTMO_PLAINSIGHT_TESTING_API_KEY }}
-      GH_DOCS_PUBLISHING_TOKEN: ${{ secrets.GH_DOCS_PUBLISHING_TOKEN }}
       # SAM3-scoped; repo-level only. Upstream is projects/plainsightai-dev/
       # secrets/sam3-hf-token — do not elevate to org-level.
-      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      forward_secrets_as_env: HF_TOKEN
+    secrets: inherit
