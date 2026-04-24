@@ -27,7 +27,18 @@ jobs:
       TESTMO_PLAINSIGHT_URL: ${{ secrets.TESTMO_PLAINSIGHT_URL }}
       TESTMO_PLAINSIGHT_TESTING_API_KEY: ${{ secrets.TESTMO_PLAINSIGHT_TESTING_API_KEY }}
       GH_DOCS_PUBLISHING_TOKEN: ${{ secrets.GH_DOCS_PUBLISHING_TOKEN }}
-      # HF_TOKEN is repo-local (gcloud secrets versions access latest
-      # --secret=sam3-hf-token --project=plainsightai-dev | gh secret set HF_TOKEN)
-      # — passed through so publish-gar-premium's Docker build can mount it.
+      # HF_TOKEN is a REPO-LEVEL secret scoped specifically to SAM3 access.
+      # It is a copy of projects/plainsightai-dev/secrets/sam3-hf-token —
+      # which itself grants HuggingFace access to the SAM3 model only.
+      #
+      # Do NOT elevate this to an organization-level GH Actions secret.
+      # That would broadcast SAM3 access into every PlainsightAI filter's
+      # workflow context, which is both a leak and a rotation problem.
+      # Other filters that need HF access should store their own narrowly-
+      # scoped token as their own repo-level HF_TOKEN.
+      #
+      # Rotation:
+      #   gcloud secrets versions access latest --secret=sam3-hf-token \
+      #     --project=plainsightai-dev \
+      #     | gh secret set HF_TOKEN --repo PlainsightAI/filter-sam3-detector
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
