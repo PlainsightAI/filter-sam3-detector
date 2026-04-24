@@ -1,14 +1,6 @@
 # Changelog
 SAM3 Detector filter release notes
 
-## Unreleased
-
-### CI
-- Consolidate `make test` onto a single pytest path; coverage flags pass through `PYTEST_ARGS=`.
-- Loosen `[dev]` pins (setuptools/wheel/pytest/pytest-cov) from `==` to `~=` so `uv` can resolve against the current openfilter transitive tree, while still capping the current major.
-- Drop duplicate `test.yaml` workflow — `release / run-tests` already gates every PR.
-- Apply main-branch merge gate via `.github/rulesets/main.json` + `apply-rulesets.yaml` (rulesets-as-code).
-
 ## v0.1.14 - 2026-04-21
 
 ### Changed
