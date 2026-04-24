@@ -5,7 +5,12 @@ IMAGE ?= us-west1-docker.pkg.dev/plainsightai-prod/premium-filters/filter-sam3-d
 VERSION ?= $(shell cat VERSION 2>/dev/null | tr -d '[:space:]')
 DOCKER_TAG ?= $(VERSION:v%=%)
 HF_SECRET ?= sam3-hf-token
-HF_SECRET_PROJECT ?= plainsightai-prod
+# Secret lives in plainsightai-dev (the premium-release SA in prod can't reach
+# it without a cross-project IAM grant we explicitly chose not to create;
+# release CI threads HF_TOKEN through as a repo-level GH Actions secret
+# instead). This default is only hit when someone runs `make build-image`
+# locally with ADC into dev.
+HF_SECRET_PROJECT ?= plainsightai-dev
 
 .PHONY: help install test test-coverage lint format build-wheel build-image publish-image clean
 
