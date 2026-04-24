@@ -1,15 +1,8 @@
 IMAGE ?= us-west1-docker.pkg.dev/plainsightai-prod/premium-filters/filter-sam3-detector
-# VERSION keeps the "v" prefix when set (matches the release_tag output the
-# reusable workflow passes through as an env var); DOCKER_TAG strips it for
-# image tagging, matching cloudbuild.yaml's `sed 's/^v//'` convention.
 VERSION ?= $(shell cat VERSION 2>/dev/null | tr -d '[:space:]')
+# Strip the v-prefix for image tagging; keep VERSION itself for git semantics.
 DOCKER_TAG ?= $(VERSION:v%=%)
 HF_SECRET ?= sam3-hf-token
-# Secret lives in plainsightai-dev (the premium-release SA in prod can't reach
-# it without a cross-project IAM grant we explicitly chose not to create;
-# release CI threads HF_TOKEN through as a repo-level GH Actions secret
-# instead). This default is only hit when someone runs `make build-image`
-# locally with ADC into dev.
 HF_SECRET_PROJECT ?= plainsightai-dev
 
 .PHONY: help install test test-coverage lint format build-wheel build-image publish-image clean
@@ -48,12 +41,8 @@ build-wheel:
 	python -m pip install --upgrade build
 	python -m build --wheel
 
-# The Dockerfile's SAM3 weight snapshot step requires `--mount=type=secret,id=hf_token`.
-# Honor a pre-set HF_TOKEN env (e.g. passed through from the workflow's secrets block)
-# and otherwise fall back to GCP Secret Manager, mirroring cloudbuild.yaml's approach.
-# The reusable premium-release workflow authenticates to GCP before invoking this
-# target, so `gcloud secrets versions access` works without extra setup as long as
-# the workflow's service account has roles/secretmanager.secretAccessor on the secret.
+# Dockerfile mounts hf_token as a BuildKit secret. Prefer HF_TOKEN env, fall
+# back to Secret Manager for local runs under ADC.
 build-image:
 	@set -e; \
 	if [ -z "$$HF_TOKEN" ]; then \
@@ -68,10 +57,7 @@ build-image:
 		--secret id=hf_token,src="$$TMPFILE" \
 		.
 
-# Requires the caller to have docker auth configured for $(IMAGE)'s registry
-# (e.g. `gcloud auth configure-docker us-west1-docker.pkg.dev` for GAR).
-# The reusable premium-release workflow runs this in its `Configure Docker for GAR`
-# step before invoking this target; direct callers must do the equivalent.
+# Caller must have docker auth configured for $(IMAGE)'s registry.
 publish-image:
 	docker push $(IMAGE):$(DOCKER_TAG)
 
