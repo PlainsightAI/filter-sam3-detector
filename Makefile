@@ -1,27 +1,27 @@
 IMAGE ?= us-west1-docker.pkg.dev/plainsightai-prod/premium-filters/filter-sam3-detector
-VERSION ?= $(shell cat VERSION 2>/dev/null | tr -d '[:space:]' | sed 's/^v//')
+# VERSION keeps the "v" prefix when set (matches the release_tag output the
+# reusable workflow passes through as an env var); DOCKER_TAG strips it for
+# image tagging, matching cloudbuild.yaml's `sed 's/^v//'` convention.
+VERSION ?= $(shell cat VERSION 2>/dev/null | tr -d '[:space:]')
+DOCKER_TAG ?= $(VERSION:v%=%)
 HF_SECRET ?= sam3-hf-token
 HF_SECRET_PROJECT ?= plainsightai-prod
 
-.PHONY: help install install-dev test test-coverage lint format build-wheel build-image publish-image clean
+.PHONY: help install test test-coverage lint format build-wheel build-image publish-image clean
 
 help:
 	@echo "Available targets:"
-	@echo "  install       - Install the package"
-	@echo "  install-dev   - Install with development dependencies"
+	@echo "  install       - Install the package with dev dependencies"
 	@echo "  test          - Run tests (pytest); pass PYTEST_ARGS= for extras (e.g. --cov=filter_sam3_detector)"
 	@echo "  test-coverage - Run tests with junit + coverage XML/JSON (used by Testmo composite action)"
 	@echo "  lint          - Check code quality"
 	@echo "  format        - Format code"
 	@echo "  build-wheel   - Build Python wheel into dist/ (used by publish-python-wheel action)"
-	@echo "  build-image   - Build Docker image \$$(IMAGE):\$$(VERSION) (pulls HF token from Secret Manager)"
-	@echo "  publish-image - Push Docker image \$$(IMAGE):\$$(VERSION)"
+	@echo "  build-image   - Build Docker image \$$(IMAGE):\$$(DOCKER_TAG) (pulls HF token from Secret Manager)"
+	@echo "  publish-image - Push Docker image \$$(IMAGE):\$$(DOCKER_TAG)"
 	@echo "  clean         - Clean build artifacts"
 
 install:
-	pip install -e ".[dev]"
-
-install-dev:
 	pip install -e ".[dev]"
 
 test:
@@ -59,12 +59,12 @@ build-image:
 	trap 'rm -f "$$TMPFILE"' EXIT; \
 	printf '%s' "$$HF_TOKEN" > "$$TMPFILE"; \
 	DOCKER_BUILDKIT=1 docker build \
-		-t $(IMAGE):$(VERSION) \
+		-t $(IMAGE):$(DOCKER_TAG) \
 		--secret id=hf_token,src="$$TMPFILE" \
 		.
 
 publish-image:
-	docker push $(IMAGE):$(VERSION)
+	docker push $(IMAGE):$(DOCKER_TAG)
 
 clean:
 	rm -rf build/

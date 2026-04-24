@@ -22,6 +22,7 @@ jobs:
         pyproject.toml
         Dockerfile*
         requirements*.txt
+        Makefile
     secrets:
       TESTMO_PLAINSIGHT_URL: ${{ secrets.TESTMO_PLAINSIGHT_URL }}
       TESTMO_PLAINSIGHT_TESTING_API_KEY: ${{ secrets.TESTMO_PLAINSIGHT_TESTING_API_KEY }}
