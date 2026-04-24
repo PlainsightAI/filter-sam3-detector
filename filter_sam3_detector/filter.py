@@ -131,6 +131,7 @@ class FilterSAM3Detector(Filter):
             "frames_output_dir": None,  # Directory to save original frames
             "annotated_frames_output_dir": None,  # Directory to save annotated frames (separate from original)
             "save_annotated_frames": False,  # Save frames with visual annotations (boxes, scores, masks)
+            "debug": False,
             "visualize": False,
             "viz_topic": "",  # When set (e.g. "viz"), main gets original frame + meta; this topic gets drawn frame + meta
             # Temporal interval tracking options (integrated from TemporalIntervalFilter)

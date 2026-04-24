@@ -1,15 +1,37 @@
 # Changelog
 SAM3 Detector filter release notes
 
-## v0.1.14 - 2026-04-23
+## v0.1.16 - 2026-04-23
 Enhances text_prompts parsing in FilterSAM3Detector with configurable delimiters and prompt→label mapping.
 
-Changes
+### Changed
 Added prompt_delimiter and class_delimiter
 Support class:prompt format (e.g. "vehicle:car;animal:cat")
 Normalize prompts into list + prompt_label_map
 Validate delimiters and reject duplicate mappings
 Include both label and prompt in output
+
+## v0.1.15 - 2026-04-23
+
+### CI
+- Consolidate `make test` onto a single pytest path; coverage flags pass through `PYTEST_ARGS=` (e.g. `make test PYTEST_ARGS=--cov=filter_sam3_detector`). Drops the stdlib `unittest discover` invocation.
+- Drop duplicate `test.yaml` workflow — `release / run-tests` already gates every PR via the reusable filter-release workflow.
+- Apply main-branch merge gate via `.github/rulesets/main.json` + `apply-rulesets.yaml` (rulesets-as-code). Branch protection now lives in-tree and self-applies on pushes to main.
+
+### Changed
+- Loosen `[dev]` pins (`setuptools`, `wheel`, `pytest`, `pytest-cov`) from `==` to `~=` so patch-level fixes are picked up while keeping the current minor cap. Protects `release / run-tests` (which installs via `make install` → `pip install -e ".[dev]"`) from future pytest 9 / setuptools 80 surprises.
+
+## v0.1.14 - 2026-04-21
+
+### Changed
+- Bump openfilter SDK to >=0.1.30
+- Add source-paths release gate to CI workflow
+- Add test-coverage Makefile target for Testmo composite action
+
+### Fixed
+- Fix test_config_defaults: update expected model_id from `facebook/sam2-hiera-large` to `facebook/sam3`
+- Fix test_output_json_file: auto-enable streaming_mode when output_json_path + emit_on_complete are set
+- Add `debug: False` to SAM3 filter defaults
 
 ## v0.1.13 - 2026-04-20
 

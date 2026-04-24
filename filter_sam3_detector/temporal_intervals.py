@@ -567,12 +567,15 @@ class TemporalIntervalFilter(Filter):
         self.emit_event_topic = config.emit_event_topic
         self.event_topic_name = config.event_topic_name
 
-        # Use reusable IntervalTracker for all tracking logic
+        # Auto-enable streaming when an output path is requested and emit_on_complete
+        # is set: IntervalTracker only opens the ndjson handle when streaming_mode is
+        # True, so leaving it off would silently drop the file the caller asked for.
         self.interval_tracker = IntervalTracker(
             half_life=config.half_life,
             full_decay_life=config.full_decay_life,
             presence_threshold=config.presence_threshold,
             output_json_path=config.output_json_path if config.emit_on_complete else None,
+            streaming_mode=bool(config.output_json_path and config.emit_on_complete),
         )
 
         logger.info(f"TemporalIntervalFilter initialized with alpha={self.interval_tracker.tracker.alpha:.4f}")

@@ -25,7 +25,7 @@ classifiers = [
 dynamic = ["version"]
 
 dependencies = [
-  "openfilter[all]>=0.1.27,<0.2.0",
+  "openfilter[all]>=0.1.30,<0.2.0",
   "torch>=2.0.0",
   "torchvision>=0.15.0",
   "numpy>=1.24.0",
@@ -44,11 +44,11 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
   "build>=1.2.2",
-  "setuptools==72.2.0",
+  "setuptools~=72.2.0",
   "twine>=6.1.0,<7",
-  "wheel==0.44.0",
-  "pytest==8.3.4",
-  "pytest-cov==6.0.0",
+  "wheel~=0.44.0",
+  "pytest~=8.3.4",
+  "pytest-cov~=6.0.0",
 ]
 
 [project.scripts]
