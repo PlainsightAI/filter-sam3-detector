@@ -7,6 +7,7 @@ SAM3 Detector filter release notes
 - Consolidate `make test` onto a single pytest path; coverage flags pass through `PYTEST_ARGS=` (e.g. `make test PYTEST_ARGS=--cov=filter_sam3_detector`). Drops the stdlib `unittest discover` invocation.
 - Drop duplicate `test.yaml` workflow — `release / run-tests` already gates every PR via the reusable filter-release workflow.
 - Apply main-branch merge gate via `.github/rulesets/main.json` + `apply-rulesets.yaml` (rulesets-as-code). Branch protection now lives in-tree and self-applies on pushes to main.
+- Add `build-wheel`, `build-image`, `publish-image` Makefile targets so the reusable premium-release workflow's wheel + image publish jobs complete end-to-end (no more `make: *** No rule to make target 'build-wheel'`). `build-image` honors a pre-set `HF_TOKEN` env and otherwise fetches `sam3-hf-token` from GCP Secret Manager, matching `cloudbuild.yaml`'s approach. New `DOCKER_TAG` variable strips the `v` prefix from `VERSION` so image tags match `cloudbuild.yaml`'s convention. Drop redundant `install-dev` target (identical to `install`). Add `Makefile` to the release workflow's `source-paths` so future Makefile-only changes trigger the release-log check.
 
 ### Changed
 - Loosen `[dev]` pins (`setuptools`, `wheel`, `pytest`, `pytest-cov`) from `==` to `~=` so patch-level fixes are picked up while keeping the current minor cap. Protects `release / run-tests` (which installs via `make install` → `pip install -e ".[dev]"`) from future pytest 9 / setuptools 80 surprises.
