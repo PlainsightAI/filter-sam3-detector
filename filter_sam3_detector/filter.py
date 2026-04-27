@@ -109,8 +109,8 @@ class FilterSAM3Detector(Filter):
             "device": "cuda",
             "text_prompt": None,  # Single prompt (backward compatible)
             "text_prompts": None,  # Delimiter-separated prompts, e.g. "vehicle:car,truck;animal:cat, dogs"
-            "prompt_delimiter": ";",  # Multiple prompts separated by ';'
-            "class_delimiter": ":",  # Separates class label from prompt, e.g. "vehicle:car"
+            "prompt_delimiter": "###",  # Multiple prompts separated by ';'
+            "class_delimiter": "|||",  # Separates class label from prompt, e.g. "vehicle:car"
             "prompt_sets": None,  # Multi-output mode: list of {name, prompts, topic, ...}
             "exemplars_path": None,
             "exemplar_embeddings_cache": None,
@@ -345,8 +345,6 @@ class FilterSAM3Detector(Filter):
         if not (0.0 <= confusion_iou_threshold <= 1.0):
             raise ValueError(f"confusion_iou_threshold must be between 0 and 1, got {confusion_iou_threshold}")
 
-        # Map detected prompt text to output label/class
-        config["prompt_label_map"] = {} 
 
         class_delimiter = config.get("class_delimiter")
         prompt_delimiter = config.get("prompt_delimiter")
@@ -358,11 +356,12 @@ class FilterSAM3Detector(Filter):
 
         # Parse text_prompts from a string using a configurable delimiter into a list
         text_prompts = config.get("text_prompts")
+        config.setdefault("prompt_label_map", {})
         if isinstance(text_prompts, str):
+            # Map detected prompt text to output label/class
+            config["prompt_label_map"] = {} 
             items = [item.strip() for item in text_prompts.split(prompt_delimiter) if item.strip()] 
             for item in items:
-                if not item:
-                    continue
                 if class_delimiter in item:
                     k, v = item.split(class_delimiter, 1)
                     prompt = v.strip()
@@ -431,8 +430,6 @@ class FilterSAM3Detector(Filter):
         self.model_id = config.get("model_id", "facebook/sam3")
         self.text_prompt = config.get("text_prompt")  # Single prompt (backward compatible)
         self.text_prompts = config.get("text_prompts")  # Multiple prompts for parallel detection
-        self.class_delimiter = config.get("class_delimiter")  # Delimiter for labels/class names
-        self.prompt_delimiter = config.get("prompt_delimiter") 
         self.prompt_sets = config.get("prompt_sets")  # Multi-output mode
         self.exemplars_path = config.get("exemplars_path")
         # Reference boxes on original image: list of [x, y, w, h] in pixels (SAM3-style)
