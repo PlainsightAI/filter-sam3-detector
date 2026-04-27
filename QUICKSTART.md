@@ -9,6 +9,16 @@ You will run the pipeline with `docker-compose.yaml` for all examples (`FILTER_T
 - Docker and Docker Compose plugin
 - NVIDIA GPU runtime configured (for default CUDA flow)
 - A local input video path (no download step required)
+- GCP auth to `plainsightai-prod` (the prebuilt image lives in GAR):
+
+  ```bash
+  gcloud auth login
+  gcloud auth application-default login
+  gcloud config set project plainsightai-prod
+  gcloud auth configure-docker us-west1-docker.pkg.dev
+  ```
+
+  You also need IAM access to the `premium-filters` Artifact Registry repo. If `docker compose up` fails with a 403, ping the platform team.
 
 ## Prepare `.env` from template
 
