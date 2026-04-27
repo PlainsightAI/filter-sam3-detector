@@ -30,7 +30,7 @@ class TestFilterSAM3PromptToLabelMapping(unittest.TestCase):
 
     def test_unmapped_prompts(self):
         config = self.detector.normalize_config(
-            make_base_config(text_prompts="car;truck;dog")
+            make_base_config(text_prompts="car###truck###dog")
         )
 
         self.assertEqual(config["text_prompts"], ["car", "truck", "dog"])
@@ -42,7 +42,7 @@ class TestFilterSAM3PromptToLabelMapping(unittest.TestCase):
 
     def test_class_prompt_mapping(self):
         config = self.detector.normalize_config(
-            make_base_config(text_prompts="vehicle:car;vehicle:truck;animal:dog")
+            make_base_config(text_prompts="vehicle|||car###vehicle|||truck###animal|||dog")
         )
 
         self.assertEqual(config["text_prompts"], ["car", "truck", "dog"])
@@ -54,7 +54,7 @@ class TestFilterSAM3PromptToLabelMapping(unittest.TestCase):
 
     def test_mixed_prompts(self):
         config = self.detector.normalize_config(
-            make_base_config(text_prompts="vehicle:car;truck;animal:dog")
+            make_base_config(text_prompts="vehicle|||car###truck###animal|||dog")
         )
 
         self.assertEqual(config["text_prompts"], ["car", "truck", "dog"])
@@ -66,7 +66,7 @@ class TestFilterSAM3PromptToLabelMapping(unittest.TestCase):
 
     def test_whitespace_handling(self):
         config = self.detector.normalize_config(
-            make_base_config(text_prompts="  vehicle:car  ;  animal:dog ; truck  ")
+            make_base_config(text_prompts="  vehicle|||car  ###  animal|||dog ### truck  ")
         )
 
         self.assertEqual(config["text_prompts"], ["car", "dog", "truck"])
@@ -109,17 +109,17 @@ class TestFilterSAM3PromptToLabelMapping(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.detector.normalize_config(
                 make_base_config(
-                    text_prompts="vehicle:car;animal:dog",
+                    text_prompts="vehicle|||car###animal|||dog",
                     class_delimiter="",
-                    prompt_delimiter=";",
+                    prompt_delimiter="###",
                 )
             )
 
         with self.assertRaises(ValueError):
             self.detector.normalize_config(
                 make_base_config(
-                    text_prompts="vehicle:car;animal:dog",
-                    class_delimiter=":",
+                    text_prompts="vehicle|||car###animal|||dog",
+                    class_delimiter="|||",
                     prompt_delimiter="",
                 )
             )
@@ -128,9 +128,9 @@ class TestFilterSAM3PromptToLabelMapping(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.detector.normalize_config(
                 make_base_config(
-                    text_prompts="vehicle:car;animal:dog",
-                    class_delimiter=":",
-                    prompt_delimiter=":",
+                    text_prompts="vehicle|||car###animal|||dog",
+                    class_delimiter="|||",
+                    prompt_delimiter="|||"
                 )
             )
 
@@ -138,7 +138,7 @@ class TestFilterSAM3PromptToLabelMapping(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.detector.normalize_config(
                 make_base_config(
-                    text_prompts="vehicle:car;automobile:car"
+                    text_prompts="vehicle|||car###automobile|||car"
                 )
             )
 
@@ -153,7 +153,7 @@ class TestFilterSAM3PromptToLabelMapping(unittest.TestCase):
     def test_invalid_type(self):
         with self.assertRaises(ValueError):
             self.detector.normalize_config(
-                make_base_config(text_prompts={"car": "vehicle"})
+                    make_base_config(text_prompts={"car": "vehicle"})
             )
 
 
