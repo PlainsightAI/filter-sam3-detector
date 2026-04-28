@@ -27,8 +27,8 @@ services:
       - filter-network
 
   sam3_detector:
-    # Use GAR dev image or Docker Hub release
-    image: ${SAM3_IMAGE:-us-west1-docker.pkg.dev/plainsightai-dev/oci/filter-sam3-detector:latest}
+    # Override SAM3_IMAGE for a custom build; default pulls the public release.
+    image: ${SAM3_IMAGE:-plainsightai/openfilter-sam3-detector:latest}
     platform: linux/amd64
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}

@@ -1,4 +1,4 @@
-IMAGE ?= us-west1-docker.pkg.dev/plainsightai-prod/premium-filters/filter-sam3-detector
+IMAGE ?= plainsightai/openfilter-sam3-detector
 VERSION ?= $(shell cat VERSION 2>/dev/null | tr -d '[:space:]')
 # Strip the v-prefix for image tagging; keep VERSION itself for git semantics.
 DOCKER_TAG ?= $(VERSION:v%=%)
