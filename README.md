@@ -206,20 +206,7 @@ python scripts/filter_object_detection_exemplar.py
 
 ### Method 2: Docker Pipeline
 
-Run the complete detection pipeline with Docker Compose. The prebuilt image lives in Google Artifact Registry under `plainsightai-prod`.
-
-#### Prerequisites
-
-Authenticate to GAR (one-time setup per workstation):
-
-```bash
-gcloud auth login
-gcloud auth application-default login
-gcloud config set project plainsightai-prod
-gcloud auth configure-docker us-west1-docker.pkg.dev
-```
-
-You also need IAM access to the `premium-filters` Artifact Registry repo. If `docker pull` returns 403, ping the platform team.
+Run the complete detection pipeline with Docker Compose. The prebuilt image is published to Docker Hub at `plainsightai/openfilter-sam3-detector` and is publicly pullable — no auth required.
 
 ```bash
 # 1. Copy your video to the data directory
@@ -227,8 +214,8 @@ cp your_video.mp4 data/sample-video.mp4
 
 # 2. Pull the prebuilt image. Model weights are baked in, so no HF_TOKEN
 #    is needed at runtime. Pin to a release tag for reproducibility.
-docker pull us-west1-docker.pkg.dev/plainsightai-prod/premium-filters/filter-sam3-detector:0.1.15
-export SAM3_DETECTOR_VERSION=0.1.15
+docker pull plainsightai/openfilter-sam3-detector:0.1.16
+export SAM3_DETECTOR_VERSION=0.1.16
 
 # 3. Run the pipeline
 FILTER_TEXT_PROMPT="person" docker compose up
@@ -248,7 +235,7 @@ export HF_TOKEN="your_huggingface_token"
 # so it never ends up in an image layer. Compose does not forward the token,
 # so invoke `docker build` directly and tag it to match docker-compose.yaml.
 docker build --secret id=hf_token,env=HF_TOKEN \
-  -t us-west1-docker.pkg.dev/plainsightai-prod/premium-filters/filter-sam3-detector:latest .
+  -t plainsightai/openfilter-sam3-detector:latest .
 ```
 
 </details>
@@ -337,13 +324,11 @@ Convert noisy per-frame detections into stable presence/absence intervals using 
 
 ### Quick Start (Docker - Recommended)
 
-Authenticate to GAR if you haven't already (see [Method 2 prerequisites](#prerequisites)).
-
 ```bash
 # Run the integrated pipeline (temporal intervals built into SAM3 detector)
 cp your_video.mp4 data/sample-video.mp4
-docker pull us-west1-docker.pkg.dev/plainsightai-prod/premium-filters/filter-sam3-detector:0.1.15
-export SAM3_DETECTOR_VERSION=0.1.15
+docker pull plainsightai/openfilter-sam3-detector:0.1.16
+export SAM3_DETECTOR_VERSION=0.1.16
 FILTER_TEXT_PROMPT="person" docker compose up
 
 # Intervals stream to output/intervals.json as detection progresses

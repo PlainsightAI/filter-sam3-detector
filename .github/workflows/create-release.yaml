@@ -9,13 +9,12 @@ on:
 
 jobs:
   release:
-    uses: PlainsightAI/gh-actions/.github/workflows/filter-release-premium.yaml@main
-    permissions:
-      contents: write
-      id-token: write
-      actions: read
-      pull-requests: read
+    # Pinned to the platforms-input branch during live-test on
+    # PlainsightAI/gh-actions-public#14. Will re-pin to @main once that PR
+    # merges and the inputs are stable.
+    uses: PlainsightAI/gh-actions-public/.github/workflows/filter-release.yaml@feat/filter-release-public-platforms-input
     with:
+      docker_image: plainsightai/openfilter-sam3-detector
       python_versions: '["3.11", "3.12"]'
       source-paths: |
         filter_*/**
@@ -23,7 +22,23 @@ jobs:
         Dockerfile*
         requirements*.txt
         Makefile
+      # pytorch/pytorch:*-cuda* is amd64-only across every CUDA tag, so
+      # building for arm64 would fail at the base-image pull.
+      platforms: linux/amd64
       # SAM3-scoped; repo-level only. Upstream is projects/plainsightai-dev/
-      # secrets/sam3-hf-token — do not elevate to org-level.
+      # secrets/sam3-hf-token — do not elevate to org-level. Forwarded into
+      # the publish-docker job's env via the env-forwarding step, then mounted
+      # as a BuildKit secret (id=hf_token) in docker/build-push-action so the
+      # gated SAM3 weights can be pulled at build time.
       forward_secrets_as_env: HF_TOKEN
+      build_secrets: |
+        id=hf_token,env=HF_TOKEN
+    # `inherit` (vs explicit secret mapping) is required so HF_TOKEN flows
+    # through to the env-forwarding step. The cost: the public workflow's
+    # required `PYPI_API_TOKEN` and `DOCKERHUB_TOKEN` must exist in this
+    # repo's secrets context with those exact names — they're added as
+    # repo-level aliases of the org-level PLAINSIGHT_PYPI_TOKEN and
+    # DOCKERHUB_ACCESS_TOKEN. Tracked as a follow-up: replace the alias
+    # pattern with a generic build-secret pass-through input upstream so
+    # callers don't need this duplication.
     secrets: inherit

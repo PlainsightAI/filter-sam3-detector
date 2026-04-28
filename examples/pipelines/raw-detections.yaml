@@ -31,7 +31,7 @@ services:
       - ${VIDEO_PATH:-../../data/sample.mp4}:/video.mp4:ro
 
   sam3_detector:
-    image: us-west1-docker.pkg.dev/plainsightai-prod/premium-filters/filter-sam3-detector:latest
+    image: plainsightai/openfilter-sam3-detector:latest
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-}
       FILTER_ID: SAM3Detector
