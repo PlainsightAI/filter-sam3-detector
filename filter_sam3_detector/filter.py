@@ -996,7 +996,7 @@ class FilterSAM3Detector(Filter):
                 label = str(det[self.temporal_label_field])
             else:
                 # Use class field if available, otherwise default label
-                label = det.get('class') or det.get('class_name') or self.temporal_default_label
+                label = det.get('label') or det.get('class') or det.get('class_name') or self.temporal_default_label
 
             # Track max score per label
             if label not in label_scores or score > label_scores[label]:
@@ -1333,6 +1333,11 @@ class FilterSAM3Detector(Filter):
                     # Fallback: use max score from detections
                     max_score = max(d.get('score', 0.0) for d in detections if 'score' in d)
                     detection_confidence = float(max_score)
+                #append class name to detections
+                for d in detections:
+                    prompt = d.get('class', "Unknown")
+                    label = self.config.get("prompt_label_map", {}).get(prompt, prompt)
+                    d['label'] = label
 
                 # Store results in frame metadata
                 frame_meta = frame.data.setdefault('meta', {})
@@ -1682,7 +1687,7 @@ class FilterSAM3Detector(Filter):
 
         for det in detections:
             prompt = det.get('class') or det.get('class_name') or 'object'
-            label = self.config.get("prompt_label_map", {}).get(prompt, prompt)
+            label = det.get('label') or det.get('class') or det.get('class_name') or 'object'
             box = det.get('box')  # [x1, y1, x2, y2] pixel coordinates
             score = det.get('score', 0.0)
 
