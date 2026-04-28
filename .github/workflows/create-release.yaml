@@ -9,10 +9,7 @@ on:
 
 jobs:
   release:
-    # Pinned to the platforms-input branch during live-test on
-    # PlainsightAI/gh-actions-public#14. Will re-pin to @main once that PR
-    # merges and the inputs are stable.
-    uses: PlainsightAI/gh-actions-public/.github/workflows/filter-release.yaml@feat/filter-release-public-platforms-input
+    uses: PlainsightAI/gh-actions-public/.github/workflows/filter-release.yaml@main
     with:
       docker_image: plainsightai/openfilter-sam3-detector
       python_versions: '["3.11", "3.12"]'
