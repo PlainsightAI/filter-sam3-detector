@@ -108,9 +108,9 @@ class FilterSAM3Detector(Filter):
             "model_id": "facebook/sam3",
             "device": "cuda",
             "text_prompt": None,  # Single prompt (backward compatible)
-            "text_prompts": None,  # Delimiter-separated prompts, e.g. "vehicle:car,truck;animal:cat, dogs"
-            "prompt_delimiter": "###",  # Multiple prompts separated by ';'
-            "class_delimiter": "|||",  # Separates class label from prompt, e.g. "vehicle:car"
+            "text_prompts": None,  # Delimiter-separated prompts, e.g. "vehicle|||car,truck###animal|||cat, dogs"
+            "prompt_delimiter": "###",  # Multiple prompts separated by '###'
+            "class_delimiter": "|||",  # Separates class label from prompt, e.g. "vehicle|||car"
             "prompt_sets": None,  # Multi-output mode: list of {name, prompts, topic, ...}
             "exemplars_path": None,
             "exemplar_embeddings_cache": None,
