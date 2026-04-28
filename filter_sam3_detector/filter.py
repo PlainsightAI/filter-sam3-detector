@@ -1335,7 +1335,7 @@ class FilterSAM3Detector(Filter):
                     detection_confidence = float(max_score)
                 #append class name to detections
                 for d in detections:
-                    prompt = d.get('class', "Unknown")
+                    prompt = d.get('class', 'object')
                     label = self.config.get("prompt_label_map", {}).get(prompt, prompt)
                     d['label'] = label
 
