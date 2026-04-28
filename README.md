@@ -212,10 +212,11 @@ Run the complete detection pipeline with Docker Compose. The prebuilt image is p
 # 1. Copy your video to the data directory
 cp your_video.mp4 data/sample-video.mp4
 
-# 2. Pull the prebuilt image. Model weights are baked in, so no HF_TOKEN
-#    is needed at runtime. Pin to a release tag for reproducibility.
-docker pull plainsightai/openfilter-sam3-detector:0.1.16
-export SAM3_DETECTOR_VERSION=0.1.16
+# 2. Pull the prebuilt image (compose will also pull on first run if
+#    missing). Model weights are baked in, so no HF_TOKEN at runtime.
+#    Set SAM3_DETECTOR_VERSION to pin to a specific release for
+#    reproducibility — defaults to `latest`.
+docker pull plainsightai/openfilter-sam3-detector:latest
 
 # 3. Run the pipeline
 FILTER_TEXT_PROMPT="person" docker compose up
@@ -325,10 +326,11 @@ Convert noisy per-frame detections into stable presence/absence intervals using 
 ### Quick Start (Docker - Recommended)
 
 ```bash
-# Run the integrated pipeline (temporal intervals built into SAM3 detector)
+# Run the integrated pipeline (temporal intervals built into SAM3 detector).
+# Set SAM3_DETECTOR_VERSION to pin to a specific release if you need
+# reproducibility; defaults to `latest`.
 cp your_video.mp4 data/sample-video.mp4
-docker pull plainsightai/openfilter-sam3-detector:0.1.16
-export SAM3_DETECTOR_VERSION=0.1.16
+docker pull plainsightai/openfilter-sam3-detector:latest
 FILTER_TEXT_PROMPT="person" docker compose up
 
 # Intervals stream to output/intervals.json as detection progresses
