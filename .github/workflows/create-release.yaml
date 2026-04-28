@@ -33,12 +33,13 @@ jobs:
       forward_secrets_as_env: HF_TOKEN
       build_secrets: |
         id=hf_token,env=HF_TOKEN
-    # `inherit` (vs explicit secret mapping) is required so HF_TOKEN flows
-    # through to the env-forwarding step. The cost: the public workflow's
-    # required `PYPI_API_TOKEN` and `DOCKERHUB_TOKEN` must exist in this
-    # repo's secrets context with those exact names — they're added as
-    # repo-level aliases of the org-level PLAINSIGHT_PYPI_TOKEN and
-    # DOCKERHUB_ACCESS_TOKEN. Tracked as a follow-up: replace the alias
-    # pattern with a generic build-secret pass-through input upstream so
-    # callers don't need this duplication.
-    secrets: inherit
+    # Explicit secret mapping (the standard pattern across every public
+    # filter) — the workflow's required PYPI_API_TOKEN / DOCKERHUB_TOKEN
+    # are remapped from the org-level PLAINSIGHT_PYPI_TOKEN /
+    # DOCKERHUB_ACCESS_TOKEN. HF_TOKEN is now an optional declared
+    # secret on the public workflow (added in PR #14), so it composes
+    # with the explicit-mapping pattern instead of forcing `inherit`.
+    secrets:
+      PYPI_API_TOKEN: ${{ secrets.PLAINSIGHT_PYPI_TOKEN }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_ACCESS_TOKEN }}
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
