@@ -5,11 +5,11 @@ SAM3 Detector filter release notes
 Enhances text_prompts parsing in FilterSAM3Detector with configurable delimiters and prompt→label mapping.
 
 ### Changed
-Added prompt_delimiter and class_delimiter
-Support class|||prompt format (e.g. "vehicle|||car###animal|||cat")
-Normalize prompts into list + prompt_label_map
-Validate delimiters and reject duplicate mappings
-Include both label and prompt in output
+- Added prompt_delimiter and class_delimiter
+- Support class|||prompt format (e.g. "vehicle|||car###animal|||cat")
+- Normalize prompts into list + prompt_label_map
+- Validate delimiters and reject duplicate mappings
+- Include both label and prompt in output
 
 ## v0.1.17 - 2026-04-29
 
