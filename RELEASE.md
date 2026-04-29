@@ -1,7 +1,7 @@
 # Changelog
 SAM3 Detector filter release notes
 
-## v0.1.16 - 2026-04-23
+## v0.1.17 - 2026-04-28
 Enhances text_prompts parsing in FilterSAM3Detector with configurable delimiters and prompt→label mapping.
 
 ### Changed
@@ -11,12 +11,26 @@ Normalize prompts into list + prompt_label_map
 Validate delimiters and reject duplicate mappings
 Include both label and prompt in output
 
+## v0.1.16 - 2026-04-28
+
+### Changed
+- **Distribution channel pivoted to Docker Hub.** Image is now published to `plainsightai/openfilter-sam3-detector` (publicly pullable, no auth) instead of the GAR `premium-filters/` path. PM confirmed the filter is classified public — source has been Apache-2.0 + LicenseRef-SAM since v0.1.7, and the prebuilt artifact distribution now matches.
+- **Release workflow flipped to the public reusable workflow** (`PlainsightAI/gh-actions-public/.github/workflows/filter-release.yaml`) instead of `gh-actions/filter-release-premium.yaml`. The public workflow publishes the wheel to PyPI in addition to the Docker image — first PyPI publish for `filter-sam3-detector`.
+- **`cloudbuild.yaml` removed.** Cloud Build was silently double-publishing every release to Docker Hub alongside the GAR pipeline (with version-label drift on `:0.1.13` and a digest mismatch on `:0.1.15`); GitHub Actions is now the single source of truth.
+- `docker-compose.yaml`, `examples/pipelines/raw-detections.yaml`, README Method 2, and QUICKSTART all reference the new Docker Hub path. The GAR auth prerequisites have been dropped from QUICKSTART and README.
+- `Makefile` `IMAGE` default switched from the GAR premium path to `plainsightai/openfilter-sam3-detector`. Local `make build-image` / `make publish-image` now target Docker Hub.
+
+### CI
+- `create-release.yaml` passes `platforms: linux/amd64` to the public reusable workflow. The default `linux/amd64,linux/arm64` matrix would fail at the base-image pull because `pytorch/pytorch:*-cuda*` ships amd64-only across every CUDA tag.
+- HF_TOKEN is forwarded into the publish-docker job via `forward_secrets_as_env` and mounted as the `id=hf_token` BuildKit secret via `build_secrets`, so the gated SAM3 weights are still pulled and baked at build time.
+
 ## v0.1.15 - 2026-04-23
 
 ### CI
 - Consolidate `make test` onto a single pytest path; coverage flags pass through `PYTEST_ARGS=` (e.g. `make test PYTEST_ARGS=--cov=filter_sam3_detector`). Drops the stdlib `unittest discover` invocation.
 - Drop duplicate `test.yaml` workflow — `release / run-tests` already gates every PR via the reusable filter-release workflow.
 - Apply main-branch merge gate via `.github/rulesets/main.json` + `apply-rulesets.yaml` (rulesets-as-code). Branch protection now lives in-tree and self-applies on pushes to main.
+- Add `build-wheel`, `build-image`, `publish-image` Makefile targets so the reusable premium-release workflow's wheel + image publish jobs complete end-to-end (no more `make: *** No rule to make target 'build-wheel'`). `build-image` honors a pre-set `HF_TOKEN` env and otherwise fetches `sam3-hf-token` from GCP Secret Manager, matching `cloudbuild.yaml`'s approach. New `DOCKER_TAG` variable strips the `v` prefix from `VERSION` so image tags match `cloudbuild.yaml`'s convention. Drop redundant `install-dev` target (identical to `install`). Add `Makefile` to the release workflow's `source-paths` so future Makefile-only changes trigger the release-log check.
 
 ### Changed
 - Loosen `[dev]` pins (`setuptools`, `wheel`, `pytest`, `pytest-cov`) from `==` to `~=` so patch-level fixes are picked up while keeping the current minor cap. Protects `release / run-tests` (which installs via `make install` → `pip install -e ".[dev]"`) from future pytest 9 / setuptools 80 surprises.

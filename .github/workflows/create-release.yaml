@@ -9,20 +9,23 @@ on:
 
 jobs:
   release:
-    uses: PlainsightAI/gh-actions/.github/workflows/filter-release-premium.yaml@main
-    permissions:
-      contents: write
-      id-token: write
-      actions: read
-      pull-requests: read
+    uses: PlainsightAI/gh-actions-public/.github/workflows/filter-release.yaml@main
     with:
+      docker_image: plainsightai/openfilter-sam3-detector
       python_versions: '["3.11", "3.12"]'
       source-paths: |
         filter_*/**
         pyproject.toml
         Dockerfile*
         requirements*.txt
-    secrets:
-      TESTMO_PLAINSIGHT_URL: ${{ secrets.TESTMO_PLAINSIGHT_URL }}
-      TESTMO_PLAINSIGHT_TESTING_API_KEY: ${{ secrets.TESTMO_PLAINSIGHT_TESTING_API_KEY }}
-      GH_DOCS_PUBLISHING_TOKEN: ${{ secrets.GH_DOCS_PUBLISHING_TOKEN }}
+        Makefile
+      # pytorch/pytorch:*-cuda* is amd64-only across every CUDA tag, so
+      # building for arm64 would fail at the base-image pull.
+      platforms: linux/amd64
+      # HF_TOKEN (repo-level secret) forwarded into the publish-docker
+      # job's env, then mounted as a BuildKit secret so the gated SAM3
+      # weights can be pulled at build time.
+      forward_secrets_as_env: HF_TOKEN
+      build_secrets: |
+        id=hf_token,env=HF_TOKEN
+    secrets: inherit

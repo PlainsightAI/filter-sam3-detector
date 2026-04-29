@@ -10,6 +10,8 @@ You will run the pipeline with `docker-compose.yaml` for all examples (`FILTER_T
 - NVIDIA GPU runtime configured (for default CUDA flow)
 - A local input video path (no download step required)
 
+The prebuilt image lives on Docker Hub at `plainsightai/openfilter-sam3-detector` and is publicly pullable — no auth required.
+
 ## Prepare `.env` from template
 
 ```bash
