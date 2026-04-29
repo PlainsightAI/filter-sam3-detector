@@ -27,5 +27,5 @@ jobs:
       # weights can be pulled at build time.
       forward_secrets_as_env: HF_TOKEN
       build_secrets: |
-        id=hf_token,env=HF_TOKEN
+        hf_token=HF_TOKEN
     secrets: inherit
