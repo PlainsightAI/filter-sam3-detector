@@ -1,6 +1,11 @@
 # Changelog
 SAM3 Detector filter release notes
 
+## v0.1.17 - 2026-04-29
+
+### Fixed
+- Fix Docker build secret format (use `secret-envs` format for `docker/build-push-action`)
+
 ## v0.1.16 - 2026-04-28
 
 ### Changed
