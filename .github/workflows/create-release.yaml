@@ -22,17 +22,12 @@ jobs:
       # pytorch/pytorch:*-cuda* is amd64-only across every CUDA tag, so
       # building for arm64 would fail at the base-image pull.
       platforms: linux/amd64
-      # SAM3-scoped; repo-level only. Upstream is projects/plainsightai-dev/
-      # secrets/sam3-hf-token — do not elevate to org-level. Forwarded into
-      # the publish-docker job's env via the env-forwarding step, then mounted
-      # as a BuildKit secret (id=hf_token) in docker/build-push-action so the
-      # gated SAM3 weights can be pulled at build time.
+      # HF_TOKEN (repo-level secret) forwarded into the publish-docker
+      # job's env, then mounted as a BuildKit secret so the gated SAM3
+      # weights can be pulled at build time.
       forward_secrets_as_env: HF_TOKEN
       build_secrets: |
         id=hf_token,env=HF_TOKEN
-    # `inherit` passes all org-level secrets through under their canonical
-    # names (PLAINSIGHT_PYPI_TOKEN, DOCKERHUB_ACCESS_TOKEN, HF_TOKEN, ...).
-    # The public workflow's twine + docker login steps fall back from the
-    # historical `*_TOKEN` names to those canonical names at runtime, so
-    # we don't need explicit per-secret remapping at the call site.
-    secrets: inherit
+    secrets:
+      PYPI_API_TOKEN: ${{ secrets.PLAINSIGHT_PYPI_TOKEN }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_ACCESS_TOKEN }}
