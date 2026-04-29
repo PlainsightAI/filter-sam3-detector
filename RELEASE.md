@@ -1,7 +1,7 @@
 # Changelog
 SAM3 Detector filter release notes
 
-## v0.1.17 - 2026-04-28
+## v0.1.18 - 2026-04-29
 Enhances text_prompts parsing in FilterSAM3Detector with configurable delimiters and prompt→label mapping.
 
 ### Changed
@@ -10,6 +10,11 @@ Support class|||prompt format (e.g. "vehicle|||car###animal|||cat")
 Normalize prompts into list + prompt_label_map
 Validate delimiters and reject duplicate mappings
 Include both label and prompt in output
+
+## v0.1.17 - 2026-04-29
+
+### Fixed
+- Fix Docker build secret format (use `secret-envs` format for `docker/build-push-action`)
 
 ## v0.1.16 - 2026-04-28
 
