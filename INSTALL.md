@@ -167,6 +167,33 @@ SAM3 weights are fetched **at image build time** and baked into the Docker image
 2. Confirm your account has accepted the gated-model license for `facebook/sam3` on huggingface.co
 3. If your build host can't reach huggingface.co, build on a networked host and distribute the resulting image; the running container does not require network access
 
+### Airgap: HEAD Requests to huggingface.co at Startup
+
+**Problem**: Container starts, but logs show outbound HEAD requests to `https://huggingface.co/facebook/sam3/resolve/main/{config.json,sam3.pt}` (often `401 Unauthorized` since no `HF_TOKEN` is in scope at runtime). The model still loads from the baked cache, but the network round-trip defeats true airgap and breaks deployments where outbound DNS/TLS to huggingface.co is blocked.
+
+**Cause**: `huggingface_hub` parses `HF_HUB_OFFLINE` / `TRANSFORMERS_OFFLINE` with a **strict** truthy check — only the case-insensitive values `1`, `ON`, `YES`, `TRUE` count as enabled. Anything else (including the empty string, `"1"` with literal quote characters, or `true!`) silently disables offline mode.
+
+The most common way to land malformed values is via Docker Compose default-value syntax. **Compose substitutes the default literally, including any surrounding quotes:**
+
+```yaml
+# WRONG — substitutes the three literal characters [", 1, "],
+# which fails huggingface_hub's check and silently turns offline mode OFF.
+environment:
+  HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-"1"}
+  TRANSFORMERS_OFFLINE: ${TRANSFORMERS_OFFLINE:-"1"}
+
+# CORRECT — substitutes the single character 1.
+environment:
+  HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-1}
+  TRANSFORMERS_OFFLINE: ${TRANSFORMERS_OFFLINE:-1}
+```
+
+You can verify what your compose file actually passes with `docker compose config` (look at the resolved `environment:` block) or by exec'ing into a running container and printing the env: `docker exec <container> env | grep HF_HUB_OFFLINE` — if it shows `HF_HUB_OFFLINE="1"`, the quotes are part of the value.
+
+**Solutions**:
+1. Drop the quotes around the default in your compose file: `${VAR:-1}` not `${VAR:-"1"}`.
+2. Or omit the override entirely — the published image already sets `HF_HUB_OFFLINE=1` / `TRANSFORMERS_OFFLINE=1` in the Dockerfile, so leaving them out of the compose `environment:` block is the simplest correct configuration.
+
 ## Development Setup
 
 For contributing to the project:

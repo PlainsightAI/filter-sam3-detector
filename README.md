@@ -261,7 +261,7 @@ video_in → sam3_detector (with integrated temporal intervals) → webvis
 | `FILTER_HALF_LIFE` | 5.0 | EMA decay rate (frames) |
 | `FILTER_PRESENCE_THRESHOLD` | 0.4 | Detection threshold |
 
-> Note: SAM3 weights are baked into the image at build time, and the container runs with `HF_HUB_OFFLINE=1` / `TRANSFORMERS_OFFLINE=1`. No network or `HF_TOKEN` is needed at runtime — the image is safe to run with `--network=none`.
+> Note: SAM3 weights are baked into the image at build time, and the container runs with `HF_HUB_OFFLINE=1` / `TRANSFORMERS_OFFLINE=1`. No network or `HF_TOKEN` is needed at runtime — the image is safe to run with `--network=none`. If you override these vars from a compose file, beware of YAML quoting (`${VAR:-"1"}` substitutes literal quotes, which `huggingface_hub` rejects); see [INSTALL.md › Airgap: HEAD Requests to huggingface.co at Startup](INSTALL.md#airgap-head-requests-to-huggingfaceco-at-startup).
 
 **Output Format (intervals.json):**
 ```json
