@@ -1,0 +1,109 @@
+name: Test FILTER-453 schema emit
+
+# Dispatch-only workflow that exercises the FILTER-453 schema emit + attach
+# path (PR #82 against PlainsightAI/gh-actions) against this filter, ahead
+# of the PR merging to main. Not auto-triggered.
+#
+# Why we pin the composite directly instead of going through the reusable
+# workflow at the same ref:
+#
+#   PR #82 modifies filter-release-{private,premium}.yaml AND the
+#   publish-gar-image composite. The reusable workflow files still pin
+#   `uses: PlainsightAI/gh-actions/publish-gar-image@main`, so calling
+#   filter-release-private.yaml@feat/filter-453-schema-transport pulls the
+#   composite from main — where schema_module is an unknown input and the
+#   new logic does not exist. We bypass the reusable workflow entirely and
+#   call publish-gar-image@feat/filter-453-schema-transport ourselves so
+#   the workflow + composite refs are coherent.
+#
+# Expected failure modes that surface real bugs in the PR:
+#
+#   1. `make build-image` succeeds, `openfilter.cli emit-schema` fails with
+#      "No module named openfilter.cli.cmd_emit_schema" (or similar) — the
+#      runtime image ships openfilter[all]>=0.1.30,<0.2.0, and emit-schema
+#      / FilterConfigBase only exist on openfilter@main (unreleased v0.2.0).
+#      Bump the dep on this test branch to a git ref of openfilter@main
+#      before re-running.
+#
+#   2. emit-schema succeeds for config but fails for output — the stub's
+#      `__frame_data_key__` disambiguation works; a real regression on the
+#      output-schema discovery path will only show here.
+#
+#   3. Build succeeds, emit succeeds, but the 60s docker-run timeout in
+#      the composite trips because filter_sam3_detector/__init__.py pulls
+#      torch/transformers/sam3 import-side-effects on import — flag if so;
+#      the action's timeout assumes a lightweight import path.
+
+on:
+  workflow_dispatch:
+    inputs:
+      gh_actions_ref:
+        description: gh-actions ref pinning the composite action under test
+        required: false
+        default: feat/filter-453-schema-transport
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  schema-dry-run:
+    runs-on: ubuntu-latest
+    env:
+      # Local-only image tag — dry_run skips push, so no registry is touched.
+      TEST_IMAGE: localhost/openfilter-sam3-detector-test
+      TEST_VERSION: filter-453-test
+    steps:
+      - name: PreAction disk cleanup
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force
+          sudo docker builder prune -a --force
+
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      # The Makefile's build-image target consumes HF_TOKEN via BuildKit
+      # secret mount; same shape the production release pipeline uses.
+      - name: Forward HF_TOKEN to env
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          if [ -z "$HF_TOKEN" ]; then
+            echo "::error::HF_TOKEN secret is empty — required for make build-image (BuildKit hf_token mount)"
+            exit 1
+          fi
+          echo "::add-mask::$HF_TOKEN"
+          delim="ghsecret_$(openssl rand -hex 8)"
+          { echo "HF_TOKEN<<${delim}"; printf '%s\n' "$HF_TOKEN"; echo "$delim"; } >> "$GITHUB_ENV"
+
+      - name: Build + emit schemas (dry-run, no push, no attach)
+        uses: PlainsightAI/gh-actions/publish-gar-image@${{ inputs.gh_actions_ref }}
+        with:
+          image: ${{ env.TEST_IMAGE }}
+          version: ${{ env.TEST_VERSION }}
+          dry_run: "true"
+          schema_module: filter_sam3_detector.schema
+
+      # Re-emit outside the composite so the schemas land as build artifacts
+      # and downstream reviewers can inspect what would have been attached.
+      # Composite already validated emit succeeds; this just lifts the
+      # output up for human review.
+      - name: Re-emit schemas as artifacts
+        run: |
+          mkdir -p schemas
+          docker run --rm --entrypoint python "${TEST_IMAGE}:${TEST_VERSION}" \
+            -m openfilter.cli emit-schema --kind config filter_sam3_detector.schema \
+            > schemas/config-schema.json
+          docker run --rm --entrypoint python "${TEST_IMAGE}:${TEST_VERSION}" \
+            -m openfilter.cli emit-schema --kind output filter_sam3_detector.schema \
+            > schemas/output-schema.json || echo "::notice::output schema emit failed (acceptable per FILTER-453 contract)"
+
+      - name: Upload emitted schemas
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: filter-453-schemas
+          path: schemas/
+          if-no-files-found: warn

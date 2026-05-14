@@ -25,7 +25,12 @@ classifiers = [
 dynamic = ["version"]
 
 dependencies = [
-  "openfilter[all]>=0.1.30,<0.2.0",
+  # Upper bound relaxed for the FILTER-453 schema-emit test: the typed
+  # FilterConfigBase / FilterOutputSchema SDK + `openfilter.cli emit-schema`
+  # only exist on openfilter@main (unreleased v0.2.0), so the source override
+  # in [tool.uv.sources] pins us to a specific main SHA. Revert both changes
+  # when openfilter v0.2.0 actually ships.
+  "openfilter[all]>=0.1.30,<0.3.0",
   "torch>=2.0.0",
   "torchvision>=0.15.0",
   "numpy>=1.24.0",
@@ -59,6 +64,11 @@ override-dependencies = ["numpy>=1.26.4,<3"]
 
 [tool.uv.sources]
 sam3 = { path = "sam3" }
+# FILTER-453 test: pin openfilter to a main SHA that ships FilterConfigBase,
+# FilterOutputSchema, and `openfilter.cli emit-schema`. Source override; the
+# version constraint in `dependencies` still gates against the resolved
+# version. Remove when openfilter v0.2.0 is released.
+openfilter = { git = "https://github.com/PlainsightAI/openfilter.git", rev = "d43d0056053294289165c37a1cdbf8b87b20c834" }
 
 [[tool.uv.index]]
 name = "openfilter"
