@@ -36,12 +36,11 @@ name: Test FILTER-453 schema emit
 
 on:
   workflow_dispatch:
-    inputs:
-      gh_actions_ref:
-        description: gh-actions ref pinning the composite action under test
-        required: false
-        default: feat/filter-453-schema-transport
-        type: string
+
+# Ref of PlainsightAI/gh-actions pinning the publish-gar-image composite
+# under test. Hardcoded rather than a workflow_dispatch input because
+# GitHub Actions disallows `${{ inputs.* }}` in a `uses:` field — `uses:`
+# must be a literal string at workflow parse time.
 
 permissions:
   contents: read
@@ -79,7 +78,7 @@ jobs:
           { echo "HF_TOKEN<<${delim}"; printf '%s\n' "$HF_TOKEN"; echo "$delim"; } >> "$GITHUB_ENV"
 
       - name: Build + emit schemas (dry-run, no push, no attach)
-        uses: PlainsightAI/gh-actions/publish-gar-image@${{ inputs.gh_actions_ref }}
+        uses: PlainsightAI/gh-actions/publish-gar-image@feat/filter-453-schema-transport
         with:
           image: ${{ env.TEST_IMAGE }}
           version: ${{ env.TEST_VERSION }}
