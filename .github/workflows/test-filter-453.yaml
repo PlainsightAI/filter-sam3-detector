@@ -77,8 +77,21 @@ jobs:
           delim="ghsecret_$(openssl rand -hex 8)"
           { echo "HF_TOKEN<<${delim}"; printf '%s\n' "$HF_TOKEN"; echo "$delim"; } >> "$GITHUB_ENV"
 
+      # PlainsightAI/gh-actions is private; the default GITHUB_TOKEN has no
+      # cross-repo read on it, so `uses: PlainsightAI/gh-actions/...@ref`
+      # fails to resolve at job-setup time. Check the action out manually
+      # under the bot PAT (same secret apply-rulesets.yaml uses for
+      # similar cross-repo work) and consume it as a local `./path` action.
+      - name: Checkout gh-actions at the PR ref
+        uses: actions/checkout@v6
+        with:
+          repository: PlainsightAI/gh-actions
+          ref: feat/filter-453-schema-transport
+          token: ${{ secrets.GH_BOT_USER_PAT }}
+          path: .gh-actions
+
       - name: Build + emit schemas (dry-run, no push, no attach)
-        uses: PlainsightAI/gh-actions/publish-gar-image@feat/filter-453-schema-transport
+        uses: ./.gh-actions/publish-gar-image
         with:
           image: ${{ env.TEST_IMAGE }}
           version: ${{ env.TEST_VERSION }}
