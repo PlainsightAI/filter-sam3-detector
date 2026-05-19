@@ -1,20 +1,15 @@
-name: Test FILTER-453 schema emit
+name: Test FILTER-453 schema attach (real push)
 
 # Dispatch-only workflow that exercises the FILTER-453 schema emit + attach
-# path (PR #82 against PlainsightAI/gh-actions) against this filter, ahead
-# of the PR merging to main. Not auto-triggered.
+# path against Google Artifact Registry. Used to verify the "Referrers" UI
+# and OCI 1.1 transport.
 #
 # Why we pin the composite directly instead of going through the reusable
-# workflow at the same ref:
+# workflow:
 #
-#   PR #82 modifies filter-release-{private,premium}.yaml AND the
-#   publish-gar-image composite. The reusable workflow files still pin
-#   `uses: PlainsightAI/gh-actions/publish-gar-image@main`, so calling
-#   filter-release-private.yaml@feat/filter-453-schema-transport pulls the
-#   composite from main — where schema_module is an unknown input and the
-#   new logic does not exist. We bypass the reusable workflow entirely and
-#   call publish-gar-image@feat/filter-453-schema-transport ourselves so
-#   the workflow + composite refs are coherent.
+#   The reusable workflow files still pin `uses: PlainsightAI/gh-actions/...@main`.
+#   We bypass the reusable workflow to exercise the specific composite
+#   logic directly and allow for custom registry overrides during testing.
 #
 # Expected failure modes that surface real bugs in the PR:
 #
@@ -37,10 +32,6 @@ name: Test FILTER-453 schema emit
 on:
   workflow_dispatch:
 
-# Ref of PlainsightAI/gh-actions pinning the publish-gar-image composite
-# under test. Hardcoded rather than a workflow_dispatch input because
-# GitHub Actions disallows `${{ inputs.* }}` in a `uses:` field — `uses:`
-# must be a literal string at workflow parse time.
 
 permissions:
   contents: read
@@ -51,8 +42,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       # Local-only image tag — dry_run skips push, so no registry is touched.
-      TEST_IMAGE: localhost/openfilter-sam3-detector-test
-      TEST_VERSION: filter-453-test
+      TEST_IMAGE: us-docker.pkg.dev/plainsight-artifacts/filters/openfilter-sam3-detector
+      TEST_VERSION: filter-453-test-push
     steps:
       - name: PreAction disk cleanup
         run: |
@@ -77,6 +68,19 @@ jobs:
           delim="ghsecret_$(openssl rand -hex 8)"
           { echo "HF_TOKEN<<${delim}"; printf '%s\n' "$HF_TOKEN"; echo "$delim"; } >> "$GITHUB_ENV"
 
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.GCLOUD_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCLOUD_GITHUB_CI_SERVICE_ACCOUNT_EMAIL }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Configure Docker for GAR
+        run: gcloud auth configure-docker us-docker.pkg.dev --quiet
+
+
       # PlainsightAI/gh-actions is private; the default GITHUB_TOKEN has no
       # cross-repo read on it, so `uses: PlainsightAI/gh-actions/...@ref`
       # fails to resolve at job-setup time. Check the action out manually
@@ -86,16 +90,16 @@ jobs:
         uses: actions/checkout@v6
         with:
           repository: PlainsightAI/gh-actions
-          ref: feat/filter-453-schema-transport
+          ref: main
           token: ${{ secrets.GH_BOT_USER_PAT }}
           path: .gh-actions
 
-      - name: Build + emit schemas (dry-run, no push, no attach)
+      - name: Build + emit + attach schemas (real push)
         uses: ./.gh-actions/publish-gar-image
         with:
           image: ${{ env.TEST_IMAGE }}
           version: ${{ env.TEST_VERSION }}
-          dry_run: "true"
+          dry_run: "false"
           schema_module: filter_sam3_detector.schema
 
       # Re-emit outside the composite so the schemas land as build artifacts
