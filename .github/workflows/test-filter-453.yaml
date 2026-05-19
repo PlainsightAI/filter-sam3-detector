@@ -69,10 +69,9 @@ jobs:
           { echo "HF_TOKEN<<${delim}"; printf '%s\n' "$HF_TOKEN"; echo "$delim"; } >> "$GITHUB_ENV"
 
       - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v3
+        uses: PlainsightAI/gh-actions/google-cloud-auth@main
         with:
-          workload_identity_provider: ${{ vars.GCLOUD_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ vars.GCLOUD_GITHUB_CI_SERVICE_ACCOUNT_EMAIL }}
+          environment: production
 
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v3
