@@ -42,7 +42,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       # Local-only image tag — dry_run skips push, so no registry is touched.
-      TEST_IMAGE: us-docker.pkg.dev/plainsight-artifacts/filters/openfilter-sam3-detector
+      TEST_IMAGE: us-west1-docker.pkg.dev/plainsightai-prod/premium-filters/openfilter-sam3-detector
       TEST_VERSION: filter-453-test-push
     steps:
       - name: PreAction disk cleanup
@@ -88,7 +88,7 @@ jobs:
         uses: google-github-actions/setup-gcloud@v3
 
       - name: Configure Docker for GAR
-        run: gcloud auth configure-docker us-docker.pkg.dev --quiet
+        run: gcloud auth configure-docker us-west1-docker.pkg.dev --quiet
 
 
       - name: Build + emit + attach schemas (real push)
