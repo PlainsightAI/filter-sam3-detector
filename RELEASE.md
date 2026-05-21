@@ -10,6 +10,7 @@ Enhances text_prompts parsing in FilterSAM3Detector with configurable delimiters
 - Normalize prompts into list + prompt_label_map
 - Validate delimiters and reject duplicate mappings
 - Include both label and prompt in output
+- Bump openfilter to 1.1.0
 
 ## v0.1.17 - 2026-04-29
 
