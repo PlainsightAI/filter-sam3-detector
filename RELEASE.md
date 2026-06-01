@@ -6,6 +6,7 @@ SAM3 Detector filter release notes
 ### Changed
 
 - Bump openfilter to 1.1.0
+- Bump openfilter to 1.1.1
 
 ## v0.1.18 - 2026-04-29
 Enhances text_prompts parsing in FilterSAM3Detector with configurable delimiters and prompt→label mapping.
