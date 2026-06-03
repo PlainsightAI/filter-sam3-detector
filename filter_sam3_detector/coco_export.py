@@ -23,11 +23,18 @@ def _extract_bbox_xywh(det: dict[str, Any]) -> list[float] | None:
     """Extract bbox as [x, y, w, h] from supported detection shapes."""
     bbox = det.get("bbox")
     if isinstance(bbox, dict):
-        x = float(bbox.get("x", 0.0))
-        y = float(bbox.get("y", 0.0))
-        w = float(bbox.get("width", 0.0))
-        h = float(bbox.get("height", 0.0))
-        return [x, y, max(0.0, w), max(0.0, h)]
+        if "x1" in bbox:
+            x1 = float(bbox["x1"])
+            y1 = float(bbox["y1"])
+            x2 = float(bbox["x2"])
+            y2 = float(bbox["y2"])
+            return [x1, y1, max(0.0, x2 - x1), max(0.0, y2 - y1)]
+        else:
+            x = float(bbox.get("x", 0.0))
+            y = float(bbox.get("y", 0.0))
+            w = float(bbox.get("width", 0.0))
+            h = float(bbox.get("height", 0.0))
+            return [x, y, max(0.0, w), max(0.0, h)]
     if isinstance(bbox, (list, tuple)) and len(bbox) == 4:
         x, y, w, h = bbox
         return [float(x), float(y), max(0.0, float(w)), max(0.0, float(h))]
@@ -136,7 +143,18 @@ def convert_jsonl_to_coco(input_path: Path, output_path: Path, output_label: str
                 )
 
             image_id = image_id_remap[src_image_id]
-            frame_detections = _extract_frame_detections(meta, output_label)
+            
+            # Try new top-level frame.data["detections"] key first
+            frame_detections = []
+            if isinstance(data, dict) and "detections" in data:
+                fd = data["detections"]
+                if isinstance(fd, dict) and "items" in fd:
+                    frame_detections = [d for d in fd["items"] if isinstance(d, dict)]
+                elif isinstance(fd, list):
+                    frame_detections = [d for d in fd if isinstance(d, dict)]
+            
+            if not frame_detections:
+                frame_detections = _extract_frame_detections(meta, output_label)
 
             for det in frame_detections:
                 label = _extract_label(det)

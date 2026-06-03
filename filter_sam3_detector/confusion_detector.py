@@ -87,7 +87,7 @@ class ConfusionDetector:
     def _get_box(det: dict) -> list | None:
         """Extract [x1, y1, x2, y2] box from a detection dict.
 
-        Tries ``box`` (xyxy) first, then converts ``bbox`` (xywh dict or list).
+        Tries ``box`` (xyxy) first, then converts ``bbox`` (xywh dict or xyxy dict or list).
         Returns None if no usable box is found.
         """
         if "box" in det:
@@ -97,11 +97,19 @@ class ConfusionDetector:
 
         bbox = det.get("bbox")
         if isinstance(bbox, dict):
-            x = float(bbox.get("x", 0))
-            y = float(bbox.get("y", 0))
-            w = float(bbox.get("width", 0))
-            h = float(bbox.get("height", 0))
-            return [x, y, x + w, y + h]
+            if "x1" in bbox:
+                return [
+                    float(bbox["x1"]),
+                    float(bbox["y1"]),
+                    float(bbox["x2"]),
+                    float(bbox["y2"]),
+                ]
+            else:
+                x = float(bbox.get("x", 0))
+                y = float(bbox.get("y", 0))
+                w = float(bbox.get("width", 0))
+                h = float(bbox.get("height", 0))
+                return [x, y, x + w, y + h]
         if isinstance(bbox, (list, tuple)) and len(bbox) == 4:
             x, y, w, h = (float(v) for v in bbox)
             return [x, y, x + w, y + h]
@@ -110,7 +118,7 @@ class ConfusionDetector:
 
     @staticmethod
     def _class_label(det: dict) -> str:
-        return det.get("class") or det.get("class_name") or det.get("label") or ""
+        return det.get("label") or det.get("class") or det.get("class_name") or ""
 
     @staticmethod
     def _detection_strength(det: dict) -> float:

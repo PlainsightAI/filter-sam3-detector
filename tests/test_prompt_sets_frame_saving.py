@@ -43,14 +43,11 @@ class TestPromptSetsFrameSaving(unittest.TestCase):
 
         # _extract_detections_from_state: return one fake detection per prompt
         def fake_extract(state, label, w, h, gid, confidence_threshold=0.5, max_detections=100):
-            return [{"label": label, "box": [10, 20, 30, 40], "score": 0.9}]
+            return [{"label": label, "box": [10, 20, 30, 40], "bbox": {"x1": 10.0, "y1": 20.0, "x2": 30.0, "y2": 40.0}, "score": 0.9}]
         det._extract_detections_from_state = MagicMock(side_effect=fake_extract)
 
         # _visualize_detections_on_image: return the image unchanged
         det._visualize_detections_on_image = MagicMock(side_effect=lambda img, *a, **kw: img)
-
-        # _add_protege_compatible_output: no-op
-        det._add_protege_compatible_output = MagicMock()
 
         # processor.set_image / forward_grounding: return a dummy state
         det.processor = MagicMock()
@@ -148,7 +145,7 @@ class TestPromptSetsFrameSaving(unittest.TestCase):
                 call_count[0] += 1
                 if label == "car":
                     return []
-                return [{"label": label, "box": [10, 20, 30, 40], "score": 0.9}]
+                return [{"label": label, "box": [10, 20, 30, 40], "bbox": {"x1": 10.0, "y1": 20.0, "x2": 30.0, "y2": 40.0}, "score": 0.9}]
             det._extract_detections_from_state = MagicMock(side_effect=selective_extract)
 
             frame = self._make_frame()

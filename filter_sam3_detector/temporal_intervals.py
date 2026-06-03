@@ -641,11 +641,23 @@ class TemporalIntervalFilter(Filter):
         return output_frames
 
     def _get_detections(self, frame: Frame) -> list[dict]:
-        """Extract detections from frame metadata."""
+        """Extract detections from frame metadata or top-level data."""
+        # Try new top-level frame.data["detections"] key first
+        if "detections" in frame.data:
+            dets_payload = frame.data["detections"]
+            if isinstance(dets_payload, dict) and "items" in dets_payload:
+                return dets_payload["items"]
+            elif isinstance(dets_payload, list):
+                return dets_payload
+
+        # Fallback to metadata keys
         meta = frame.data.get('meta', {})
         detections = meta.get(self.detection_key, [])
         if not isinstance(detections, list):
-            return []
+            # Check standard "detections" key as fallback in meta
+            detections = meta.get("detections", [])
+            if not isinstance(detections, list):
+                return []
         return detections
 
     def _aggregate_detections(self, detections: list[dict]) -> dict[str, float]:

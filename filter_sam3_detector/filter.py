@@ -4,7 +4,7 @@ import logging
 import os
 import json
 import time
-from typing import Optional
+from typing import Optional, ClassVar
 from pathlib import Path
 from datetime import datetime
 
@@ -14,12 +14,21 @@ from PIL import Image
 
 
 from openfilter.filter_runtime.filter import FilterConfig, Filter, Frame
+from openfilter.filter_runtime.shapes import DetectionSet
 
 from .coco_export import convert_jsonl_to_coco
 from .temporal_intervals import EMATracker, DetectionInterval, IntervalTracker
 from .streaming_video_processor import StreamingVideoProcessor
 
-__all__ = ["FilterSAM3DetectorConfig", "FilterSAM3Detector"]
+
+class FilterSAM3DetectorOutput(DetectionSet):
+    """Official frame.data payload schema for FilterSAM3Detector."""
+    
+    __schema_id__: ClassVar[str] = "https://schemas.plainsight.ai/filters/sam3-detector/v1"
+    __frame_data_key__: ClassVar[str] = "detections"
+
+
+__all__ = ["FilterSAM3DetectorConfig", "FilterSAM3Detector", "FilterSAM3DetectorOutput"]
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -926,7 +935,14 @@ class FilterSAM3Detector(Filter):
     def _extract_detections_from_record(record: dict) -> list:
         """Extract the flat detections list from a JSONL event record."""
         data = record.get("data", record)
-        meta = data.get("meta", {})
+        if isinstance(data, dict):
+            detections_payload = data.get("detections")
+            if isinstance(detections_payload, dict) and "items" in detections_payload:
+                return detections_payload["items"]
+            elif isinstance(detections_payload, list):
+                return detections_payload
+
+        meta = data.get("meta", {}) if isinstance(data, dict) else {}
         # Try common keys in order of preference
         for key in ("detections", "sam3_detections"):
             dets = meta.get(key)
@@ -940,10 +956,20 @@ class FilterSAM3Detector(Filter):
         import copy
         record = copy.deepcopy(record)
         data = record.get("data", record)
-        meta = data.get("meta", {})
-        for key in ("detections", "sam3_detections"):
-            if key in meta:
-                meta[key] = kept
+        if isinstance(data, dict):
+            if "detections" in data:
+                detections_payload = data["detections"]
+                if isinstance(detections_payload, dict) and "items" in detections_payload:
+                    detections_payload["items"] = kept
+                    return record
+                elif isinstance(detections_payload, list):
+                    data["detections"] = kept
+                    return record
+
+            meta = data.setdefault("meta", {})
+            for key in ("detections", "sam3_detections"):
+                if key in meta:
+                    meta[key] = kept
         return record
 
     def _process_temporal_intervals(self, frame: Frame, detections: list):
@@ -1339,19 +1365,18 @@ class FilterSAM3Detector(Filter):
                     label = self.config.get("prompt_label_map", {}).get(prompt, prompt)
                     d['label'] = label
 
-                # Store results in frame metadata
+                # Store results in frame data under the canonical 'detections' key
+                output_schema = FilterSAM3DetectorOutput(items=detections)
+                frame.data["detections"] = output_schema.model_dump(mode="json")
+
+                # Store width and height in meta for backward-compatibility and logging
                 frame_meta = frame.data.setdefault('meta', {})
-                frame_meta[self.output_label] = detections
                 frame_meta['width'] = img_width
                 frame_meta['height'] = img_height
 
                 # Add detection_confidence to meta
                 if detection_confidence is not None:
                     frame_meta['detection_confidence'] = detection_confidence
-
-                # Build protege-compatible output format
-                # This allows SAM3 to work with downstream filters like sweetgreen aggregator
-                self._add_protege_compatible_output(frame_meta, detections)
 
                 # Process temporal intervals if enabled
                 if self.enable_temporal_intervals:
@@ -1435,24 +1460,21 @@ class FilterSAM3Detector(Filter):
                 # Save to JSONL file if output_path is configured (save ALL frames, even without detections)
                 if hasattr(self, 'jsonl_file') and self.jsonl_file is not None:
                     try:
-                        # Build protege-compatible meta for JSONL output
-                        jsonl_meta = {}
-                        self._add_protege_compatible_output(jsonl_meta, detections)
-
-                        # Include frame_id in meta (from _filter topic or VideoIn's meta['id'])
                         output_frame_id = frame_id_num if frame_id_num is not None else frame_counter
-                        jsonl_meta['frame_id'] = output_frame_id
-                        jsonl_meta['width'] = img_width
-                        jsonl_meta['height'] = img_height
-                        jsonl_meta['filename'] = frame_filename_str
+                        jsonl_meta = {
+                            'frame_id': output_frame_id,
+                            'width': img_width,
+                            'height': img_height,
+                            'filename': frame_filename_str
+                        }
 
-                        # Event sink format: {'filter_name': ..., 'topic': ..., 'data': {'id': ..., 'meta': ...}}
-                        # This matches what filter-event-sink outputs - frame id is merged into data
+                        # Event sink format matching frame.data structure
                         event_record = {
                             "filter_name": self.output_filter_name,
                             "topic": "main",
                             "data": {
                                 "id": output_frame_id,
+                                "detections": FilterSAM3DetectorOutput(items=detections).model_dump(mode="json"),
                                 "meta": jsonl_meta
                             }
                         }
@@ -1594,17 +1616,13 @@ class FilterSAM3Detector(Filter):
             output_frame = copy.deepcopy(frame)
             output_meta = output_frame.data.setdefault('meta', {})
 
-            # Store detections in frame metadata
-            output_meta[self.output_label] = ps_detections
+            # Store results in frame data under the canonical 'detections' key
+            output_schema = FilterSAM3DetectorOutput(items=ps_detections)
+            output_frame.data["detections"] = output_schema.model_dump(mode="json")
+
+            # Store width and height in meta for backward-compatibility
             output_meta['width'] = img_width
             output_meta['height'] = img_height
-
-            # Add protege-compatible output
-            self._add_protege_compatible_output(output_meta, ps_detections)
-
-            # Also add detections at top-level for aggregator compatibility
-            # (aggregator looks for frame.data['detections'] not frame.data['meta']['detections'])
-            output_frame.data['detections'] = output_meta.get('detections', [])
 
             # Add to output frames with the prompt set's topic
             output_frames[ps_topic] = output_frame
@@ -1628,19 +1646,20 @@ class FilterSAM3Detector(Filter):
             # Write to JSONL if configured (one record per prompt set per frame)
             if hasattr(self, 'jsonl_file') and self.jsonl_file is not None:
                 try:
-                    jsonl_meta = {}
-                    self._add_protege_compatible_output(jsonl_meta, ps_detections)
                     output_frame_id = frame_id_num if frame_id_num is not None else frame_counter
-                    jsonl_meta['frame_id'] = output_frame_id
-                    jsonl_meta['width'] = img_width
-                    jsonl_meta['height'] = img_height
-                    jsonl_meta['frame_filename'] = frame_filename_str
+                    jsonl_meta = {
+                        'frame_id': output_frame_id,
+                        'width': img_width,
+                        'height': img_height,
+                        'frame_filename': frame_filename_str
+                    }
 
                     event_record = {
                         "filter_name": ps_filter_name,
                         "topic": ps_topic,
                         "data": {
                             "id": output_frame_id,
+                            "detections": FilterSAM3DetectorOutput(items=ps_detections).model_dump(mode="json"),
                             "meta": jsonl_meta
                         }
                     }
@@ -1650,89 +1669,6 @@ class FilterSAM3Detector(Filter):
                     logger.warning(f"Failed to save JSONL for prompt set {ps_name}: {e}")
 
         return output_frames
-
-    def _add_protege_compatible_output(self, frame_meta: dict, detections: list) -> None:
-        """
-        Add protege-compatible output format to frame metadata.
-
-        This enables SAM3 to work with downstream filters that expect protege-model format,
-        such as the sweetgreen subject data aggregator and the golden truth comparison engine
-        (PR 355 frame-level format).
-
-        Output format (per detection):
-        - meta.detections: list of {"label": str, "confidence": float, "bbox": {x, y, width, height}}
-        - meta.classification: {"classes": [...], "confidences": [...], "architecture": str}
-
-        Each detection has ONE box with ONE confidence score.
-        Uses "label" and "bbox" format for PR 355 comparator compatibility.
-
-        Args:
-            frame_meta: Frame metadata dict to update
-            detections: List of SAM3 detection dicts with box, score, class fields
-        """
-        if not detections:
-            # Even with no detections, add empty structures for consistency
-            frame_meta['detections'] = []
-            frame_meta['classification'] = {
-                'classes': [],
-                'confidences': [],
-                'architecture': 'sam3',
-            }
-            return
-
-        # Build detections list - one per object with individual confidence
-        # Uses "label" and "bbox" format for PR 355 comparator compatibility
-        output_detections = []
-        class_max_scores: dict[str, float] = {}  # Track max score per class for classification block
-
-        for det in detections:
-            prompt = det.get('class') or det.get('class_name') or 'object'
-            label = det.get('label') or det.get('class') or det.get('class_name') or 'object'
-            box = det.get('box')  # [x1, y1, x2, y2] pixel coordinates
-            score = det.get('score', 0.0)
-
-            if box is None:
-                continue
-
-            # Track max score per class for classification block
-            if label not in class_max_scores:
-                class_max_scores[label] = 0.0
-            class_max_scores[label] = max(class_max_scores[label], score)
-
-            # Convert [x1, y1, x2, y2] to {x, y, width, height} format
-            x1, y1, x2, y2 = box
-            bbox = {
-                'x': x1,
-                'y': y1,
-                'width': x2 - x1,
-                'height': y2 - y1,
-            }
-
-            # Include both PR 355 format (label, confidence, bbox) AND
-            # aggregator-compatible format (class, rois) in same detection
-            output_detections.append({
-                'label': label,
-                'prompt': prompt,
-                'confidence': score,
-                'bbox': bbox,
-                # Aggregator-compatible fields:
-                'class': label,
-                'rois': [[int(x1), int(y1), int(x2), int(y2)]],
-            })
-
-        frame_meta['detections'] = output_detections
-
-        # Build classification block (classes with their confidence scores)
-        # Sort by score descending for consistency
-        sorted_classes = sorted(class_max_scores.items(), key=lambda x: x[1], reverse=True)
-        classes = [cls for cls, _ in sorted_classes]
-        confidences = [score for _, score in sorted_classes]
-
-        frame_meta['classification'] = {
-            'classes': classes,
-            'confidences': confidences,
-            'architecture': 'sam3',
-        }
 
     def _boxes_xywh_to_norm_cxcywh(self, boxes_xywh: list, img_w: int, img_h: int) -> list:
         """Convert list of [x, y, w, h] (pixels) to normalized [cx, cy, w, h] in [0, 1] for add_geometric_prompt."""
@@ -1833,7 +1769,12 @@ class FilterSAM3Detector(Filter):
 
                 # Convert to COCO bbox format [x, y, width, height]
                 coco_bbox = [float(x1), float(y1), float(x2 - x1), float(y2 - y1)]
-                detection['bbox'] = coco_bbox  # COCO format
+                detection['bbox'] = {
+                    "x1": float(x1),
+                    "y1": float(y1),
+                    "x2": float(x2),
+                    "y2": float(y2),
+                }
 
             if self.output_scores:
                 score = scores[i]
@@ -1852,6 +1793,9 @@ class FilterSAM3Detector(Filter):
 
                 # Convert to binary mask
                 binary_mask = (mask > 0.5).astype(np.uint8)
+                
+                # Keep in-memory for internal visualization
+                detection['mask_np'] = binary_mask
 
                 # Convert mask to COCO format (polygons)
                 segmentation = self._mask_to_coco_polygons(binary_mask)
@@ -1862,6 +1806,30 @@ class FilterSAM3Detector(Filter):
                     # Calculate area (number of pixels in mask)
                     area = int(np.sum(binary_mask))
                     detection['area'] = area
+
+                    # Build canonical mask schema dict
+                    polygons_list = []
+                    try:
+                        import cv2
+                        contours, _ = cv2.findContours(
+                            binary_mask.astype(np.uint8),
+                            cv2.RETR_EXTERNAL,
+                            cv2.CHAIN_APPROX_SIMPLE
+                        )
+                        for contour in contours:
+                            epsilon = 0.001 * cv2.arcLength(contour, True)
+                            approx = cv2.approxPolyDP(contour, epsilon, True)
+                            if len(approx) >= 3:
+                                points = [(float(pt[0][0]), float(pt[0][1])) for pt in approx]
+                                polygons_list.append({"points": points})
+                    except Exception as e:
+                        logger.warning(f"Failed to generate canonical polygons: {e}")
+
+                    if polygons_list:
+                        detection['mask'] = {
+                            "polygons": polygons_list,
+                            "area": area,
+                        }
 
                     # Category ID (1 = object, since we don't have specific categories)
                     detection['category_id'] = 1
@@ -1876,6 +1844,7 @@ class FilterSAM3Detector(Filter):
                 detection['class'] = class_name
                 detection['class_name'] = class_name
                 detection['category_name'] = class_name
+                detection['label'] = class_name
 
                 # Add rois with pixel coordinates [x1, y1, x2, y2]
                 # This matches protege detection model output format for aggregator compatibility
@@ -2837,15 +2806,38 @@ class FilterSAM3Detector(Filter):
                         cv2.putText(image, class_text, (cx, cy), font, font_scale, color_bgr, thickness)
 
                 # Draw mask overlay (semi-transparent, same hue as class BB)
-                if 'mask' in det:
-                    mask = np.array(det['mask'], dtype=np.uint8)
-                    if mask.shape == image.shape[:2]:
+                mask = None
+                if 'mask_np' in det:
+                    mask = det['mask_np']
+                elif 'mask' in det:
+                    m_val = det['mask']
+                    if isinstance(m_val, np.ndarray):
+                        mask = m_val
+                    elif isinstance(m_val, dict) and 'polygons' in m_val:
+                        # Draw polygons
+                        color_mask = np.zeros_like(image)
                         raw_cls = det.get('label') or det.get('class') or det.get('class_name')
                         class_text = str(raw_cls) if raw_cls is not None and str(raw_cls) != '' else None
                         mbgr = self._viz_bgr_for_class_name(class_text)
-                        color_mask = np.zeros_like(image)
-                        color_mask[mask > 0] = mbgr
+                        for poly in m_val['polygons']:
+                            points = poly.get('points') if isinstance(poly, dict) else getattr(poly, 'points', None)
+                            if points:
+                                pts = np.array(points, dtype=np.int32).reshape((-1, 1, 2))
+                                cv2.fillPoly(color_mask, [pts], mbgr)
                         image = cv2.addWeighted(image, 1.0, color_mask, 0.3, 0)
+                    else:
+                        try:
+                            mask = np.array(m_val, dtype=np.uint8)
+                        except Exception:
+                            pass
+
+                if mask is not None and isinstance(mask, np.ndarray) and mask.shape == image.shape[:2]:
+                    raw_cls = det.get('label') or det.get('class') or det.get('class_name')
+                    class_text = str(raw_cls) if raw_cls is not None and str(raw_cls) != '' else None
+                    mbgr = self._viz_bgr_for_class_name(class_text)
+                    color_mask = np.zeros_like(image)
+                    color_mask[mask > 0] = mbgr
+                    image = cv2.addWeighted(image, 1.0, color_mask, 0.3, 0)
 
             # Create new Frame with visualized image (Frame.image is read-only)
             new_frame = Frame(image, frame.data, "BGR")
@@ -2903,15 +2895,39 @@ class FilterSAM3Detector(Filter):
                             class_text, x1, y1, x2, y2, img_h, img_w, placement="label"
                         )
                         cv2.putText(image, class_text, (cx, cy), font, font_scale, color_bgr, thickness)
-                if 'mask' in det:
-                    mask = np.array(det['mask'], dtype=np.uint8)
-                    if mask.shape == image.shape[:2]:
+                # Draw mask overlay (semi-transparent, same hue as class BB)
+                mask = None
+                if 'mask_np' in det:
+                    mask = det['mask_np']
+                elif 'mask' in det:
+                    m_val = det['mask']
+                    if isinstance(m_val, np.ndarray):
+                        mask = m_val
+                    elif isinstance(m_val, dict) and 'polygons' in m_val:
+                        # Draw polygons
+                        color_mask = np.zeros_like(image)
                         raw_cls = det.get('label') or det.get('class') or det.get('class_name')
                         class_text = str(raw_cls) if raw_cls is not None and str(raw_cls) != '' else None
                         mbgr = self._viz_bgr_for_class_name(class_text)
-                        color_mask = np.zeros_like(image)
-                        color_mask[mask > 0] = mbgr
+                        for poly in m_val['polygons']:
+                            points = poly.get('points') if isinstance(poly, dict) else getattr(poly, 'points', None)
+                            if points:
+                                pts = np.array(points, dtype=np.int32).reshape((-1, 1, 2))
+                                cv2.fillPoly(color_mask, [pts], mbgr)
                         image = cv2.addWeighted(image, 1.0, color_mask, 0.3, 0)
+                    else:
+                        try:
+                            mask = np.array(m_val, dtype=np.uint8)
+                        except Exception:
+                            pass
+
+                if mask is not None and isinstance(mask, np.ndarray) and mask.shape == image.shape[:2]:
+                    raw_cls = det.get('label') or det.get('class') or det.get('class_name')
+                    class_text = str(raw_cls) if raw_cls is not None and str(raw_cls) != '' else None
+                    mbgr = self._viz_bgr_for_class_name(class_text)
+                    color_mask = np.zeros_like(image)
+                    color_mask[mask > 0] = mbgr
+                    image = cv2.addWeighted(image, 1.0, color_mask, 0.3, 0)
         except Exception as e:
             logger.warning(f"Failed to visualize detections on image: {e}")
         return image
