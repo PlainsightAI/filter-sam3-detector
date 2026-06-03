@@ -10,7 +10,7 @@ SAM3 Detector filter release notes
 - Add schema-compliance unit tests to cover coordinate validation and extra field pruning in `tests/test_filter_sam3_detector.py`.
 
 ### Changed
-- Bump openfilter to 1.1.0
+- Upgrade openfilter SDK package dependency to version 1.1.0.
 - Bump openfilter to 1.1.1
 - Migrate `_extract_detections_from_state` to output canonical `bbox`, `label`, and `mask` structures.
 - Transition frame processing to write exclusively to the top-level `frame.data["detections"]` path.
