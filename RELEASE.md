@@ -3,10 +3,22 @@ SAM3 Detector filter release notes
 
 ## [Unreleased]
 
-### Changed
+## v0.1.19 - 2026-06-03
 
+### Added
+- Register `FilterSAM3DetectorOutput` output schema under `openfilter.filter_runtime.shapes.DetectionSet` with `$id: https://schemas.plainsight.ai/filters/sam3-detector/v1` and data key `"detections"`.
+- Add schema-compliance unit tests to cover coordinate validation and extra field pruning in `tests/test_filter_sam3_detector.py`.
+
+### Changed
 - Bump openfilter to 1.1.0
 - Bump openfilter to 1.1.1
+- Migrate `_extract_detections_from_state` to output canonical `bbox`, `label`, and `mask` structures.
+- Transition frame processing to write exclusively to the top-level `frame.data["detections"]` path.
+- Standardize `.jsonl` output records to follow the canonical detections schema format.
+- Update downstream internal consumers (`confusion_detector.py`, `temporal_intervals.py`, and `coco_export.py`) to support the new schema structure.
+
+### Removed
+- Delete the legacy `_add_protege_compatible_output` method and drop dual-writing of metadata.
 
 ## v0.1.18 - 2026-04-29
 Enhances text_prompts parsing in FilterSAM3Detector with configurable delimiters and prompt→label mapping.
