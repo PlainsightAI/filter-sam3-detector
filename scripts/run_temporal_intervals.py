@@ -114,7 +114,7 @@ def run_temporal_detection(
         "half_life": half_life,
         "presence_threshold": presence_threshold,
         "detection_key": "sam3_detections",
-        "label_field": "class",  # Use 'class' field which is set by multi-prompt detection
+        "label_field": "label",  # Use 'label' field which is set by multi-prompt detection
         "score_field": "score",
         "output_json_path": temp_output,
         "emit_on_complete": True,

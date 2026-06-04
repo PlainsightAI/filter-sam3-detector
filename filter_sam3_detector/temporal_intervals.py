@@ -674,13 +674,22 @@ class TemporalIntervalFilter(Filter):
                 continue
 
             # Get confidence score
-            score = det.get(self.score_field, 1.0)
+            score = det.get(self.score_field)
+            if score is None and self.score_field != "score":
+                # Fallback to standard schema key if config specified legacy confidence alias
+                score = det.get("score")
+            if score is None:
+                score = 1.0
+
             if score < self.min_confidence:
                 continue
 
             # Get label
             if self.label_field and self.label_field in det:
                 label = str(det[self.label_field])
+            elif self.label_field and "label" in det:
+                # Fallback to standard schema key if config specified legacy class/class_name alias
+                label = str(det["label"])
             else:
                 label = self.default_label
 

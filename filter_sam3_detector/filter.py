@@ -485,6 +485,11 @@ class FilterSAM3Detector(Filter):
         self.output_masks = config.get("output_masks", True)
         self.output_boxes = config.get("output_boxes", True)
         self.output_scores = config.get("output_scores", True)
+        if not self.output_boxes or not self.output_scores:
+            logger.warning(
+                "Configuring output_boxes=False or output_scores=False will suppress required schema fields "
+                "and bypass the canonical FilterSAM3DetectorOutput validation schema on frame payloads."
+            )
         self.output_label = config.get("output_label", "sam3_detections")
         self.output_path = config.get("output_path", None)
         self.auto_export_coco = config.get("auto_export_coco", False)
@@ -1366,8 +1371,7 @@ class FilterSAM3Detector(Filter):
                     d['label'] = label
 
                 # Store results in frame data under the canonical 'detections' key
-                output_schema = FilterSAM3DetectorOutput(items=detections)
-                frame.data["detections"] = output_schema.model_dump(mode="json")
+                frame.data["detections"] = self._serialize_detections(detections)
 
                 # Store width and height in meta for backward-compatibility and logging
                 frame_meta = frame.data.setdefault('meta', {})
@@ -1474,7 +1478,7 @@ class FilterSAM3Detector(Filter):
                             "topic": "main",
                             "data": {
                                 "id": output_frame_id,
-                                "detections": FilterSAM3DetectorOutput(items=detections).model_dump(mode="json"),
+                                "detections": self._serialize_detections(detections),
                                 "meta": jsonl_meta
                             }
                         }
@@ -1617,8 +1621,7 @@ class FilterSAM3Detector(Filter):
             output_meta = output_frame.data.setdefault('meta', {})
 
             # Store results in frame data under the canonical 'detections' key
-            output_schema = FilterSAM3DetectorOutput(items=ps_detections)
-            output_frame.data["detections"] = output_schema.model_dump(mode="json")
+            output_frame.data["detections"] = self._serialize_detections(ps_detections)
 
             # Store width and height in meta for backward-compatibility
             output_meta['width'] = img_width
@@ -1659,7 +1662,7 @@ class FilterSAM3Detector(Filter):
                         "topic": ps_topic,
                         "data": {
                             "id": output_frame_id,
-                            "detections": FilterSAM3DetectorOutput(items=ps_detections).model_dump(mode="json"),
+                            "detections": self._serialize_detections(ps_detections),
                             "meta": jsonl_meta
                         }
                     }
@@ -1669,6 +1672,29 @@ class FilterSAM3Detector(Filter):
                     logger.warning(f"Failed to save JSONL for prompt set {ps_name}: {e}")
 
         return output_frames
+
+    def _serialize_detections(self, detections: list) -> dict:
+        """
+        Serialize detections cleanly, gating schema construction if required fields are missing.
+
+        If self.output_boxes and self.output_scores are both True, this validates against
+        and serializes via FilterSAM3DetectorOutput. Otherwise, it bypasses the schema
+        and returns a clean, JSON-serializable dictionary under the 'items' key.
+        """
+        if self.output_boxes and self.output_scores:
+            return FilterSAM3DetectorOutput(items=detections).model_dump(mode="json")
+
+        # Schema validation is bypassed because a required field is suppressed by the user.
+        # Clean/prune detections to avoid non-serializable fields (e.g. mask_np).
+        clean_items = []
+        for d in detections:
+            clean_d = {}
+            for key in ["id", "bbox", "score", "label", "label_id", "mask"]:
+                if key in d:
+                    clean_d[key] = d[key]
+            clean_items.append(clean_d)
+
+        return {"items": clean_items}
 
     def _boxes_xywh_to_norm_cxcywh(self, boxes_xywh: list, img_w: int, img_h: int) -> list:
         """Convert list of [x, y, w, h] (pixels) to normalized [cx, cy, w, h] in [0, 1] for add_geometric_prompt."""
