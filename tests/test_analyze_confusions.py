@@ -42,3 +42,78 @@ def test_suggest_equal_avg_tie_uses_pa_as_winner() -> None:
 def test_detection_strength_zero_score_not_confidence() -> None:
     ac = _load_module()
     assert ac._detection_strength({"score": 0.0, "confidence": 0.9}) == pytest.approx(0.0)
+
+
+def test_get_box_formats() -> None:
+    ac = _load_module()
+
+    # Legacy dict format (xywh)
+    det_legacy_dict = {"bbox": {"x": 10, "y": 20, "width": 30, "height": 40}}
+    assert ac._get_box(det_legacy_dict) == [10.0, 20.0, 40.0, 60.0]
+
+    # Legacy list format (xywh)
+    det_legacy_list = {"bbox": [10, 20, 30, 40]}
+    assert ac._get_box(det_legacy_list) == [10.0, 20.0, 40.0, 60.0]
+
+    # Box list format (xyxy)
+    det_box = {"box": [10, 20, 40, 60]}
+    assert ac._get_box(det_box) == [10.0, 20.0, 40.0, 60.0]
+
+    # New schema dict format (x1y1x2y2)
+    det_schema = {"bbox": {"x1": 10.0, "y1": 20.0, "x2": 40.0, "y2": 60.0}}
+    assert ac._get_box(det_schema) == [10.0, 20.0, 40.0, 60.0]
+
+
+def test_confusions_from_record_extraction() -> None:
+    ac = _load_module()
+
+    # Legacy record structure (meta.sam3_detections list)
+    legacy_record = {
+        "data": {
+            "id": 1,
+            "meta": {
+                "sam3_detections": [
+                    {"box": [10, 20, 40, 60], "class": "car", "score": 0.9},
+                    {"box": [12, 22, 38, 58], "class": "truck", "score": 0.8},
+                ]
+            }
+        }
+    }
+    confusions_legacy = ac._confusions_from_record(legacy_record, iou_threshold=0.5)
+    assert len(confusions_legacy) == 1
+    assert confusions_legacy[0]["prompt_a"] == "car"
+    assert confusions_legacy[0]["prompt_b"] == "truck"
+
+    # New schema dict structure (detections.items)
+    schema_dict_record = {
+        "data": {
+            "id": 1,
+            "detections": {
+                "items": [
+                    {"bbox": {"x1": 10, "y1": 20, "x2": 40, "y2": 60}, "label": "car", "score": 0.9},
+                    {"bbox": {"x1": 12, "y1": 22, "x2": 38, "y2": 58}, "label": "truck", "score": 0.8},
+                ]
+            },
+            "meta": {}
+        }
+    }
+    confusions_schema_dict = ac._confusions_from_record(schema_dict_record, iou_threshold=0.5)
+    assert len(confusions_schema_dict) == 1
+    assert confusions_schema_dict[0]["prompt_a"] == "car"
+    assert confusions_schema_dict[0]["prompt_b"] == "truck"
+
+    # New schema list structure (detections list)
+    schema_list_record = {
+        "data": {
+            "id": 1,
+            "detections": [
+                {"bbox": {"x1": 10, "y1": 20, "x2": 40, "y2": 60}, "label": "car", "score": 0.9},
+                {"bbox": {"x1": 12, "y1": 22, "x2": 38, "y2": 58}, "label": "truck", "score": 0.8},
+            ],
+            "meta": {}
+        }
+    }
+    confusions_schema_list = ac._confusions_from_record(schema_list_record, iou_threshold=0.5)
+    assert len(confusions_schema_list) == 1
+    assert confusions_schema_list[0]["prompt_a"] == "car"
+    assert confusions_schema_list[0]["prompt_b"] == "truck"

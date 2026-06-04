@@ -56,9 +56,17 @@ def _get_box(det: dict) -> Optional[List[float]]:
             return [float(v) for v in b]
     bbox = det.get("bbox")
     if isinstance(bbox, dict):
-        x, y = float(bbox.get("x", 0)), float(bbox.get("y", 0))
-        w, h = float(bbox.get("width", 0)), float(bbox.get("height", 0))
-        return [x, y, x + w, y + h]
+        if "x1" in bbox:
+            return [
+                float(bbox["x1"]),
+                float(bbox["y1"]),
+                float(bbox["x2"]),
+                float(bbox["y2"]),
+            ]
+        else:
+            x, y = float(bbox.get("x", 0)), float(bbox.get("y", 0))
+            w, h = float(bbox.get("width", 0)), float(bbox.get("height", 0))
+            return [x, y, x + w, y + h]
     if isinstance(bbox, (list, tuple)) and len(bbox) == 4:
         x, y, w, h = (float(v) for v in bbox)
         return [x, y, x + w, y + h]
@@ -109,11 +117,20 @@ def _confusions_from_record(record: dict, iou_threshold: float) -> list[dict]:
 
     # Re-compute from raw detections
     dets = None
-    for key in ("detections", "sam3_detections"):
-        candidate = meta.get(key)
-        if isinstance(candidate, list):
-            dets = candidate
-            break
+    if isinstance(data, dict):
+        detections_payload = data.get("detections")
+        if isinstance(detections_payload, dict) and "items" in detections_payload:
+            dets = detections_payload["items"]
+        elif isinstance(detections_payload, list):
+            dets = detections_payload
+
+    if not dets:
+        for key in ("detections", "sam3_detections"):
+            candidate = meta.get(key)
+            if isinstance(candidate, list):
+                dets = candidate
+                break
+
     if not dets:
         return []
 
