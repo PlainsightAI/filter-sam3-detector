@@ -11,7 +11,7 @@ SAM3 Detector filter release notes
 
 ### Changed
 - Upgrade openfilter SDK package dependency to version 1.1.0.
-- Bump openfilter to 1.1.1
+- Upgrade openfilter SDK package dependency to version 1.1.1.
 - Migrate `_extract_detections_from_state` to output canonical `bbox`, `label`, and `mask` structures.
 - Transition frame processing to write exclusively to the top-level `frame.data["detections"]` path.
 - Standardize `.jsonl` output records to follow the canonical detections schema format.
