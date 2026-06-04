@@ -45,6 +45,7 @@ def test_detection_strength_zero_score_not_confidence() -> None:
 
 
 def test_get_box_formats() -> None:
+    """Test that _get_box can parse legacy xywh dicts/lists, box list, and new schema x1y1x2y2 dicts correctly."""
     ac = _load_module()
 
     # Legacy dict format (xywh)
@@ -65,6 +66,7 @@ def test_get_box_formats() -> None:
 
 
 def test_confusions_from_record_extraction() -> None:
+    """Test that _confusions_from_record extracts detections successfully from legacy and schema-compliant record structures."""
     ac = _load_module()
 
     # Legacy record structure (meta.sam3_detections list)
