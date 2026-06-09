@@ -37,7 +37,8 @@ dependencies = [
   "sam3",
   # SAM3 dependencies not in its pyproject.toml
   "einops",
-  "decord",
+  "decord; sys_platform != 'darwin' or platform_machine != 'arm64'",
+  "eva-decord; sys_platform == 'darwin' and platform_machine == 'arm64'",
   "pycocotools",
 ]
 

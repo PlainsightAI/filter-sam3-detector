@@ -18,9 +18,320 @@ from openfilter.filter_runtime.filter import FilterConfig, Filter, Frame
 from openfilter.filter_runtime.shapes import DetectionSet
 from openfilter.filter_runtime.config import FilterConfigBase
 
+from pydantic import Field
+from typing import Optional, List, Any
+
 class FilterSAM3DetectorConfigSchema(FilterConfigBase):
     """Declarative config schema for FilterSAM3Detector."""
-    model_config = {"extra": "allow"}
+    model_config = {"extra": "forbid"}
+
+    # Base SAM3 configuration
+    model_id: str = Field(default="facebook/sam3", description="Model ID")
+    device: str = Field(default="cuda", description="Compute device")
+
+    # Prompt configuration
+    prompt_mode: str = Field(
+        default="Default/Visual",
+        json_schema_extra={
+            "x-openfilter-ui": {"widget": "select"}
+        }
+    )
+    text_prompt: Optional[str] = Field(default=None, description="Text prompt for detection")
+    text_prompts: Optional[str] = Field(default=None, description="Delimiter-separated prompts")
+    prompt_delimiter: str = Field(default="###", description="Delimiter for multiple prompts")
+    class_delimiter: str = Field(default="|||", description="Delimiter separating class label from prompt")
+    prompt_sets: Optional[List[Any]] = Field(default=None, description="Multi-output mode configuration")
+
+    # Exemplars configuration
+    exemplars_path: Optional[str] = Field(
+        default=None, 
+        description="Path to directory containing cropped example images",
+        json_schema_extra={
+            "x-openfilter-ui": {"group": "Exemplars"}
+        }
+    )
+    exemplar_embeddings_cache: Optional[str] = Field(
+        default=None,
+        json_schema_extra={
+            "x-openfilter-ui": {"group": "Exemplars", "advanced": True}
+        }
+    )
+
+    # Thresholds
+    confidence_threshold: float = Field(
+        default=0.5,
+        ge=0.0,
+        le=1.0,
+        description="Minimum score to keep a detection",
+        json_schema_extra={
+            "x-openfilter-ui": {"widget": "slider"}
+        }
+    )
+    mask_threshold: float = Field(
+        default=0.5,
+        ge=0.0,
+        le=1.0,
+        description="Threshold for binarizing predicted masks",
+        json_schema_extra={
+            "x-openfilter-ui": {"widget": "slider"}
+        }
+    )
+    max_detections: int = Field(default=100, description="Maximum number of detections to keep per frame")
+
+    # Output options
+    output_masks: bool = Field(
+        default=False, 
+        description="Include full segmentation masks in output (can increase payload size)",
+        json_schema_extra={
+            "x-openfilter-ui": {"group": "Outputs"}
+        }
+    )
+    output_boxes: bool = Field(
+        default=True,
+        description="Include bounding boxes in output",
+        json_schema_extra={
+            "x-openfilter-ui": {"group": "Outputs"}
+        }
+    )
+    output_scores: bool = Field(
+        default=True,
+        description="Include confidence scores in output",
+        json_schema_extra={
+            "x-openfilter-ui": {"group": "Outputs"}
+        }
+    )
+    output_label: str = Field(
+        default="sam3_detections",
+        json_schema_extra={
+            "x-openfilter-ui": {"group": "Outputs"}
+        }
+    )
+    output_path: Optional[str] = Field(
+        default=None,
+        description="Path to save JSONL annotations",
+        json_schema_extra={
+            "x-openfilter-ui": {"group": "Outputs"}
+        }
+    )
+    auto_export_coco: bool = Field(
+        default=False,
+        description="Export COCO JSON on shutdown when output_path is set",
+        json_schema_extra={
+            "x-openfilter-ui": {"group": "Outputs", "advanced": True}
+        }
+    )
+    coco_output_path: Optional[str] = Field(
+        default=None,
+        json_schema_extra={
+            "x-openfilter-ui": {"group": "Outputs", "advanced": True}
+        }
+    )
+    output_filter_name: str = Field(
+        default="SAM3Detector",
+        json_schema_extra={
+            "x-openfilter-ui": {"group": "Outputs", "advanced": True}
+        }
+    )
+
+    # NMS (Non-Maximum Suppression)
+    nms_enabled: bool = Field(
+        default=True,
+        description="Enable NMS to suppress overlapping detections",
+        json_schema_extra={
+            "x-openfilter-ui": {"group": "NMS Options"}
+        }
+    )
+    nms_threshold: float = Field(
+        default=0.5,
+        ge=0.0,
+        le=1.0,
+        description="IoU threshold for NMS (higher = more boxes kept)",
+        json_schema_extra={
+            "x-openfilter-ui": {"group": "NMS Options", "widget": "slider"}
+        }
+    )
+
+    # Visualization
+    frames_output_dir: Optional[str] = Field(
+        default=None,
+        json_schema_extra={
+            "x-openfilter-ui": {"group": "Visualization", "advanced": True}
+        }
+    )
+    annotated_frames_output_dir: Optional[str] = Field(
+        default=None,
+        json_schema_extra={
+            "x-openfilter-ui": {"group": "Visualization", "advanced": True}
+        }
+    )
+    save_annotated_frames: bool = Field(
+        default=False,
+        json_schema_extra={
+            "x-openfilter-ui": {"group": "Visualization"}
+        }
+    )
+    debug: bool = Field(
+        default=False,
+        json_schema_extra={
+            "x-openfilter-ui": {"group": "Visualization", "advanced": True}
+        }
+    )
+    visualize: bool = Field(
+        default=False,
+        json_schema_extra={
+            "x-openfilter-ui": {"group": "Visualization"}
+        }
+    )
+    viz_topic: str = Field(
+        default="",
+        json_schema_extra={
+            "x-openfilter-ui": {"group": "Visualization", "advanced": True}
+        }
+    )
+
+    # Temporal Intervals
+    enable_temporal_intervals: bool = Field(
+        default=False,
+        description="Enable inline temporal interval tracking",
+        json_schema_extra={
+            "x-openfilter-ui": {"group": "Temporal Tracking"}
+        }
+    )
+    temporal_half_life: Optional[int] = Field(
+        default=None,
+        json_schema_extra={
+            "x-openfilter-ui": {"group": "Temporal Tracking"}
+        }
+    )
+    temporal_full_decay_life: Optional[int] = Field(
+        default=None,
+        json_schema_extra={
+            "x-openfilter-ui": {"group": "Temporal Tracking"}
+        }
+    )
+    temporal_presence_threshold: float = Field(
+        default=0.5,
+        ge=0.0,
+        le=1.0,
+        json_schema_extra={
+            "x-openfilter-ui": {"group": "Temporal Tracking", "widget": "slider"}
+        }
+    )
+    temporal_min_confidence: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        json_schema_extra={
+            "x-openfilter-ui": {"group": "Temporal Tracking", "widget": "slider"}
+        }
+    )
+    temporal_output_json_path: Optional[str] = Field(
+        default=None,
+        json_schema_extra={
+            "x-openfilter-ui": {"group": "Temporal Tracking"}
+        }
+    )
+    temporal_streaming_mode: bool = Field(
+        default=False,
+        json_schema_extra={
+            "x-openfilter-ui": {"group": "Temporal Tracking", "advanced": True}
+        }
+    )
+    temporal_emit_on_change: bool = Field(
+        default=True,
+        json_schema_extra={
+            "x-openfilter-ui": {"group": "Temporal Tracking", "advanced": True}
+        }
+    )
+    temporal_label_field: Optional[str] = Field(
+        default=None,
+        json_schema_extra={
+            "x-openfilter-ui": {"group": "Temporal Tracking", "advanced": True}
+        }
+    )
+
+    # Video Mode
+    enable_video_mode: bool = Field(
+        default=False,
+        description="Use video mode with temporal tracking",
+        json_schema_extra={
+            "x-openfilter-ui": {"group": "Video Tracking"}
+        }
+    )
+    video_detection_interval: int = Field(
+        default=5,
+        json_schema_extra={
+            "x-openfilter-ui": {"group": "Video Tracking"}
+        }
+    )
+    video_min_tracking_confidence: float = Field(
+        default=0.3,
+        ge=0.0,
+        le=1.0,
+        json_schema_extra={
+            "x-openfilter-ui": {"group": "Video Tracking", "widget": "slider"}
+        }
+    )
+
+    # Reference Boxes and Layout
+    positive_boxes: Optional[List[Any]] = Field(
+        default=None,
+        json_schema_extra={
+            "x-openfilter-ui": {"group": "Reference Configuration", "advanced": True}
+        }
+    )
+    negative_boxes: Optional[List[Any]] = Field(
+        default=None,
+        json_schema_extra={
+            "x-openfilter-ui": {"group": "Reference Configuration", "advanced": True}
+        }
+    )
+    ref_images: Optional[List[str]] = Field(
+        default=None,
+        json_schema_extra={
+            "x-openfilter-ui": {"group": "Reference Configuration", "advanced": True}
+        }
+    )
+    ref_images_negative: Optional[List[str]] = Field(
+        default=None,
+        json_schema_extra={
+            "x-openfilter-ui": {"group": "Reference Configuration", "advanced": True}
+        }
+    )
+    ref_margin: int = Field(
+        default=10,
+        json_schema_extra={
+            "x-openfilter-ui": {"group": "Reference Configuration", "advanced": True}
+        }
+    )
+    ref_gap: int = Field(
+        default=5,
+        json_schema_extra={
+            "x-openfilter-ui": {"group": "Reference Configuration", "advanced": True}
+        }
+    )
+    ref_layout: str = Field(
+        default="overlay",
+        json_schema_extra={
+            "x-openfilter-ui": {"group": "Reference Configuration", "advanced": True}
+        }
+    )
+    ref_strip_width: int = Field(
+        default=256,
+        json_schema_extra={
+            "x-openfilter-ui": {"group": "Reference Configuration", "advanced": True}
+        }
+    )
+    ref_max_height: int = Field(
+        default=384,
+        json_schema_extra={
+            "x-openfilter-ui": {"group": "Reference Configuration", "advanced": True}
+        }
+    )
+    # Exclude inherited dynamic fields that we don't want explicitly validated
+    sources: Optional[List[str]] = Field(default=None)
+    outputs: Optional[List[str]] = Field(default=None)
+
 
 from .coco_export import convert_jsonl_to_coco
 from .temporal_intervals import EMATracker, DetectionInterval, IntervalTracker
