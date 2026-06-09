@@ -16,6 +16,11 @@ from PIL import Image
 
 from openfilter.filter_runtime.filter import FilterConfig, Filter, Frame
 from openfilter.filter_runtime.shapes import DetectionSet
+from openfilter.filter_runtime.config import FilterConfigBase
+
+class FilterSAM3DetectorConfigSchema(FilterConfigBase):
+    """Declarative config schema for FilterSAM3Detector."""
+    model_config = {"extra": "allow"}
 
 from .coco_export import convert_jsonl_to_coco
 from .temporal_intervals import EMATracker, DetectionInterval, IntervalTracker
