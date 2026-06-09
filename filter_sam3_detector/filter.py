@@ -415,6 +415,7 @@ class FilterSAM3Detector(Filter):
     - Example: exemplars_path="/path/to/containers/" with container1.jpg, container2.jpg, etc.
     """
 
+    # Defensive marker for future SDK changes that may consume it
     __output_schema__ = FilterSAM3DetectorOutput
 
     @classmethod
@@ -805,9 +806,9 @@ class FilterSAM3Detector(Filter):
         self.output_boxes = config.get("output_boxes", True)
         self.output_scores = config.get("output_scores", True)
         if not self.output_boxes or not self.output_scores:
-            logger.warning(
-                "Configuring output_boxes=False or output_scores=False will suppress required schema fields "
-                "and bypass the canonical FilterSAM3DetectorOutput validation schema on frame payloads."
+            raise ValueError(
+                "output_boxes and output_scores must both be True. "
+                "The canonical FilterSAM3DetectorOutput schema requires bbox and score fields."
             )
         self.output_label = config.get("output_label", "sam3_detections")
         self.output_path = config.get("output_path", None)
@@ -1689,9 +1690,9 @@ class FilterSAM3Detector(Filter):
                     label = self.config.get("prompt_label_map", {}).get(prompt, prompt)
                     d['label'] = label
 
-                # Store results in frame data under the canonical 'detections' key
+                # Store results in frame data under the canonical key
                 serialized_detections = self._serialize_detections(detections)
-                frame.data["detections"] = serialized_detections
+                frame.data[FilterSAM3DetectorOutput.__frame_data_key__] = serialized_detections
 
                 # Store width and height in meta for backward-compatibility and logging
                 frame_meta = frame.data.setdefault('meta', {})
@@ -1699,16 +1700,7 @@ class FilterSAM3Detector(Filter):
                 frame_meta['height'] = img_height
 
                 # Restore legacy dual-writes for unmigrated consumers
-                if isinstance(serialized_detections, dict) and "items" in serialized_detections:
-                    legacy_items = serialized_detections["items"]
-                    frame_meta[self.output_label] = legacy_items
-                    frame_meta['detections'] = legacy_items
-                    # Add simple classification dict if we only detected one class
-                    if len(set(d.get("label", "") for d in legacy_items)) == 1 and len(legacy_items) > 0:
-                        frame_meta["classification"] = {
-                            "label": legacy_items[0].get("label", ""),
-                            "score": float(max(d.get("score", 0.0) for d in legacy_items))
-                        }
+                self._add_protege_compatible_output(frame_meta, detections)
 
                 # Add detection_confidence to meta
                 if detection_confidence is not None:
@@ -1810,7 +1802,7 @@ class FilterSAM3Detector(Filter):
                             "topic": "main",
                             "data": {
                                 "id": output_frame_id,
-                                "detections": serialized_detections if 'serialized_detections' in locals() else {"items": []},
+                                "detections": serialized_detections ,
                                 "meta": jsonl_meta
                             }
                         }
@@ -1913,118 +1905,177 @@ class FilterSAM3Detector(Filter):
 
         # Process each prompt set
         for prompt_set in self.prompt_sets:
-            ps_name = prompt_set['name']
-            ps_prompts = prompt_set['prompts']
-            ps_topic = prompt_set.get('topic', 'main')
-            ps_threshold = prompt_set.get('confidence_threshold', self.confidence_threshold)
-            ps_max_detections = prompt_set.get('max_detections', self.max_detections)
-            ps_filter_name = prompt_set.get('filter_name', f"SAM3_{ps_name}")
-            # Optional label aliases: maps prompt -> output label (e.g., "printed order ticket" -> "chit")
-            ps_label_aliases = prompt_set.get('label_aliases', {})
+            serialized_detections = {"items": []}
+            try:
+                ps_name = prompt_set['name']
+                ps_prompts = prompt_set['prompts']
+                ps_topic = prompt_set.get('topic', 'main')
+                ps_threshold = prompt_set.get('confidence_threshold', self.confidence_threshold)
+                ps_max_detections = prompt_set.get('max_detections', self.max_detections)
+                ps_filter_name = prompt_set.get('filter_name', f"SAM3_{ps_name}")
+                # Optional label aliases: maps prompt -> output label (e.g., "printed order ticket" -> "chit")
+                ps_label_aliases = prompt_set.get('label_aliases', {})
 
-            # Collect detections for this prompt set
-            ps_detections = []
+                # Collect detections for this prompt set
+                ps_detections = []
 
-            for prompt in ps_prompts:
-                # Use cached text embeddings (pre-computed at startup) instead of encoding per-frame
-                # This is the KEY OPTIMIZATION that avoids re-running the text encoder on every frame
-                prompt_state = self._inject_cached_text_embedding(state, prompt)
-                prompt_state = self.processor.forward_grounding(prompt_state)
+                for prompt in ps_prompts:
+                    # Use cached text embeddings (pre-computed at startup) instead of encoding per-frame
+                    # This is the KEY OPTIMIZATION that avoids re-running the text encoder on every frame
+                    prompt_state = self._inject_cached_text_embedding(state, prompt)
+                    prompt_state = self.processor.forward_grounding(prompt_state)
 
-                # Determine output label: use alias if defined, otherwise use prompt
-                output_label = ps_label_aliases.get(prompt, prompt)
+                    # Determine output label: use alias if defined, otherwise use prompt
+                    output_label = ps_label_aliases.get(prompt, prompt)
 
-                # Extract detections for this prompt
-                prompt_detections = self._extract_detections_from_state(
-                    prompt_state, output_label, img_width, img_height, self.global_detection_id,
-                    confidence_threshold=ps_threshold,
-                    max_detections=ps_max_detections
-                )
-                ps_detections.extend(prompt_detections)
-                self.global_detection_id += len(prompt_detections)
-
-            # Apply max_detections limit to entire prompt set (sort by score, take top N)
-            if len(ps_detections) > ps_max_detections:
-                ps_detections.sort(key=lambda d: d.get('score', 0), reverse=True)
-                ps_detections = ps_detections[:ps_max_detections]
-
-            # Create output frame for this topic (deep copy to avoid shared state)
-            output_frame = copy.deepcopy(frame)
-            output_meta = output_frame.data.setdefault('meta', {})
-
-            # Store results in frame data under the canonical 'detections' key
-            serialized_detections = self._serialize_detections(ps_detections)
-            output_frame.data["detections"] = serialized_detections
-
-            # Store width and height in meta for backward-compatibility
-            output_meta['width'] = img_width
-            output_meta['height'] = img_height
-
-            # Restore legacy dual-writes for unmigrated consumers
-            if isinstance(serialized_detections, dict) and "items" in serialized_detections:
-                legacy_items = serialized_detections["items"]
-                # Use ps_output_label if we kept it around, else self.output_label
-                output_meta[self.output_label] = legacy_items
-                output_meta['detections'] = legacy_items
-                if len(set(d.get("label", "") for d in legacy_items)) == 1 and len(legacy_items) > 0:
-                    output_meta["classification"] = {
-                        "label": legacy_items[0].get("label", ""),
-                        "score": float(max(d.get("score", 0.0) for d in legacy_items))
-                    }
-
-            # Add to output frames with the prompt set's topic
-            output_frames[ps_topic] = output_frame
-
-            # Save annotated frame for this prompt set (per-set detections drawn on original image)
-            if self.annotated_frames_dir is not None and ps_detections:
-                try:
-                    import cv2
-                    # Include prompt set name in filename to disambiguate across sets
-                    annotated_filename = f"frame_{frame_id_str}_ts{timestamp_str}_count{frame_counter:06d}_{ps_name}.jpg"
-                    image_bgr_annotated = image_bgr.copy()
-                    image_bgr_annotated = self._visualize_detections_on_image(
-                        image_bgr_annotated, ps_detections,
-                        self.positive_boxes if has_ref_boxes else None,
-                        self.negative_boxes if has_ref_boxes else None,
+                    # Extract detections for this prompt
+                    prompt_detections = self._extract_detections_from_state(
+                        prompt_state, output_label, img_width, img_height, self.global_detection_id,
+                        confidence_threshold=ps_threshold,
+                        max_detections=ps_max_detections
                     )
-                    cv2.imwrite(str(self.annotated_frames_dir / annotated_filename), image_bgr_annotated)
-                except Exception as e:
-                    logger.warning(f"Failed to save annotated frame for prompt set {ps_name}: {e}")
+                    ps_detections.extend(prompt_detections)
+                    self.global_detection_id += len(prompt_detections)
 
-            # Write to JSONL if configured (one record per prompt set per frame)
-            if hasattr(self, 'jsonl_file') and self.jsonl_file is not None:
-                try:
-                    output_frame_id = frame_id_num if frame_id_num is not None else frame_counter
-                    jsonl_meta = {
-                        'frame_id': output_frame_id,
-                        'width': img_width,
-                        'height': img_height,
-                        'frame_filename': frame_filename_str
-                    }
+                # Apply max_detections limit to entire prompt set (sort by score, take top N)
+                if len(ps_detections) > ps_max_detections:
+                    ps_detections.sort(key=lambda d: d.get('score', 0), reverse=True)
+                    ps_detections = ps_detections[:ps_max_detections]
 
-                    event_record = {
-                        "filter_name": ps_filter_name,
-                        "topic": ps_topic,
-                        "data": {
-                            "id": output_frame_id,
-                            "detections": serialized_detections if 'serialized_detections' in locals() else {"items": []},
-                            "meta": jsonl_meta
+                # Create output frame for this topic (deep copy to avoid shared state)
+                output_frame = copy.deepcopy(frame)
+                output_meta = output_frame.data.setdefault('meta', {})
+
+                # Store results in frame data under the canonical 'detections' key
+                serialized_detections = self._serialize_detections(ps_detections)
+                output_frame.data[FilterSAM3DetectorOutput.__frame_data_key__] = serialized_detections
+
+                # Store width and height in meta for backward-compatibility
+                output_meta['width'] = img_width
+                output_meta['height'] = img_height
+
+                # Restore legacy dual-writes for unmigrated consumers
+                if isinstance(serialized_detections, dict) and "items" in serialized_detections:
+                    legacy_items = serialized_detections["items"]
+                    # Use ps_output_label if we kept it around, else self.output_label
+                    output_meta[self.output_label] = legacy_items
+                    output_meta['detections'] = legacy_items
+                    if len(set(d.get("label", "") for d in legacy_items)) == 1 and len(legacy_items) > 0:
+                        output_meta["classification"] = {
+                            "label": legacy_items[0].get("label", ""),
+                            "score": float(max(d.get("score", 0.0) for d in legacy_items))
                         }
-                    }
-                    self.jsonl_file.write(json.dumps(event_record) + '\n')
-                    self.jsonl_file.flush()
-                except Exception as e:
-                    logger.warning(f"Failed to save JSONL for prompt set {ps_name}: {e}")
 
+                # Add to output frames with the prompt set's topic
+                output_frames[ps_topic] = output_frame
+
+                # Save annotated frame for this prompt set (per-set detections drawn on original image)
+                if self.annotated_frames_dir is not None and ps_detections:
+                    try:
+                        import cv2
+                        # Include prompt set name in filename to disambiguate across sets
+                        annotated_filename = f"frame_{frame_id_str}_ts{timestamp_str}_count{frame_counter:06d}_{ps_name}.jpg"
+                        image_bgr_annotated = image_bgr.copy()
+                        image_bgr_annotated = self._visualize_detections_on_image(
+                            image_bgr_annotated, ps_detections,
+                            self.positive_boxes if has_ref_boxes else None,
+                            self.negative_boxes if has_ref_boxes else None,
+                        )
+                        cv2.imwrite(str(self.annotated_frames_dir / annotated_filename), image_bgr_annotated)
+                    except Exception as e:
+                        logger.warning(f"Failed to save annotated frame for prompt set {ps_name}: {e}")
+
+                # Write to JSONL if configured (one record per prompt set per frame)
+                if hasattr(self, 'jsonl_file') and self.jsonl_file is not None:
+                    try:
+                        output_frame_id = frame_id_num if frame_id_num is not None else frame_counter
+                        jsonl_meta = {
+                            'frame_id': output_frame_id,
+                            'width': img_width,
+                            'height': img_height,
+                            'frame_filename': frame_filename_str
+                        }
+
+                        event_record = {
+                            "filter_name": ps_filter_name,
+                            "topic": ps_topic,
+                            "data": {
+                                "id": output_frame_id,
+                                "detections": serialized_detections ,
+                                "meta": jsonl_meta
+                            }
+                        }
+                        self.jsonl_file.write(json.dumps(event_record) + '\n')
+                        self.jsonl_file.flush()
+                    except Exception as e:
+                        logger.warning(f"Failed to save JSONL for prompt set {ps_name}: {e}")
+
+            except Exception as e:
+                logger.error(f"Error processing prompt set {prompt_set.get('name', 'unknown')}: {e}", exc_info=True)
         return output_frames
+
+    def _add_protege_compatible_output(self, frame_meta: dict, detections: list) -> None:
+        """
+        Add protege-compatible output format to frame metadata.
+        """
+        if not detections:
+            frame_meta['detections'] = []
+            frame_meta['classification'] = {
+                'classes': [],
+                'confidences': [],
+                'architecture': 'sam3',
+            }
+            return
+
+        output_detections = []
+        class_max_scores = {}
+
+        for det in detections:
+            prompt = det.get('class') or det.get('class_name') or 'object'
+            label = det.get('label') or prompt
+            box = det.get('box')
+            score = det.get('score', 0.0)
+
+            if box is None:
+                continue
+
+            if label not in class_max_scores:
+                class_max_scores[label] = 0.0
+            class_max_scores[label] = max(class_max_scores[label], score)
+
+            x1, y1, x2, y2 = box
+            bbox = {
+                'x': x1,
+                'y': y1,
+                'width': x2 - x1,
+                'height': y2 - y1,
+            }
+
+            output_detections.append({
+                'label': label,
+                'prompt': prompt,
+                'confidence': score,
+                'bbox': bbox,
+                'class': label,
+                'rois': [[int(x1), int(y1), int(x2), int(y2)]],
+            })
+
+        frame_meta['detections'] = output_detections
+        frame_meta[self.output_label] = output_detections
+
+        sorted_classes = sorted(class_max_scores.items(), key=lambda x: x[1], reverse=True)
+        classes = [cls for cls, _ in sorted_classes]
+        confidences = [score for _, score in sorted_classes]
+
+        frame_meta['classification'] = {
+            'classes': classes,
+            'confidences': confidences,
+            'architecture': 'sam3',
+        }
 
     def _serialize_detections(self, detections: list) -> dict:
         """
-        Serialize detections cleanly, gating schema construction if required fields are missing.
-
-        If self.output_boxes and self.output_scores are both True, this validates against
-        and serializes via FilterSAM3DetectorOutput. Otherwise, it bypasses the schema
-        and returns a clean, JSON-serializable dictionary under the 'items' key.
+        Serialize detections cleanly against FilterSAM3DetectorOutput.
         """
         
         # Always clean items to ensure pure python types (numpy scalars break json.dumps)
@@ -2040,8 +2091,8 @@ class FilterSAM3Detector(Filter):
                 clean_d["score"] = max(0.0, min(float(d["score"]), 1.0))
             if "label" in d:
                 clean_d["label"] = str(d["label"])
-            if "label_id" in d:
-                clean_d["label_id"] = str(d["label_id"])
+            if "label_id" in d and d["label_id"] is not None:
+                clean_d["label_id"] = int(d["label_id"])
             if "mask" in d:
                 # Copy mask structure, casting area to int
                 mask = d["mask"]
@@ -2051,15 +2102,11 @@ class FilterSAM3Detector(Filter):
                 clean_d["mask"] = clean_mask
             clean_items.append(clean_d)
 
-        if self.output_boxes and self.output_scores:
-            try:
-                return FilterSAM3DetectorOutput(items=clean_items).model_dump(mode="json")
-            except pydantic.ValidationError as e:
-                logger.warning(f"Detection schema validation failed, falling back to clean items: {e}")
-                return {"items": clean_items}
-
-        # Schema validation is bypassed because a required field is suppressed by the user.
-        return {"items": clean_items}
+        try:
+            return FilterSAM3DetectorOutput(items=clean_items).model_dump(mode="json")
+        except pydantic.ValidationError as e:
+            logger.warning(f"Detection schema validation failed, falling back to clean items: {e}")
+            return {"items": clean_items}
 
     def _boxes_xywh_to_norm_cxcywh(self, boxes_xywh: list, img_w: int, img_h: int) -> list:
         """Convert list of [x, y, w, h] (pixels) to normalized [cx, cy, w, h] in [0, 1] for add_geometric_prompt."""

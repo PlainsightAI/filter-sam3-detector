@@ -10,6 +10,7 @@ SAM3 Detector filter release notes
 - Add schema-compliance unit tests to cover coordinate validation and extra field pruning in `tests/test_filter_sam3_detector.py`.
 
 ### Changed
+- **BREAKING**: Multi-output mode now publishes detections to `frame.data["detections"]` as a canonical DetectionSet dictionary (`{"items": [...]}`) rather than a flat list. Downstream aggregators that previously iterated `frame.data["detections"]` directly must be updated to expect the new schema.
 - Upgrade openfilter SDK package dependency to version 1.1.0.
 - Upgrade openfilter SDK package dependency to version 1.1.1.
 - Migrate `_extract_detections_from_state` to output canonical `bbox`, `label`, and `mask` structures.
@@ -18,7 +19,7 @@ SAM3 Detector filter release notes
 - Update downstream internal consumers (`confusion_detector.py`, `temporal_intervals.py`, and `coco_export.py`) to support the new schema structure.
 
 ### Removed
-- Delete the legacy `_add_protege_compatible_output` method and drop dual-writing of metadata.
+- (No removals - legacy protege-compatible dual-writes were restored to ensure backward compatibility for unmigrated consumers.)
 
 ## v0.1.18 - 2026-04-29
 Enhances text_prompts parsing in FilterSAM3Detector with configurable delimiters and prompt→label mapping.

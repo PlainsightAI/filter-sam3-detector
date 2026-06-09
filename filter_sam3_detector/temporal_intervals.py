@@ -652,10 +652,10 @@ class TemporalIntervalFilter(Filter):
 
         # Fallback to metadata keys
         meta = frame.data.get('meta', {})
-        detections = meta.get(self.detection_key, [])
+        detections = meta.get(self.detection_key)
         if not isinstance(detections, list):
             # Check standard "detections" key as fallback in meta
-            detections = meta.get("detections", [])
+            detections = meta.get("detections")
             if not isinstance(detections, list):
                 return []
         return detections
