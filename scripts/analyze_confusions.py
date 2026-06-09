@@ -23,6 +23,9 @@ Exit code: 0 if no pairs exceed the configured thresholds; 1 otherwise.
 import argparse
 import json
 import sys
+import os
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from filter_sam3_detector.utils.bbox import to_xyxy
 from collections import defaultdict
 from itertools import combinations
 from pathlib import Path

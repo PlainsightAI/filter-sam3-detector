@@ -193,6 +193,10 @@ class TestProcessingModeEnum(unittest.TestCase):
 class TestV2InferenceStateInitialization(unittest.TestCase):
     """Tests for v2 inference state initialization."""
 
+    @unittest.skipUnless(
+        os.environ.get("RUN_INTEGRATION_TESTS") == "1",
+        "Requires GPU and SAM3 model weights",
+    )
     def test_init_v2_streaming_state_structure(self):
         """Test that _init_v2_streaming_state creates proper structure."""
         from filter_sam3_detector.streaming_video_processor import (

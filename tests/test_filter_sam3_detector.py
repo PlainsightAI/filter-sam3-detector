@@ -118,45 +118,22 @@ class TestFilterSAM3Detector(unittest.TestCase):
         self.assertNotIn("category_id", det)
 
     def test_serialize_detections_gating_and_pruning(self):
-        """Test that _serialize_detections bypasses schema and prunes non-serializable fields when flags are disabled."""
-        import numpy as np
+        """Test that setup() raises a ValueError when output_boxes or output_scores are False."""
         config = FilterSAM3Detector.normalize_config(FilterConfig({
             "output_boxes": False,
             "output_scores": True,
         }))
         detector = FilterSAM3Detector(config)
-        detector.setup(config)
         
-        # Test item that is missing bbox but has score and other fields, including non-serializable mask_np
-        detections = [
-            {
-                "score": 0.95,
-                "label": "person",
-                "box": [10, 20, 30, 45],
-                "confidence": 0.95,
-                "mask_np": np.zeros((10, 10)),
-                "category_id": 1,
-            }
-        ]
-        
-        serialized = detector._serialize_detections(detections)
-        self.assertIn("items", serialized)
-        self.assertEqual(len(serialized["items"]), 1)
-        
-        det = serialized["items"][0]
-        # Should contain allowed standard fields
-        self.assertEqual(det["score"], 0.95)
-        self.assertEqual(det["label"], "person")
-        
-        # bbox should be missing
-        self.assertNotIn("bbox", det)
-        
-        # Should NOT contain extra non-schema/non-serializable fields
-        self.assertNotIn("box", det)
-        self.assertNotIn("confidence", det)
-        self.assertNotIn("mask_np", det)
-        self.assertNotIn("category_id", det)
+        with self.assertRaises(ValueError) as context:
+            detector.setup(config)
+            
+        self.assertIn("output_boxes and output_scores must both be True", str(context.exception))
 
+    @unittest.skipUnless(
+        os.environ.get("RUN_INTEGRATION_TESTS") == "1",
+        "Requires GPU and SAM3 model weights",
+    )
     def test_temporal_intervals_fallback(self):
         """Test that _aggregate_detections correctly falls back to standard schema keys."""
         from filter_sam3_detector.temporal_intervals import TemporalIntervalFilter

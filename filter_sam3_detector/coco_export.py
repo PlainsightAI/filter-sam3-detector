@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from filter_sam3_detector.utils.bbox import to_xyxy
 import logging
 from pathlib import Path
 from typing import Any
