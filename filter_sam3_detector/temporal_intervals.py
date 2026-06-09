@@ -472,7 +472,7 @@ class TemporalIntervalConfig(FilterConfig):
     # Input configuration
     detection_key: str = "sam3_detections"  # Key in frame.data['meta'] for detections
     score_field: str = "score"  # Field name for detection confidence
-    label_field: Optional[str] = None  # Field name for class label (None = track all as one)
+    label_field: Optional[str] = "label"  # Field name for class label (None = track all as one)
     default_label: str = "foreground"  # Label to use when label_field is None
 
     # Output configuration

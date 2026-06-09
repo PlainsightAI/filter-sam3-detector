@@ -118,7 +118,7 @@ class ConfusionDetector:
 
     @staticmethod
     def _class_label(det: dict) -> str:
-        return det.get("label") or det.get("class") or det.get("class_name") or ""
+        return det.get("class") or det.get("class_name") or det.get("label") or ""
 
     @staticmethod
     def _detection_strength(det: dict) -> float:

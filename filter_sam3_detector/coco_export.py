@@ -152,8 +152,7 @@ def convert_jsonl_to_coco(input_path: Path, output_path: Path, output_label: str
                     frame_detections = [d for d in fd["items"] if isinstance(d, dict)]
                 elif isinstance(fd, list):
                     frame_detections = [d for d in fd if isinstance(d, dict)]
-            
-            if not frame_detections:
+            else:
                 frame_detections = _extract_frame_detections(meta, output_label)
 
             for det in frame_detections:

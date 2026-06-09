@@ -7,6 +7,7 @@ import time
 from typing import Optional, ClassVar
 from pathlib import Path
 from datetime import datetime
+import pydantic
 
 import torch
 import numpy as np
@@ -97,6 +98,8 @@ class FilterSAM3Detector(Filter):
     - Images are encoded and averaged to create visual embeddings
     - Example: exemplars_path="/path/to/containers/" with container1.jpg, container2.jpg, etc.
     """
+
+    __output_schema__ = FilterSAM3DetectorOutput
 
     @classmethod
     def normalize_config(cls, config: FilterConfig) -> FilterConfig:
@@ -1371,12 +1374,25 @@ class FilterSAM3Detector(Filter):
                     d['label'] = label
 
                 # Store results in frame data under the canonical 'detections' key
-                frame.data["detections"] = self._serialize_detections(detections)
+                serialized_detections = self._serialize_detections(detections)
+                frame.data["detections"] = serialized_detections
 
                 # Store width and height in meta for backward-compatibility and logging
                 frame_meta = frame.data.setdefault('meta', {})
                 frame_meta['width'] = img_width
                 frame_meta['height'] = img_height
+
+                # Restore legacy dual-writes for unmigrated consumers
+                if isinstance(serialized_detections, dict) and "items" in serialized_detections:
+                    legacy_items = serialized_detections["items"]
+                    frame_meta[self.output_label] = legacy_items
+                    frame_meta['detections'] = legacy_items
+                    # Add simple classification dict if we only detected one class
+                    if len(set(d.get("label", "") for d in legacy_items)) == 1 and len(legacy_items) > 0:
+                        frame_meta["classification"] = {
+                            "label": legacy_items[0].get("label", ""),
+                            "score": float(max(d.get("score", 0.0) for d in legacy_items))
+                        }
 
                 # Add detection_confidence to meta
                 if detection_confidence is not None:
@@ -1478,7 +1494,7 @@ class FilterSAM3Detector(Filter):
                             "topic": "main",
                             "data": {
                                 "id": output_frame_id,
-                                "detections": self._serialize_detections(detections),
+                                "detections": serialized_detections if 'serialized_detections' in locals() else {"items": []},
                                 "meta": jsonl_meta
                             }
                         }
@@ -1621,11 +1637,24 @@ class FilterSAM3Detector(Filter):
             output_meta = output_frame.data.setdefault('meta', {})
 
             # Store results in frame data under the canonical 'detections' key
-            output_frame.data["detections"] = self._serialize_detections(ps_detections)
+            serialized_detections = self._serialize_detections(ps_detections)
+            output_frame.data["detections"] = serialized_detections
 
             # Store width and height in meta for backward-compatibility
             output_meta['width'] = img_width
             output_meta['height'] = img_height
+
+            # Restore legacy dual-writes for unmigrated consumers
+            if isinstance(serialized_detections, dict) and "items" in serialized_detections:
+                legacy_items = serialized_detections["items"]
+                # Use ps_output_label if we kept it around, else self.output_label
+                output_meta[self.output_label] = legacy_items
+                output_meta['detections'] = legacy_items
+                if len(set(d.get("label", "") for d in legacy_items)) == 1 and len(legacy_items) > 0:
+                    output_meta["classification"] = {
+                        "label": legacy_items[0].get("label", ""),
+                        "score": float(max(d.get("score", 0.0) for d in legacy_items))
+                    }
 
             # Add to output frames with the prompt set's topic
             output_frames[ps_topic] = output_frame
@@ -1662,7 +1691,7 @@ class FilterSAM3Detector(Filter):
                         "topic": ps_topic,
                         "data": {
                             "id": output_frame_id,
-                            "detections": self._serialize_detections(ps_detections),
+                            "detections": serialized_detections if 'serialized_detections' in locals() else {"items": []},
                             "meta": jsonl_meta
                         }
                     }
@@ -1681,19 +1710,39 @@ class FilterSAM3Detector(Filter):
         and serializes via FilterSAM3DetectorOutput. Otherwise, it bypasses the schema
         and returns a clean, JSON-serializable dictionary under the 'items' key.
         """
-        if self.output_boxes and self.output_scores:
-            return FilterSAM3DetectorOutput(items=detections).model_dump(mode="json")
-
-        # Schema validation is bypassed because a required field is suppressed by the user.
-        # Clean/prune detections to avoid non-serializable fields (e.g. mask_np).
+        
+        # Always clean items to ensure pure python types (numpy scalars break json.dumps)
         clean_items = []
         for d in detections:
             clean_d = {}
-            for key in ["id", "bbox", "score", "label", "label_id", "mask"]:
-                if key in d:
-                    clean_d[key] = d[key]
+            if "id" in d:
+                clean_d["id"] = int(d["id"])
+            if "bbox" in d:
+                clean_d["bbox"] = {k: float(v) for k, v in d["bbox"].items()}
+            if "score" in d:
+                # Clamp score between 0.0 and 1.0 to prevent ValidationError
+                clean_d["score"] = max(0.0, min(float(d["score"]), 1.0))
+            if "label" in d:
+                clean_d["label"] = str(d["label"])
+            if "label_id" in d:
+                clean_d["label_id"] = str(d["label_id"])
+            if "mask" in d:
+                # Copy mask structure, casting area to int
+                mask = d["mask"]
+                clean_mask = {"polygons": mask.get("polygons", [])}
+                if "area" in mask:
+                    clean_mask["area"] = int(mask["area"])
+                clean_d["mask"] = clean_mask
             clean_items.append(clean_d)
 
+        if self.output_boxes and self.output_scores:
+            try:
+                return FilterSAM3DetectorOutput(items=clean_items).model_dump(mode="json")
+            except pydantic.ValidationError as e:
+                logger.warning(f"Detection schema validation failed, falling back to clean items: {e}")
+                return {"items": clean_items}
+
+        # Schema validation is bypassed because a required field is suppressed by the user.
         return {"items": clean_items}
 
     def _boxes_xywh_to_norm_cxcywh(self, boxes_xywh: list, img_w: int, img_h: int) -> list:
@@ -1791,10 +1840,9 @@ class FilterSAM3Detector(Filter):
                     y2 = min(y1 + 1.0, img_height)
 
                 # Keep original format [x1, y1, x2, y2] for compatibility (clipped)
-                detection['box'] = [int(x1), int(y1), int(x2), int(y2)]
+                detection['box'] = [float(x1), float(y1), float(x2), float(y2)]
 
                 # Convert to COCO bbox format [x, y, width, height]
-                coco_bbox = [float(x1), float(y1), float(x2 - x1), float(y2 - y1)]
                 detection['bbox'] = {
                     "x1": float(x1),
                     "y1": float(y1),
@@ -1833,23 +1881,12 @@ class FilterSAM3Detector(Filter):
                     area = int(np.sum(binary_mask))
                     detection['area'] = area
 
-                    # Build canonical mask schema dict
+                    # Build canonical mask schema dict from segmentation
                     polygons_list = []
-                    try:
-                        import cv2
-                        contours, _ = cv2.findContours(
-                            binary_mask.astype(np.uint8),
-                            cv2.RETR_EXTERNAL,
-                            cv2.CHAIN_APPROX_SIMPLE
-                        )
-                        for contour in contours:
-                            epsilon = 0.001 * cv2.arcLength(contour, True)
-                            approx = cv2.approxPolyDP(contour, epsilon, True)
-                            if len(approx) >= 3:
-                                points = [(float(pt[0][0]), float(pt[0][1])) for pt in approx]
-                                polygons_list.append({"points": points})
-                    except Exception as e:
-                        logger.warning(f"Failed to generate canonical polygons: {e}")
+                    for seg_poly in segmentation:
+                        # seg_poly is [x1, y1, x2, y2, ...]
+                        points = [(float(seg_poly[j]), float(seg_poly[j+1])) for j in range(0, len(seg_poly), 2)]
+                        polygons_list.append({"points": points})
 
                     if polygons_list:
                         detection['mask'] = {
@@ -2922,37 +2959,39 @@ class FilterSAM3Detector(Filter):
                         )
                         cv2.putText(image, class_text, (cx, cy), font, font_scale, color_bgr, thickness)
                 # Draw mask overlay (semi-transparent, same hue as class BB)
-                mask = None
+                mask_drawn = False
+                color_mask = np.zeros_like(image)
+                raw_cls = det.get('label') or det.get('class') or det.get('class_name')
+                class_text = str(raw_cls) if raw_cls is not None and str(raw_cls) != '' else None
+                mbgr = self._viz_bgr_for_class_name(class_text)
+
                 if 'mask_np' in det:
                     mask = det['mask_np']
+                    if isinstance(mask, np.ndarray) and mask.shape == image.shape[:2]:
+                        color_mask[mask > 0] = mbgr
+                        mask_drawn = True
                 elif 'mask' in det:
                     m_val = det['mask']
-                    if isinstance(m_val, np.ndarray):
-                        mask = m_val
+                    if isinstance(m_val, np.ndarray) and m_val.shape == image.shape[:2]:
+                        color_mask[m_val > 0] = mbgr
+                        mask_drawn = True
                     elif isinstance(m_val, dict) and 'polygons' in m_val:
-                        # Draw polygons
-                        color_mask = np.zeros_like(image)
-                        raw_cls = det.get('label') or det.get('class') or det.get('class_name')
-                        class_text = str(raw_cls) if raw_cls is not None and str(raw_cls) != '' else None
-                        mbgr = self._viz_bgr_for_class_name(class_text)
                         for poly in m_val['polygons']:
                             points = poly.get('points') if isinstance(poly, dict) else getattr(poly, 'points', None)
                             if points:
                                 pts = np.array(points, dtype=np.int32).reshape((-1, 1, 2))
                                 cv2.fillPoly(color_mask, [pts], mbgr)
-                        image = cv2.addWeighted(image, 1.0, color_mask, 0.3, 0)
+                                mask_drawn = True
                     else:
                         try:
                             mask = np.array(m_val, dtype=np.uint8)
+                            if mask.shape == image.shape[:2]:
+                                color_mask[mask > 0] = mbgr
+                                mask_drawn = True
                         except Exception:
                             pass
 
-                if mask is not None and isinstance(mask, np.ndarray) and mask.shape == image.shape[:2]:
-                    raw_cls = det.get('label') or det.get('class') or det.get('class_name')
-                    class_text = str(raw_cls) if raw_cls is not None and str(raw_cls) != '' else None
-                    mbgr = self._viz_bgr_for_class_name(class_text)
-                    color_mask = np.zeros_like(image)
-                    color_mask[mask > 0] = mbgr
+                if mask_drawn:
                     image = cv2.addWeighted(image, 1.0, color_mask, 0.3, 0)
         except Exception as e:
             logger.warning(f"Failed to visualize detections on image: {e}")
