@@ -2012,6 +2012,10 @@ class FilterSAM3Detector(Filter):
 
             except Exception as e:
                 logger.error(f"Error processing prompt set {prompt_set.get('name', 'unknown')}: {e}", exc_info=True)
+                ps_topic = prompt_set.get('topic', 'main')
+                output_frame = copy.deepcopy(frame)
+                output_frame.data[FilterSAM3DetectorOutput.__frame_data_key__] = {"items": []}
+                output_frames[ps_topic] = output_frame
         return output_frames
 
     def _add_protege_compatible_output(self, frame_meta: dict, detections: list) -> None:
@@ -2020,6 +2024,7 @@ class FilterSAM3Detector(Filter):
         """
         if not detections:
             frame_meta['detections'] = []
+            frame_meta[self.output_label] = []
             frame_meta['classification'] = {
                 'classes': [],
                 'confidences': [],

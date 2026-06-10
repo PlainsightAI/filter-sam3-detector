@@ -51,29 +51,6 @@ def _compute_iou(box_a: list, box_b: list) -> float:
     return inter_area / union if union > 0 else 0.0
 
 
-def _get_box(det: dict) -> Optional[List[float]]:
-    """Extract [x1, y1, x2, y2] from a detection dict."""
-    if "box" in det:
-        b = det["box"]
-        if isinstance(b, (list, tuple)) and len(b) == 4:
-            return [float(v) for v in b]
-    bbox = det.get("bbox")
-    if isinstance(bbox, dict):
-        if "x1" in bbox:
-            return [
-                float(bbox["x1"]),
-                float(bbox["y1"]),
-                float(bbox["x2"]),
-                float(bbox["y2"]),
-            ]
-        else:
-            x, y = float(bbox.get("x", 0)), float(bbox.get("y", 0))
-            w, h = float(bbox.get("width", 0)), float(bbox.get("height", 0))
-            return [x, y, x + w, y + h]
-    if isinstance(bbox, (list, tuple)) and len(bbox) == 4:
-        x, y, w, h = (float(v) for v in bbox)
-        return [x, y, x + w, y + h]
-    return None
 
 
 def _get_class(det: dict) -> str:
@@ -148,12 +125,12 @@ def _confusions_from_record(record: dict, iou_threshold: float) -> list[dict]:
     confusions = []
     for class_a, class_b in combinations(by_class.keys(), 2):
         for det_a in by_class[class_a]:
-            box_a = _get_box(det_a)
+            box_a = to_xyxy(det_a)
             if box_a is None:
                 continue
             score_a = _detection_strength(det_a)
             for det_b in by_class[class_b]:
-                box_b = _get_box(det_b)
+                box_b = to_xyxy(det_b)
                 if box_b is None:
                     continue
                 score_b = _detection_strength(det_b)

@@ -46,23 +46,23 @@ def test_detection_strength_zero_score_not_confidence() -> None:
 
 def test_get_box_formats() -> None:
     """Test that _get_box can parse legacy xywh dicts/lists, box list, and new schema x1y1x2y2 dicts correctly."""
-    ac = _load_module()
+    from filter_sam3_detector.utils.bbox import to_xyxy
 
     # Legacy dict format (xywh)
     det_legacy_dict = {"bbox": {"x": 10, "y": 20, "width": 30, "height": 40}}
-    assert ac._get_box(det_legacy_dict) == [10.0, 20.0, 40.0, 60.0]
+    assert to_xyxy(det_legacy_dict) == [10.0, 20.0, 40.0, 60.0]
 
     # Legacy list format (xywh)
     det_legacy_list = {"bbox": [10, 20, 30, 40]}
-    assert ac._get_box(det_legacy_list) == [10.0, 20.0, 40.0, 60.0]
+    assert to_xyxy(det_legacy_list) == [10.0, 20.0, 40.0, 60.0]
 
     # Box list format (xyxy)
     det_box = {"box": [10, 20, 40, 60]}
-    assert ac._get_box(det_box) == [10.0, 20.0, 40.0, 60.0]
+    assert to_xyxy(det_box) == [10.0, 20.0, 40.0, 60.0]
 
     # New schema dict format (x1y1x2y2)
     det_schema = {"bbox": {"x1": 10.0, "y1": 20.0, "x2": 40.0, "y2": 60.0}}
-    assert ac._get_box(det_schema) == [10.0, 20.0, 40.0, 60.0]
+    assert to_xyxy(det_schema) == [10.0, 20.0, 40.0, 60.0]
 
 
 def test_confusions_from_record_extraction() -> None:

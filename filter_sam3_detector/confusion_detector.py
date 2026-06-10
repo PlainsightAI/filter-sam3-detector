@@ -22,6 +22,7 @@ Usage (called from ``shutdown()`` in filter.py via ``_finalize_cross_prompt_over
         print(detector.format_warning(confusions, frame_id=42, prompts=["car", "truck"]))
 """
 
+from filter_sam3_detector.utils.bbox import to_xyxy
 import logging
 from collections import defaultdict
 from itertools import combinations
@@ -84,37 +85,6 @@ class ConfusionDetector:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _get_box(det: dict) -> list | None:
-        """Extract [x1, y1, x2, y2] box from a detection dict.
-
-        Tries ``box`` (xyxy) first, then converts ``bbox`` (xywh dict or xyxy dict or list).
-        Returns None if no usable box is found.
-        """
-        if "box" in det:
-            b = det["box"]
-            if isinstance(b, (list, tuple)) and len(b) == 4:
-                return [float(v) for v in b]
-
-        bbox = det.get("bbox")
-        if isinstance(bbox, dict):
-            if "x1" in bbox:
-                return [
-                    float(bbox["x1"]),
-                    float(bbox["y1"]),
-                    float(bbox["x2"]),
-                    float(bbox["y2"]),
-                ]
-            else:
-                x = float(bbox.get("x", 0))
-                y = float(bbox.get("y", 0))
-                w = float(bbox.get("width", 0))
-                h = float(bbox.get("height", 0))
-                return [x, y, x + w, y + h]
-        if isinstance(bbox, (list, tuple)) and len(bbox) == 4:
-            x, y, w, h = (float(v) for v in bbox)
-            return [x, y, x + w, y + h]
-
-        return None
 
     @staticmethod
     def _class_label(det: dict) -> str:
@@ -167,14 +137,14 @@ class ConfusionDetector:
             dets_b = detections_by_prompt[class_b]
 
             for det_a in dets_a:
-                box_a = self._get_box(det_a)
+                box_a = to_xyxy(det_a)
                 if box_a is None:
                     continue
                 score_a = self._detection_strength(det_a)
                 id_a = det_a.get("id")
 
                 for det_b in dets_b:
-                    box_b = self._get_box(det_b)
+                    box_b = to_xyxy(det_b)
                     if box_b is None:
                         continue
                     score_b = self._detection_strength(det_b)
@@ -305,8 +275,8 @@ class ConfusionDetector:
                 for j in by_class[class_b]:
                     det_i = detections[i]
                     det_j = detections[j]
-                    box_i = self._get_box(det_i)
-                    box_j = self._get_box(det_j)
+                    box_i = to_xyxy(det_i)
+                    box_j = to_xyxy(det_j)
                     if box_i is None or box_j is None:
                         continue
                     if self.compute_iou(box_i, box_j) >= self.iou_threshold:

@@ -11,7 +11,15 @@ def to_xyxy(det: dict) -> list[float] | None:
         return [float(x) for x in det['box'][:4]]
 
     bbox = det.get('bbox')
+    if isinstance(bbox, (list, tuple)) and len(bbox) == 4:
+        return [float(bbox[0]), float(bbox[1]), float(bbox[0]) + float(bbox[2]), float(bbox[1]) + float(bbox[3])]
+
     if not isinstance(bbox, dict):
+        rois = det.get("rois")
+        if isinstance(rois, list) and rois:
+            roi0 = rois[0]
+            if isinstance(roi0, (list, tuple)) and len(roi0) == 4:
+                return [float(x) for x in roi0]
         return None
 
     # Canonical DetectionSet schema format
@@ -27,3 +35,13 @@ def to_xyxy(det: dict) -> list[float] | None:
         return [x, y, x + w, y + h]
 
     return None
+
+def to_xywh(det: dict) -> list[float] | None:
+    """
+    Extract a bounding box from a detection dict and return as [x, y, w, h].
+    """
+    xyxy = to_xyxy(det)
+    if xyxy is None:
+        return None
+    x1, y1, x2, y2 = xyxy
+    return [x1, y1, max(0.0, x2 - x1), max(0.0, y2 - y1)]

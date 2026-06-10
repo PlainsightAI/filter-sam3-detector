@@ -130,10 +130,6 @@ class TestFilterSAM3Detector(unittest.TestCase):
             
         self.assertIn("output_boxes and output_scores must both be True", str(context.exception))
 
-    @unittest.skipUnless(
-        os.environ.get("RUN_INTEGRATION_TESTS") == "1",
-        "Requires GPU and SAM3 model weights",
-    )
     def test_temporal_intervals_fallback(self):
         """Test that _aggregate_detections correctly falls back to standard schema keys."""
         from filter_sam3_detector.temporal_intervals import TemporalIntervalFilter

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
-from filter_sam3_detector.utils.bbox import to_xyxy
+from filter_sam3_detector.utils.bbox import to_xywh
 import logging
 from pathlib import Path
 from typing import Any
@@ -20,39 +20,6 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
-def _extract_bbox_xywh(det: dict[str, Any]) -> list[float] | None:
-    """Extract bbox as [x, y, w, h] from supported detection shapes."""
-    bbox = det.get("bbox")
-    if isinstance(bbox, dict):
-        if "x1" in bbox:
-            x1 = float(bbox["x1"])
-            y1 = float(bbox["y1"])
-            x2 = float(bbox["x2"])
-            y2 = float(bbox["y2"])
-            return [x1, y1, max(0.0, x2 - x1), max(0.0, y2 - y1)]
-        else:
-            x = float(bbox.get("x", 0.0))
-            y = float(bbox.get("y", 0.0))
-            w = float(bbox.get("width", 0.0))
-            h = float(bbox.get("height", 0.0))
-            return [x, y, max(0.0, w), max(0.0, h)]
-    if isinstance(bbox, (list, tuple)) and len(bbox) == 4:
-        x, y, w, h = bbox
-        return [float(x), float(y), max(0.0, float(w)), max(0.0, float(h))]
-
-    box = det.get("box")
-    if isinstance(box, (list, tuple)) and len(box) == 4:
-        x1, y1, x2, y2 = [float(v) for v in box]
-        return [x1, y1, max(0.0, x2 - x1), max(0.0, y2 - y1)]
-
-    rois = det.get("rois")
-    if isinstance(rois, list) and rois:
-        roi0 = rois[0]
-        if isinstance(roi0, (list, tuple)) and len(roi0) == 4:
-            x1, y1, x2, y2 = [float(v) for v in roi0]
-            return [x1, y1, max(0.0, x2 - x1), max(0.0, y2 - y1)]
-
-    return None
 
 
 def _extract_label(det: dict[str, Any]) -> str:
@@ -162,7 +129,7 @@ def convert_jsonl_to_coco(input_path: Path, output_path: Path, output_label: str
                     category_to_id[label] = len(category_to_id) + 1
                     categories.append({"id": category_to_id[label], "name": label})
 
-                bbox = _extract_bbox_xywh(det)
+                bbox = to_xywh(det)
                 if bbox is None:
                     continue
                 x, y, w, h = bbox

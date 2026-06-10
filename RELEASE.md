@@ -10,6 +10,7 @@ SAM3 Detector filter release notes
 - Add schema-compliance unit tests to cover coordinate validation and extra field pruning in `tests/test_filter_sam3_detector.py`.
 
 ### Changed
+- **BREAKING**: `output_boxes=False` and `output_scores=False` are no longer supported. The filter raises `ValueError` at startup if either is set; the canonical `FilterSAM3DetectorOutput` schema requires both fields.
 - **BREAKING**: Multi-output mode now publishes detections to `frame.data["detections"]` as a canonical DetectionSet dictionary (`{"items": [...]}`) rather than a flat list. Downstream aggregators that previously iterated `frame.data["detections"]` directly must be updated to expect the new schema.
 - Upgrade openfilter SDK package dependency to version 1.1.0.
 - Upgrade openfilter SDK package dependency to version 1.1.1.
