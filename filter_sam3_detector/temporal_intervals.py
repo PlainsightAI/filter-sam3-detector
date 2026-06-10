@@ -645,7 +645,7 @@ class TemporalIntervalFilter(Filter):
         # Try new top-level frame.data["detections"] key first
         if "detections" in frame.data:
             dets_payload = frame.data["detections"]
-            if isinstance(dets_payload, dict) and "items" in dets_payload:
+            if isinstance(dets_payload, dict) and isinstance(dets_payload.get("items"), list):
                 return dets_payload["items"]
             elif isinstance(dets_payload, list):
                 return dets_payload

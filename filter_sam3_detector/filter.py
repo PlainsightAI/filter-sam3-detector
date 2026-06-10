@@ -1262,7 +1262,7 @@ class FilterSAM3Detector(Filter):
         data = record.get("data", record)
         if isinstance(data, dict):
             detections_payload = data.get("detections")
-            if isinstance(detections_payload, dict) and "items" in detections_payload:
+            if isinstance(detections_payload, dict) and isinstance(detections_payload.get("items"), list):
                 return detections_payload["items"]
             elif isinstance(detections_payload, list):
                 return detections_payload
@@ -2074,6 +2074,7 @@ class FilterSAM3Detector(Filter):
         """
         Serialize detections cleanly against FilterSAM3DetectorOutput.
         """
+        from filter_sam3_detector.utils.bbox import to_xyxy
         
         # Always clean items to ensure pure python types (numpy scalars break json.dumps)
         clean_items = []
@@ -2081,8 +2082,12 @@ class FilterSAM3Detector(Filter):
             clean_d = {}
             if "id" in d:
                 clean_d["id"] = int(d["id"])
-            if "bbox" in d:
-                clean_d["bbox"] = {k: float(v) for k, v in d["bbox"].items()}
+            
+            # Robust extraction of bbox regardless of legacy dictionary or list shape
+            xyxy = to_xyxy(d)
+            if xyxy:
+                clean_d["bbox"] = {"x1": xyxy[0], "y1": xyxy[1], "x2": xyxy[2], "y2": xyxy[3]}
+                
             if "score" in d:
                 # Clamp score between 0.0 and 1.0 to prevent ValidationError
                 clean_d["score"] = max(0.0, min(float(d["score"]), 1.0))
