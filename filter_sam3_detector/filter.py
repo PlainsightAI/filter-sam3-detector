@@ -2006,6 +2006,7 @@ class FilterSAM3Detector(Filter):
                 ps_topic = prompt_set.get('topic', 'main')
                 output_frame = copy.deepcopy(frame)
                 output_frame.data[FilterSAM3DetectorOutput.__frame_data_key__] = {"items": []}
+                self._add_protege_compatible_output(output_frame.data.setdefault('meta', {}), [])
                 output_frames[ps_topic] = output_frame
         return output_frames
 
@@ -2030,7 +2031,7 @@ class FilterSAM3Detector(Filter):
             prompt = det.get('class') or det.get('class_name') or 'object'
             label = det.get('label') or prompt
             box = det.get('box')
-            score = det.get('score', 0.0)
+            score = max(0.0, min(float(det.get('score', 0.0)), 1.0))
 
             if box is None:
                 continue

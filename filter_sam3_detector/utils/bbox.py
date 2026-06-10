@@ -14,25 +14,25 @@ def to_xyxy(det: dict) -> list[float] | None:
     if isinstance(bbox, (list, tuple)) and len(bbox) == 4:
         return [float(bbox[0]), float(bbox[1]), float(bbox[0]) + float(bbox[2]), float(bbox[1]) + float(bbox[3])]
 
-    if not isinstance(bbox, dict):
-        rois = det.get("rois")
-        if isinstance(rois, list) and rois:
-            roi0 = rois[0]
-            if isinstance(roi0, (list, tuple)) and len(roi0) == 4:
-                return [float(x) for x in roi0]
-        return None
+    if isinstance(bbox, dict):
+        # Canonical DetectionSet schema format
+        if 'x1' in bbox and 'y1' in bbox and 'x2' in bbox and 'y2' in bbox:
+            return [float(bbox['x1']), float(bbox['y1']), float(bbox['x2']), float(bbox['y2'])]
 
-    # Canonical DetectionSet schema format
-    if 'x1' in bbox and 'y1' in bbox and 'x2' in bbox and 'y2' in bbox:
-        return [float(bbox['x1']), float(bbox['y1']), float(bbox['x2']), float(bbox['y2'])]
+        # Legacy Protege format (x, y, width, height)
+        if 'x' in bbox and 'y' in bbox and 'width' in bbox and 'height' in bbox:
+            x = float(bbox['x'])
+            y = float(bbox['y'])
+            w = float(bbox['width'])
+            h = float(bbox['height'])
+            return [x, y, x + w, y + h]
 
-    # Legacy Protege format (x, y, width, height)
-    if 'x' in bbox and 'y' in bbox and 'width' in bbox and 'height' in bbox:
-        x = float(bbox['x'])
-        y = float(bbox['y'])
-        w = float(bbox['width'])
-        h = float(bbox['height'])
-        return [x, y, x + w, y + h]
+    # Fallback to rois if bbox is missing or malformed
+    rois = det.get("rois")
+    if isinstance(rois, list) and rois:
+        roi0 = rois[0]
+        if isinstance(roi0, (list, tuple)) and len(roi0) == 4:
+            return [float(x) for x in roi0]
 
     return None
 

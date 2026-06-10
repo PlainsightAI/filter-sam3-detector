@@ -24,6 +24,11 @@ def test_extract_bbox_xywh_from_rois_first_entry() -> None:
     assert to_xywh(det) == [5.0, 6.0, 20.0, 30.0]
 
 
+def test_extract_bbox_xywh_fallback_to_rois_on_malformed_bbox() -> None:
+    det = {"bbox": {"x": 10}, "rois": [[5, 6, 25, 36]]}  # missing y, width, height
+    assert to_xywh(det) == [5.0, 6.0, 20.0, 30.0]
+
+
 def test_convert_jsonl_to_coco_skips_invalid_json_lines(tmp_path: Path) -> None:
     input_path = tmp_path / "detections.jsonl"
     output_path = tmp_path / "labels_coco.json"
