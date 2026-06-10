@@ -1955,16 +1955,7 @@ class FilterSAM3Detector(Filter):
                 output_meta['height'] = img_height
 
                 # Restore legacy dual-writes for unmigrated consumers
-                if isinstance(serialized_detections, dict) and "items" in serialized_detections:
-                    legacy_items = serialized_detections["items"]
-                    # Use ps_output_label if we kept it around, else self.output_label
-                    output_meta[self.output_label] = legacy_items
-                    output_meta['detections'] = legacy_items
-                    if len(set(d.get("label", "") for d in legacy_items)) == 1 and len(legacy_items) > 0:
-                        output_meta["classification"] = {
-                            "label": legacy_items[0].get("label", ""),
-                            "score": float(max(d.get("score", 0.0) for d in legacy_items))
-                        }
+                self._add_protege_compatible_output(output_meta, ps_detections)
 
                 # Add to output frames with the prompt set's topic
                 output_frames[ps_topic] = output_frame
