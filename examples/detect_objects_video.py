@@ -111,8 +111,8 @@ def main():
     Filter.run_multi(filters)
 
     print(f"\nDone! Results saved to {output_dir}")
-    print(f"  - detections.jsonl: Frame-by-frame detections")
-    print(f"  - frames/: Annotated frames")
+    print("  - detections.jsonl: Frame-by-frame detections")
+    print("  - frames/: Annotated frames")
 
 
 if __name__ == "__main__":

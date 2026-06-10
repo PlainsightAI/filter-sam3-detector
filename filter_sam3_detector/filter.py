@@ -6,7 +6,6 @@ import json
 import time
 from typing import Optional, ClassVar
 from pathlib import Path
-from datetime import datetime
 import pydantic
 
 import torch
@@ -19,7 +18,7 @@ from openfilter.filter_runtime.shapes import DetectionSet
 from openfilter.filter_runtime.config import FilterConfigBase
 
 from pydantic import Field
-from typing import Optional, List, Any
+from typing import List, Any
 
 class FilterSAM3DetectorConfigSchema(FilterConfigBase):
     """Declarative config schema for FilterSAM3Detector."""
@@ -334,7 +333,7 @@ class FilterSAM3DetectorConfigSchema(FilterConfigBase):
 
 
 from .coco_export import convert_jsonl_to_coco
-from .temporal_intervals import EMATracker, DetectionInterval, IntervalTracker
+from .temporal_intervals import DetectionInterval, IntervalTracker
 from .streaming_video_processor import StreamingVideoProcessor
 
 
@@ -1278,7 +1277,6 @@ class FilterSAM3Detector(Filter):
     @staticmethod
     def _rewrite_record_detections(record: dict, kept: list) -> dict:
         """Return a deep copy of record with detections replaced by kept."""
-        import copy
         record = copy.deepcopy(record)
         data = record.get("data", record)
         if isinstance(data, dict):
@@ -1855,7 +1853,6 @@ class FilterSAM3Detector(Filter):
         Returns:
             Dictionary mapping output topics to frames with filtered detections
         """
-        import copy
 
         output_frames = {}
 

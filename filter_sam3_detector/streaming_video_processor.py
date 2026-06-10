@@ -29,12 +29,10 @@ v2 provides ~10x speedup for video processing by:
 """
 
 import logging
-from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional, Dict, List, Any
 from enum import Enum
-import copy
 
 import torch
 import torch.nn.functional as F
@@ -569,9 +567,8 @@ class StreamingVideoProcessor:
 
         This creates the SAM3 inference state structure without loading a video file.
         """
-        from sam3.model.data_misc import BatchedDatapoint, FindStage, convert_my_tensors
+        from sam3.model.data_misc import FindStage, convert_my_tensors
         from sam3.model.geometry_encoders import Prompt
-        from sam3.model.utils.misc import copy_data_to_device
 
         # Store original dimensions
         if isinstance(first_frame, Image.Image):

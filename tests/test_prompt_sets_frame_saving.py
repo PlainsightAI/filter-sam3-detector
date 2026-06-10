@@ -78,7 +78,7 @@ class TestPromptSetsFrameSaving(unittest.TestCase):
             frame = self._make_frame()
 
             # Call the real method on our stub
-            result = FilterSAM3Detector._process_multi_output(det, frame, filter_frame_id=42)
+            _ = FilterSAM3Detector._process_multi_output(det, frame, filter_frame_id=42)
 
             # Filter imwrite calls to the frames_dir (original frames)
             original_writes = [
@@ -99,7 +99,7 @@ class TestPromptSetsFrameSaving(unittest.TestCase):
             det = self._make_detector_stub(annotated_frames_dir=annotated_dir)
             frame = self._make_frame()
 
-            result = FilterSAM3Detector._process_multi_output(det, frame, filter_frame_id=42)
+            _ = FilterSAM3Detector._process_multi_output(det, frame, filter_frame_id=42)
 
             # Filter imwrite calls to the annotated_dir
             annotated_writes = [
@@ -149,7 +149,7 @@ class TestPromptSetsFrameSaving(unittest.TestCase):
             det._extract_detections_from_state = MagicMock(side_effect=selective_extract)
 
             frame = self._make_frame()
-            result = FilterSAM3Detector._process_multi_output(det, frame, filter_frame_id=42)
+            _ = FilterSAM3Detector._process_multi_output(det, frame, filter_frame_id=42)
 
             annotated_writes = [
                 c for c in mock_imwrite.call_args_list

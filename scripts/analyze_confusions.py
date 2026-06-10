@@ -29,7 +29,6 @@ from filter_sam3_detector.utils.bbox import to_xyxy
 from collections import defaultdict
 from itertools import combinations
 from pathlib import Path
-from typing import List, Optional
 
 
 # ---------------------------------------------------------------------------
@@ -293,7 +292,7 @@ def _recommendations(stats: dict) -> list[str]:
         recs.append(f"{len(bad)} prompt pair(s) exceed 10% confusion rate — review before production use.")
     if stats["iou_threshold"] > 0.7:
         recs.append(
-            f"Re-run with --iou-threshold 0.7 (or lower) to include partial cross-class overlaps."
+            "Re-run with --iou-threshold 0.7 (or lower) to include partial cross-class overlaps."
         )
     recs.append(
         "Default filter gate is 0.95; lower FILTER_CONFUSION_IOU_THRESHOLD only if you "

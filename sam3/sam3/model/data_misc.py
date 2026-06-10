@@ -3,11 +3,9 @@
 Misc functions, including distributed helpers.
 """
 
-import collections
-import re
 
-from dataclasses import dataclass, field as field_ptr_behaviour, fields, is_dataclass
-from typing import Any, get_args, get_origin, List, Mapping, Optional, Sequence, Union
+from dataclasses import dataclass, fields, is_dataclass
+from typing import Any, get_args, get_origin, List, Optional, Union
 
 import torch
 

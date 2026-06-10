@@ -14,7 +14,6 @@ import logging
 import os
 import sys
 import unittest
-from unittest.mock import MagicMock, patch
 
 import numpy as np
 
@@ -68,7 +67,6 @@ class TestStreamingVideoProcessorV1(unittest.TestCase):
         """Test that v1 detection throttling works correctly."""
         from filter_sam3_detector.streaming_video_processor import (
             StreamingVideoProcessor,
-            StreamingState,
         )
 
         processor = StreamingVideoProcessor(

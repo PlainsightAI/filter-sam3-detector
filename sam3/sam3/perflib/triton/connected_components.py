@@ -1,5 +1,4 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates. All Rights Reserved
-import math
 
 import torch
 import triton

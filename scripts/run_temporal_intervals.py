@@ -87,7 +87,9 @@ def run_temporal_detection(
 
     if verbose:
         print(f"Video: {video_path}")
-        print(f"Frames: {total_frames}, FPS: {fps:.1f}, Duration: {total_frames/fps:.1f}s")
+        print(
+            f"Frames: {total_frames}, FPS: {fps:.1f}, Duration: {total_frames / fps:.1f}s"
+        )
         print(f"Prompts: {prompts}")
         print(f"EMA half_life: {half_life}, threshold: {presence_threshold}")
         print()
@@ -98,10 +100,12 @@ def run_temporal_detection(
     # - Each prompt runs text encoding + grounding (reusing cached image features)
     # - Much faster than running the full pipeline N times for N prompts
     detector_config = FilterSAM3DetectorConfig()
-    detector_config['model_size'] = 'large'
-    detector_config['text_prompts'] = prompts  # Use text_prompts (list) for parallel detection
-    detector_config['confidence_threshold'] = confidence_threshold
-    detector_config['output_label'] = 'sam3_detections'
+    detector_config["model_size"] = "large"
+    detector_config["text_prompts"] = (
+        prompts  # Use text_prompts (list) for parallel detection
+    )
+    detector_config["confidence_threshold"] = confidence_threshold
+    detector_config["output_label"] = "sam3_detections"
 
     detector = FilterSAM3Detector(detector_config)
     detector.setup(detector_config)
@@ -110,15 +114,17 @@ def run_temporal_detection(
     with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
         temp_output = f.name
 
-    interval_config = TemporalIntervalFilter.normalize_config({
-        "half_life": half_life,
-        "presence_threshold": presence_threshold,
-        "detection_key": "sam3_detections",
-        "label_field": "label",  # Use 'label' field which is set by multi-prompt detection
-        "score_field": "score",
-        "output_json_path": temp_output,
-        "emit_on_complete": True,
-    })
+    interval_config = TemporalIntervalFilter.normalize_config(
+        {
+            "half_life": half_life,
+            "presence_threshold": presence_threshold,
+            "detection_key": "detections",
+            "label_field": "label",  # Use 'label' field which is set by multi-prompt detection
+            "score_field": "score",
+            "output_json_path": temp_output,
+            "emit_on_complete": True,
+        }
+    )
 
     interval_filter = TemporalIntervalFilter(interval_config)
     interval_filter.setup(interval_config)
@@ -149,26 +155,38 @@ def run_temporal_detection(
         detector_frame = Frame(
             image=image.copy(),
             data={"meta": {"id": frame_id, "ts": frame_id / fps}},
-            format="BGR"
+            format="BGR",
         )
 
         detector_output = detector.process({"video": detector_frame})
         detected_frame = detector_output.get("video", detector_frame)
 
-        # All detections from all prompts are returned with 'class' field set
-        all_detections = detected_frame.data.get("meta", {}).get("sam3_detections", [])
+        # All detections from all prompts are returned in the canonical detections schema
+        dets_payload = detected_frame.data.get("detections", {})
+        all_detections = (
+            dets_payload.get("items", [])
+            if isinstance(dets_payload, dict)
+            else (dets_payload if isinstance(dets_payload, list) else [])
+        )
+        if not all_detections:
+            all_detections = detected_frame.data.get("meta", {}).get(
+                "sam3_detections", []
+            )
 
         # Count detections by class (set by multi-prompt detection)
         for det in all_detections:
-            label = det.get("class", det.get("label", "unknown"))
+            label = det.get("label", det.get("class", "unknown"))
             if label in detection_counts:
                 detection_counts[label] += 1
 
         # Feed to temporal filter
         combined_frame = Frame(
             image=image,
-            data={"meta": {"id": frame_id, "ts": frame_id / fps, "sam3_detections": all_detections}},
-            format="BGR"
+            data={
+                "detections": {"items": all_detections},
+                "meta": {"id": frame_id, "ts": frame_id / fps},
+            },
+            format="BGR",
         )
         interval_filter.process({"video": combined_frame})
 
@@ -207,7 +225,7 @@ def run_temporal_detection(
 
     # Write output if requested
     if output_path:
-        with open(output_path, 'w') as f:
+        with open(output_path, "w") as f:
             json.dump(results, f, indent=2)
         if verbose:
             print(f"\nResults written to: {output_path}")
@@ -224,18 +242,20 @@ def print_results(results: dict):
     vi = results["video_info"]
     pi = results["processing_info"]
     print(f"Video: {vi['path']}")
-    print(f"Duration: {vi['duration_seconds']:.1f}s ({vi['total_frames']} frames @ {vi['fps']:.1f} fps)")
+    print(
+        f"Duration: {vi['duration_seconds']:.1f}s ({vi['total_frames']} frames @ {vi['fps']:.1f} fps)"
+    )
     print(f"Processed: {pi['frames_processed']} frames (every {pi['sample_every']})")
 
-    print(f"\nDetection counts per label:")
+    print("\nDetection counts per label:")
     for label, count in results["detection_counts"].items():
         print(f"  {label}: {count}")
 
     intervals = results["intervals"]
     print(f"\nTemporal intervals ({len(intervals)} total):")
-    for interval in sorted(intervals, key=lambda x: (x['label'], x['start_frame'])):
-        duration = interval['end_frame'] - interval['start_frame']
-        status = "PRESENT" if interval['present'] else "absent"
+    for interval in sorted(intervals, key=lambda x: (x["label"], x["start_frame"])):
+        duration = interval["end_frame"] - interval["start_frame"]
+        status = "PRESENT" if interval["present"] else "absent"
         print(
             f"  [{interval['start_frame']:4d} - {interval['end_frame']:4d}] "
             f"{interval['label']:15s} {status:7s} (conf: {interval['confidence']:.3f}, "
@@ -260,7 +280,8 @@ def main():
         help="Path to video file",
     )
     parser.add_argument(
-        "--prompts", "-p",
+        "--prompts",
+        "-p",
         type=str,
         default="person,hand,object",
         help="Comma-separated list of detection prompts (default: person,hand,object)",
@@ -296,13 +317,15 @@ def main():
         help="Maximum frames to process (default: all)",
     )
     parser.add_argument(
-        "--output", "-o",
+        "--output",
+        "-o",
         type=Path,
         default=None,
         help="Output JSON file path",
     )
     parser.add_argument(
-        "--quiet", "-q",
+        "--quiet",
+        "-q",
         action="store_true",
         help="Suppress progress output",
     )

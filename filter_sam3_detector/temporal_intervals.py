@@ -19,8 +19,7 @@ Features:
 import json
 import logging
 import math
-from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
@@ -144,8 +143,12 @@ class EMATracker:
 
         # Fast EMA state (primary signal) - stores RAW (biased) EMA values
         self._ema_raw: dict[str, float] = {}  # label -> raw fast EMA value
-        self.ema: dict[str, float] = {}  # label -> debiased fast EMA value (for external access)
-        self.current_state: dict[str, bool] = {}  # label -> is_present (confirmed state)
+        self.ema: dict[
+            str, float
+        ] = {}  # label -> debiased fast EMA value (for external access)
+        self.current_state: dict[
+            str, bool
+        ] = {}  # label -> is_present (confirmed state)
 
         # Slow EMA state (for crossing detection) - stores RAW (biased) EMA values
         self._slow_ema_raw: dict[str, float] = {}  # label -> raw slow EMA value
@@ -207,8 +210,8 @@ class EMATracker:
         self._slow_ema_raw[label] = new_slow_raw
 
         # Update bias correction factors: bias_t = (1 - alpha)^t
-        self._fast_bias[label] *= (1 - self.alpha_fast)
-        self._slow_bias[label] *= (1 - self.alpha_slow)
+        self._fast_bias[label] *= 1 - self.alpha_fast
+        self._slow_bias[label] *= 1 - self.alpha_slow
 
         # Compute debiased EMAs: debiased = raw / (1 - bias)
         debiased_fast = new_fast_raw / (1 - self._fast_bias[label])
@@ -307,7 +310,9 @@ class IntervalTracker:
         # Interval tracking state
         self.frame_count = 0
         self.intervals: list[DetectionInterval] = []
-        self.open_intervals: dict[str, dict] = {}  # label -> {start_frame, confidence_sum, frame_count, present}
+        self.open_intervals: dict[
+            str, dict
+        ] = {}  # label -> {start_frame, confidence_sum, frame_count, present}
 
         # Streaming file handle
         self._json_file = None
@@ -318,10 +323,12 @@ class IntervalTracker:
     def _open_streaming_file(self):
         """Open streaming JSON file (ndjson format - one interval per line)."""
         self.output_json_path.parent.mkdir(parents=True, exist_ok=True)
-        self._json_file = open(self.output_json_path, 'w')
+        self._json_file = open(self.output_json_path, "w")
         logger.info(f"Streaming intervals to: {self.output_json_path}")
 
-    def update(self, detected_labels: dict[str, float], frame_id: Optional[int] = None) -> list[tuple[str, bool, float]]:
+    def update(
+        self, detected_labels: dict[str, float], frame_id: Optional[int] = None
+    ) -> list[tuple[str, bool, float]]:
         """
         Update tracking with current frame's detections.
 
@@ -354,7 +361,9 @@ class IntervalTracker:
 
         return state_changes
 
-    def _handle_state_change(self, label: str, is_present: bool, frame_id: int, ema: float):
+    def _handle_state_change(
+        self, label: str, is_present: bool, frame_id: int, ema: float
+    ):
         """Handle a state transition for a label."""
         if is_present:
             # Start new presence interval
@@ -405,7 +414,7 @@ class IntervalTracker:
         """Write a single interval to the streaming ndjson file."""
         try:
             interval_json = json.dumps(interval.to_dict())
-            self._json_file.write(f'{interval_json}\n')
+            self._json_file.write(f"{interval_json}\n")
             self._json_file.flush()
         except Exception as e:
             logger.warning(f"Failed to stream interval: {e}")
@@ -421,7 +430,9 @@ class IntervalTracker:
         for label in list(self.open_intervals.keys()):
             self._close_interval(label)
 
-        logger.info(f"IntervalTracker: {len(self.intervals)} intervals recorded over {self.frame_count} frames")
+        logger.info(
+            f"IntervalTracker: {len(self.intervals)} intervals recorded over {self.frame_count} frames"
+        )
 
         # Close streaming file (no footer needed - ndjson format)
         if self._json_file is not None:
@@ -463,7 +474,9 @@ class TemporalIntervalConfig(FilterConfig):
     #   full_decay_life ≈ 7.21 * half_life
     #   half_life ≈ 0.139 * full_decay_life
     half_life: Optional[float] = None  # Frames for 50% decay (fast EMA for signal)
-    full_decay_life: Optional[float] = None  # Frames for ~99.3% decay (slow EMA for crossing)
+    full_decay_life: Optional[float] = (
+        None  # Frames for ~99.3% decay (slow EMA for crossing)
+    )
 
     # Detection thresholds
     presence_threshold: float = 0.5  # EMA threshold for presence detection
@@ -472,12 +485,16 @@ class TemporalIntervalConfig(FilterConfig):
     # Input configuration
     detection_key: str = "sam3_detections"  # Key in frame.data['meta'] for detections
     score_field: str = "score"  # Field name for detection confidence
-    label_field: Optional[str] = "label"  # Field name for class label (None = track all as one)
+    label_field: Optional[str] = (
+        "label"  # Field name for class label (if None, tracks all as default_label)
+    )
     default_label: str = "foreground"  # Label to use when label_field is None
 
     # Output configuration
     output_json_path: Optional[str] = None  # Path to write intervals JSON
-    output_key: str = "temporal_intervals"  # Key in frame.data['meta'] for current intervals
+    output_key: str = (
+        "temporal_intervals"  # Key in frame.data['meta'] for current intervals
+    )
     emit_on_change: bool = True  # Emit interval data on state changes
     emit_on_complete: bool = True  # Emit all intervals on filter shutdown
 
@@ -518,28 +535,49 @@ class TemporalIntervalFilter(Filter):
         config = super().normalize_config(config)
 
         # Convert string values
-        for key in ['half_life', 'full_decay_life', 'presence_threshold', 'min_confidence']:
+        for key in [
+            "half_life",
+            "full_decay_life",
+            "presence_threshold",
+            "min_confidence",
+        ]:
             if isinstance(config.get(key), str):
                 val = config[key].strip()
                 config[key] = float(val) if val else None
 
-        if isinstance(config.get('emit_on_change'), str):
-            config['emit_on_change'] = config['emit_on_change'].lower() in ('true', '1', 'yes')
-        if isinstance(config.get('emit_on_complete'), str):
-            config['emit_on_complete'] = config['emit_on_complete'].lower() in ('true', '1', 'yes')
-        if isinstance(config.get('emit_event_topic'), str):
-            config['emit_event_topic'] = config['emit_event_topic'].lower() in ('true', '1', 'yes')
-        if isinstance(config.get('debug'), str):
-            config['debug'] = config['debug'].lower() in ('true', '1', 'yes')
+        if isinstance(config.get("emit_on_change"), str):
+            config["emit_on_change"] = config["emit_on_change"].lower() in (
+                "true",
+                "1",
+                "yes",
+            )
+        if isinstance(config.get("emit_on_complete"), str):
+            config["emit_on_complete"] = config["emit_on_complete"].lower() in (
+                "true",
+                "1",
+                "yes",
+            )
+        if isinstance(config.get("emit_event_topic"), str):
+            config["emit_event_topic"] = config["emit_event_topic"].lower() in (
+                "true",
+                "1",
+                "yes",
+            )
+        if isinstance(config.get("debug"), str):
+            config["debug"] = config["debug"].lower() in ("true", "1", "yes")
 
         # Validate thresholds
-        presence_threshold = config.get('presence_threshold', 0.5)
+        presence_threshold = config.get("presence_threshold", 0.5)
         if not (0.0 <= presence_threshold <= 1.0):
-            raise ValueError(f"presence_threshold must be between 0 and 1, got {presence_threshold}")
+            raise ValueError(
+                f"presence_threshold must be between 0 and 1, got {presence_threshold}"
+            )
 
-        min_confidence = config.get('min_confidence', 0.0)
+        min_confidence = config.get("min_confidence", 0.0)
         if not (0.0 <= min_confidence <= 1.0):
-            raise ValueError(f"min_confidence must be between 0 and 1, got {min_confidence}")
+            raise ValueError(
+                f"min_confidence must be between 0 and 1, got {min_confidence}"
+            )
 
         return TemporalIntervalConfig(**config)
 
@@ -574,11 +612,15 @@ class TemporalIntervalFilter(Filter):
             half_life=config.half_life,
             full_decay_life=config.full_decay_life,
             presence_threshold=config.presence_threshold,
-            output_json_path=config.output_json_path if config.emit_on_complete else None,
+            output_json_path=config.output_json_path
+            if config.emit_on_complete
+            else None,
             streaming_mode=bool(config.output_json_path and config.emit_on_complete),
         )
 
-        logger.info(f"TemporalIntervalFilter initialized with alpha={self.interval_tracker.tracker.alpha:.4f}")
+        logger.info(
+            f"TemporalIntervalFilter initialized with alpha={self.interval_tracker.tracker.alpha:.4f}"
+        )
 
     def shutdown(self):
         """Clean up and finalize intervals."""
@@ -594,8 +636,8 @@ class TemporalIntervalFilter(Filter):
                 continue
 
             # Get frame ID from metadata if available
-            meta = frame.data.get('meta', {})
-            frame_id = int(meta['id']) if 'id' in meta else None
+            meta = frame.data.get("meta", {})
+            frame_id = int(meta["id"]) if "id" in meta else None
 
             # Get detections from frame metadata
             detections = self._get_detections(frame)
@@ -628,7 +670,7 @@ class TemporalIntervalFilter(Filter):
                 }
 
                 # Add to frame metadata (for downstream filters)
-                meta = frame.data.setdefault('meta', {})
+                meta = frame.data.setdefault("meta", {})
                 meta[self.output_key] = state_change_data
 
                 # Emit on dedicated event topic for filter-event-sink
@@ -645,13 +687,15 @@ class TemporalIntervalFilter(Filter):
         # Try new top-level frame.data["detections"] key first
         if "detections" in frame.data:
             dets_payload = frame.data["detections"]
-            if isinstance(dets_payload, dict) and isinstance(dets_payload.get("items"), list):
+            if isinstance(dets_payload, dict) and isinstance(
+                dets_payload.get("items"), list
+            ):
                 return dets_payload["items"]
             elif isinstance(dets_payload, list):
                 return dets_payload
 
         # Fallback to metadata keys
-        meta = frame.data.get('meta', {})
+        meta = frame.data.get("meta", {})
         detections = meta.get(self.detection_key)
         if not isinstance(detections, list):
             # Check standard "detections" key as fallback in meta

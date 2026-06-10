@@ -111,5 +111,5 @@ if __name__ == '__main__':
         mode = "text-prompt only"
     print(f"\nStarting pipeline ({mode})...")
     print(f"Results will be saved to: {output_path}")
-    print(f"  - detections.jsonl, frames/")
+    print("  - detections.jsonl, frames/")
     Filter.run_multi(filters)
