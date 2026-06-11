@@ -2042,8 +2042,6 @@ class FilterSAM3Detector(Filter):
         and the protege-compatible legacy detections list.
         Returns: (canonical_dict, protege_list, classification_dict)
         """
-        from filter_sam3_detector.utils.bbox import to_xyxy
-        
         clean_items = []
         protege_items = []
         class_max_scores = {}
@@ -2077,7 +2075,7 @@ class FilterSAM3Detector(Filter):
             
             # --- Label ---
             label = str(d.get("label", d.get("class", d.get("class_name", "object"))))
-            prompt = str(d.get("prompt", label))
+            prompt = str(d.get("prompt", d.get("class", label)))
             
             clean_d["label"] = label
             protege_d["label"] = label
