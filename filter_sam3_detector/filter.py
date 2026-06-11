@@ -548,6 +548,9 @@ class FilterSAM3Detector(Filter):
             "remove_overlap": False,  # FILTER_REMOVE_OVERLAP; when true, shutdown pass removes lower-confidence duplicates
             # Mixed precision inference
             "mixed_precision": True,  # Use bfloat16 autocast for inference (CUDA only)
+            # torch.compile the SAM3 vision backbone (FILTER-373). CUDA-only; first
+            # inference pays a one-time compile warmup. Off by default.
+            "compile_backbone": False,
         }
 
         for key, default_value in defaults.items():
@@ -603,6 +606,7 @@ class FilterSAM3Detector(Filter):
             "confusion_iou_threshold": float,
             "remove_overlap": bool,
             "mixed_precision": bool,
+            "compile_backbone": bool,
         }
 
         def _parse_boxes_env(env_val: str):
@@ -999,6 +1003,14 @@ class FilterSAM3Detector(Filter):
         self._autocast_persistent = None  # initialized in _load_model()
         if self.mixed_precision:
             logger.info("Mixed precision enabled: bfloat16 autocast for inference")
+
+        # torch.compile the SAM3 vision backbone (FILTER-373). CUDA-only — compile
+        # gains rely on CUDA kernels and the backbone runs on the GPU.
+        self.compile_backbone = config.get("compile_backbone", False) and self.device.type == "cuda"
+        if config.get("compile_backbone", False) and self.device.type != "cuda":
+            logger.warning("compile_backbone requested but device is not CUDA; disabling")
+        if self.compile_backbone:
+            logger.info("torch.compile enabled for SAM3 vision backbone (first inference warms up)")
 
         logger.info(f"Using device: {self.device}")
         logger.info(f"NMS enabled: {self.nms_enabled}, threshold: {self.nms_threshold}")
@@ -2994,6 +3006,7 @@ class FilterSAM3Detector(Filter):
                 device=str(self.device),
                 eval_mode=True,
                 load_from_HF=True,
+                compile=self.compile_backbone,
             )
 
             # Create processor
