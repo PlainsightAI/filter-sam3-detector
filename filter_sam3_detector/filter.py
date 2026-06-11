@@ -20,6 +20,9 @@ from openfilter.filter_runtime.config import FilterConfigBase
 
 from pydantic import Field
 from typing import List, Any
+from .coco_export import convert_jsonl_to_coco
+from .temporal_intervals import DetectionInterval, IntervalTracker
+from .streaming_video_processor import StreamingVideoProcessor
 
 class FilterSAM3DetectorConfigSchema(FilterConfigBase):
     """Declarative config schema for FilterSAM3Detector."""
@@ -365,9 +368,6 @@ class FilterSAM3DetectorConfigSchema(FilterConfigBase):
     outputs: Optional[List[str]] = Field(default=None)
 
 
-from .coco_export import convert_jsonl_to_coco
-from .temporal_intervals import DetectionInterval, IntervalTracker
-from .streaming_video_processor import StreamingVideoProcessor
 
 
 class FilterSAM3DetectorOutput(DetectionSet):
@@ -2170,7 +2170,6 @@ class FilterSAM3Detector(Filter):
         if self.nms_enabled and len(boxes) > 0:
             boxes, scores, masks = self._apply_nms(boxes, scores, masks)
 
-        num_detections = min(len(boxes), max_dets)
 
         actual_id = 0  # Track actual number of detections added
         for i in range(len(boxes)):

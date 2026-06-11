@@ -16,7 +16,7 @@ SAM3 Detector filter release notes
 - Upgrade openfilter SDK package dependency to version 1.1.0.
 - Upgrade openfilter SDK package dependency to version 1.1.1.
 - Migrate `_extract_detections_from_state` to output canonical `bbox`, `label`, and `mask` structures.
-- Transition frame processing to write exclusively to the top-level `frame.data["detections"]` path.
+- Transition frame processing to write the canonical detections to the top-level `frame.data["detections"]` path (legacy meta dual-writes retained for unmigrated consumers).
 - Standardize `.jsonl` output records to follow the canonical detections schema format.
 - Update downstream internal consumers (`confusion_detector.py`, `temporal_intervals.py`, and `coco_export.py`) to support the new schema structure.
 

@@ -12,8 +12,9 @@ from __future__ import annotations
 
 import argparse
 import json
-from filter_sam3_detector.utils.bbox import to_xywh
 import logging
+from filter_sam3_detector.utils.bbox import to_xywh
+from filter_sam3_detector.utils.detections import extract_items
 from pathlib import Path
 from typing import Any
 
@@ -112,7 +113,6 @@ def convert_jsonl_to_coco(input_path: Path, output_path: Path, output_label: str
 
             image_id = image_id_remap[src_image_id]
             
-            from filter_sam3_detector.utils.detections import extract_items
             
             frame_detections = extract_items(data)
             if not frame_detections:
