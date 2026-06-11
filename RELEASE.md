@@ -25,6 +25,10 @@ SAM3 Detector filter release notes
 
 ### Removed
 - (No removals - legacy protege-compatible dual-writes were restored to ensure backward compatibility for unmigrated consumers.)
+### Added
+- **Multiplex grounding ([FILTER-374](https://plainsight-ai.atlassian.net/browse/FILTER-374))**: Multi-prompt detection now batches all prompts into a single decoder pass. Peak VRAM logic limits memory via fallback.
+
+>>>>>>> theirs
 ## v0.1.18 - 2026-04-29
 Enhances text_prompts parsing in FilterSAM3Detector with configurable delimiters and prompt→label mapping.
 

@@ -38,7 +38,6 @@ class TestCanBatch(unittest.TestCase):
         d.text_prompt = "person"
         d.text_prompts = None
         d.visual_prompt_embed = None
-        d._cached_backbone_state = None
         for k, v in overrides.items():
             setattr(d, k, v)
         return d
@@ -51,9 +50,27 @@ class TestCanBatch(unittest.TestCase):
         d = self._make_detector(model=None)
         self.assertFalse(d._can_batch())
 
-    def test_prompt_sets_cannot_batch(self):
-        d = self._make_detector(prompt_sets=[{"name": "a", "prompts": ["x"]}])
+    def test_prompt_sets_can_batch(self):
+        # FILTER-374: prompt_sets now batch via per-frame multiplexed grounding.
+        d = self._make_detector(
+            prompt_sets=[{"name": "a", "prompts": ["x"]}],
+            text_prompt=None,
+            text_prompts=None,
+        )
+        self.assertTrue(d._can_batch())
+
+    def test_prompt_sets_with_visual_still_excluded(self):
+        # Visual/ref/video exclusions must remain even with prompt_sets set.
+        d = self._make_detector(
+            prompt_sets=[{"name": "a", "prompts": ["x"]}],
+            ref_images_paths=["/some/path.jpg"],
+        )
         self.assertFalse(d._can_batch())
+        d2 = self._make_detector(
+            prompt_sets=[{"name": "a", "prompts": ["x"]}],
+            enable_video_mode=True,
+        )
+        self.assertFalse(d2._can_batch())
 
     def test_ref_boxes_cannot_batch(self):
         d = self._make_detector(positive_boxes=[[0, 0, 100, 100]])
@@ -187,7 +204,6 @@ class TestProcessBatch(unittest.TestCase):
         d.text_prompt = "person"
         d.text_prompts = None
         d.visual_prompt_embed = None
-        d._cached_backbone_state = None
         return d
 
     def test_fallback_when_cannot_batch(self):
@@ -237,8 +253,8 @@ class TestProcessBatch(unittest.TestCase):
 
         captured_states = []
 
-        def capture_process(frames):
-            captured_states.append(d._cached_backbone_state)
+        def capture_process(frames, backbone_states=None):
+            captured_states.append((backbone_states or {}).get("main"))
             return {"main": MagicMock()}
 
         d.process = MagicMock(side_effect=capture_process)
@@ -256,9 +272,8 @@ class TestProcessBatch(unittest.TestCase):
                 vision[i : i + 1],
             )
 
-        self.assertIsNone(d._cached_backbone_state)
 
-    def test_clears_cached_state_on_per_frame_exception(self):
+    def test_per_frame_exception_falls_back_to_input_frame(self):
         d = self._make_detector()
         batched_state = {
             "original_heights": [480],
@@ -275,7 +290,6 @@ class TestProcessBatch(unittest.TestCase):
         batch = [_make_frames_dict()]
         results = d.process_batch(batch)
 
-        self.assertIsNone(d._cached_backbone_state)
         self.assertEqual(len(results), 1)
         self.assertIs(results[0], batch[0])
 
@@ -289,7 +303,6 @@ class TestProcessBatch(unittest.TestCase):
 
         self.assertEqual(len(results), 2)
         self.assertEqual(d.process.call_count, 2)
-        self.assertIsNone(d._cached_backbone_state)
 
     def test_result_count_matches_batch_size(self):
         d = self._make_detector()

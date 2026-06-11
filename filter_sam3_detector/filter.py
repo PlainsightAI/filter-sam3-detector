@@ -1104,8 +1104,7 @@ class FilterSAM3Detector(Filter):
 
         self._setup_confusion_detector(config)
 
-        # Batched backbone state: set by process_batch() so process() can skip set_image()
-        self._cached_backbone_state = None
+        # Batched backbone state is passed through process(...), not stored on self.
 
         logger.info("FilterSAM3Detector setup complete")
 
@@ -1581,7 +1580,7 @@ class FilterSAM3Detector(Filter):
         return None
 
     @torch.no_grad()
-    def process(self, frames: dict[str, Frame]) -> dict[str, Frame]:
+    def process(self, frames: dict[str, Frame], backbone_states: Optional[dict[str, dict]] = None) -> dict[str, Frame]:
         """
         Process input frames and detect objects.
 
@@ -1596,6 +1595,7 @@ class FilterSAM3Detector(Filter):
         # Extract frame ID from _filter topic (TI-130)
         # The _filter topic is emitted by openfilter runtime and contains frame IDs
         filter_frame_id = self._extract_filter_frame_id(frames)
+        backbone_states = backbone_states or {}
 
         for topic, frame in frames.items():
             if frame is None:
@@ -1615,7 +1615,7 @@ class FilterSAM3Detector(Filter):
             # Multi-output mode: process each prompt_set and output to different topics
             if self.prompt_sets:
                 try:
-                    multi_output = self._process_multi_output(frame, filter_frame_id)
+                    multi_output = self._process_multi_output(frame, filter_frame_id, backbone_states.get(topic))
                     output_frames.update(multi_output)
                 except Exception as e:
                     logger.error(f"Error in multi-output processing: {e}")
@@ -1870,8 +1870,8 @@ class FilterSAM3Detector(Filter):
                 else:
                     # Standard mode: set image once, then loop over prompts (and optionally visual exemplars)
                     detections = []
-                    if self._cached_backbone_state is not None:
-                        state = self._cached_backbone_state
+                    if topic in backbone_states:
+                        state = backbone_states[topic]
                     else:
                         state = self.processor.set_image(pil_image)
 
@@ -2171,7 +2171,7 @@ class FilterSAM3Detector(Filter):
         return output_frames
 
     def _process_multi_output(
-        self, frame: Frame, filter_frame_id: Optional[int]
+        self, frame: Frame, filter_frame_id: Optional[int], backbone_state: Optional[dict] = None
     ) -> dict[str, Frame]:
         """
         Process frame with multiple prompt sets, outputting to different topics.
@@ -2199,9 +2199,12 @@ class FilterSAM3Detector(Filter):
         # Get image dimensions for clipping boxes
         img_height, img_width = image_bgr.shape[:2]
 
-        # Set image in processor ONCE (this is the expensive backbone pass)
-        # The state contains cached image features that we reuse for ALL prompt sets
-        state = self.processor.set_image(pil_image)
+        # Set image in processor ONCE (this is the expensive backbone pass).
+        # process_batch() can pass a pre-computed state for this exact topic.
+        if backbone_state is not None:
+            state = backbone_state
+        else:
+            state = self.processor.set_image(pil_image)
 
         # Get frame metadata for ID tracking and filename (same format as single-output)
         frame_meta_orig = frame.data.get("meta", {})
@@ -2262,12 +2265,13 @@ class FilterSAM3Detector(Filter):
                 # Collect detections for this prompt set
                 ps_detections = []
 
-                for prompt in ps_prompts:
-                    # Use cached text embeddings (pre-computed at startup) instead of encoding per-frame
-                    # This is the KEY OPTIMIZATION that avoids re-running the text encoder on every frame
-                    prompt_state = self._inject_cached_text_embedding(state, prompt)
-                    prompt_state = self.processor.forward_grounding(prompt_state)
+                # FILTER-374: run ALL prompts in this set through ONE multiplexed grounding
+                # pass instead of len(ps_prompts) separate forward_grounding calls. The text
+                # encoder is still avoided per-frame (cached embeddings are concatenated along
+                # the text axis); only the grounding decoder is collapsed N->1.
+                prompt_states = self._forward_grounding_multi(state, ps_prompts, min(self.confidence_threshold, ps_threshold))
 
+                for prompt, prompt_state in zip(ps_prompts, prompt_states):
                     # Determine output label: use alias if defined, otherwise use prompt
                     output_label = ps_label_aliases.get(prompt, prompt)
 
@@ -2828,6 +2832,146 @@ class FilterSAM3Detector(Filter):
 
         return state
 
+    def _build_multiplexed_language_features(self, prompts: list[str]) -> dict:
+        """Assemble language features for N prompts into a single backbone_out fragment.
+
+        Cached per-prompt embeddings (filled at startup by _cache_text_embeddings via
+        forward_text([prompt])) are single-prompt tensors. We concatenate them along the
+        text axis to form an N-prompt batch that a multiplexed FindStage (text_ids=arange(N))
+        can index.
+
+        Axis layout (verified empirically on GPU, matches sam3/model/sam3_image.py ~178-181
+        where language_features is indexed [:, txt_ids] and language_mask is indexed [txt_ids]):
+          - language_features: (seq_len, num_text, dim)   -> text axis = dim 1
+          - language_embeds:   (seq_len, num_text, dim)   -> text axis = dim 1
+          - language_mask:     (num_text, seq_len)        -> text axis = dim 0
+
+        If any prompt is missing from the cache, we re-encode all prompts in ONE
+        forward_text call (cheap vs the grounding decoder this targets) as a robust fallback.
+        """
+        cached = [self.cached_text_embeddings.get(p) for p in prompts]
+        if any(
+            c is None
+            or c.get('language_features') is None
+            or c.get('language_mask') is None
+            for c in cached
+        ):
+            logger.warning(
+                "Missing cached text embedding for one or more multiplexed prompts; "
+                "re-encoding all prompts in one forward_text call"
+            )
+            text_outputs = self.model.backbone.forward_text(prompts, device=str(self.device))
+            for i, prompt in enumerate(prompts):
+                self.cached_text_embeddings[prompt] = {
+                    'language_features': text_outputs.get('language_features').narrow(1, i, 1) if text_outputs.get('language_features') is not None else None,
+                    'language_mask': text_outputs.get('language_mask').narrow(0, i, 1) if text_outputs.get('language_mask') is not None else None,
+                    'language_embeds': text_outputs.get('language_embeds').narrow(1, i, 1) if text_outputs.get('language_embeds') is not None else None,
+                }
+            return {
+                'language_features': text_outputs.get('language_features'),
+                'language_mask': text_outputs.get('language_mask'),
+                'language_embeds': text_outputs.get('language_embeds'),
+            }
+
+        feats = torch.cat([c['language_features'] for c in cached], dim=1)
+        mask = torch.cat([c['language_mask'] for c in cached], dim=0)
+        out = {'language_features': feats, 'language_mask': mask}
+        if all(c.get('language_embeds') is not None for c in cached):
+            out['language_embeds'] = torch.cat(
+                [c['language_embeds'] for c in cached], dim=1
+            )
+        return out
+
+    @torch.inference_mode()
+    def _forward_grounding_multi(
+        self,
+        state: dict,
+        prompts: list[str],
+        confidence_threshold: Optional[float] = None,
+        allow_oom_fallback: bool = True,
+    ) -> list[dict]:
+        """Run grounding for N prompts in ONE forward_grounding pass (FILTER-374)."""
+        if not prompts:
+            return []
+
+        from sam3.model import box_ops
+        from sam3.model.data_misc import FindStage
+        output_masks = getattr(self, "output_masks", True)
+        if output_masks:
+            from sam3.model.data_misc import interpolate
+
+        keep_threshold = self.confidence_threshold if confidence_threshold is None else confidence_threshold
+
+        try:
+            n = len(prompts)
+            backbone_out = {**state["backbone_out"]}
+            backbone_out.update(self._build_multiplexed_language_features(prompts))
+
+            find_input = FindStage(
+                img_ids=torch.zeros(n, device=self.device, dtype=torch.long),
+                text_ids=torch.arange(n, device=self.device, dtype=torch.long),
+                input_boxes=None,
+                input_boxes_mask=None,
+                input_boxes_label=None,
+                input_points=None,
+                input_points_mask=None,
+            )
+            outputs = self.model.forward_grounding(
+                backbone_out=backbone_out,
+                find_input=find_input,
+                find_target=None,
+                geometric_prompt=self.model._get_dummy_prompt(num_prompts=n),
+            )
+
+            out_bbox = outputs["pred_boxes"]
+            out_logits = outputs["pred_logits"]
+            out_masks = outputs.get("pred_masks") if output_masks else None
+            presence = outputs["presence_logit_dec"].sigmoid()
+
+            img_h = state["original_height"]
+            img_w = state["original_width"]
+            scale_fct = torch.tensor([img_w, img_h, img_w, img_h], device=self.device)
+
+            per_prompt_states = []
+            for i in range(n):
+                probs = (out_logits[i].sigmoid() * presence[i].unsqueeze(0)).squeeze(-1)
+                keep = probs > keep_threshold
+                slot_probs = probs[keep]
+                boxes = box_ops.box_cxcywh_to_xyxy(out_bbox[i][keep]) * scale_fct[None, :]
+
+                prompt_state = {
+                    "original_height": img_h,
+                    "original_width": img_w,
+                    "boxes": boxes,
+                    "scores": slot_probs,
+                }
+
+                if output_masks and out_masks is not None:
+                    slot_masks = out_masks[i][keep]
+                    if slot_masks.shape[0] > 0:
+                        slot_masks = interpolate(
+                            slot_masks.unsqueeze(1),
+                            (img_h, img_w),
+                            mode="bilinear",
+                            align_corners=False,
+                        ).sigmoid()
+                    else:
+                        slot_masks = slot_masks.new_zeros((0, 1, img_h, img_w))
+                    prompt_state["masks_logits"] = slot_masks
+                    prompt_state["masks"] = slot_masks > 0.5
+
+                per_prompt_states.append(prompt_state)
+            return per_prompt_states
+        except torch.cuda.OutOfMemoryError as e:
+            if not allow_oom_fallback:
+                raise
+            logger.warning(f"Multiplexed grounding OOM: {e}. Clearing cache and falling back to per-prompt grounding.")
+            torch.cuda.empty_cache()
+            out = []
+            for prompt in prompts:
+                out.extend(self._forward_grounding_multi(state, [prompt], keep_threshold, allow_oom_fallback=False))
+            return out
+
     # -- Batched backbone inference (FILTER-369) ----------------------------------
 
     @torch.no_grad()
@@ -2839,11 +2983,12 @@ class FilterSAM3Detector(Filter):
 
         pil_images = []
         valid_indices: set[int] = set()
-        batch_idx_map: dict[int, int] = {}
+        batch_idx_map: dict[int, tuple[int, str]] = {}
         for i, frames in enumerate(batch):
-            pil = self._extract_pil_image(frames)
-            if pil is not None:
-                batch_idx_map[i] = len(pil_images)
+            entry = self._extract_pil_image_entry(frames)
+            if entry is not None:
+                topic, pil = entry
+                batch_idx_map[i] = (len(pil_images), topic)
                 pil_images.append(pil)
                 valid_indices.add(i)
 
@@ -2862,18 +3007,19 @@ class FilterSAM3Detector(Filter):
             results: list[dict[str, Frame] | Frame | None] = [None] * len(batch)
             for i in range(len(batch)):
                 if i in valid_indices:
-                    frame_state = per_frame_states[batch_idx_map[i]]
-                    self._cached_backbone_state = {
-                        **frame_state,
-                        "backbone_out": {**frame_state["backbone_out"]},
+                    state_idx, topic = batch_idx_map[i]
+                    frame_state = per_frame_states[state_idx]
+                    backbone_states = {
+                        topic: {
+                            **frame_state,
+                            "backbone_out": {**frame_state["backbone_out"]},
+                        }
                     }
                     try:
-                        results[i] = self.process(batch[i])
+                        results[i] = self.process(batch[i], backbone_states=backbone_states)
                     except Exception as frame_err:
                         logger.error(f"Batched frame {i} failed: {frame_err}")
                         results[i] = batch[i]
-                    finally:
-                        self._cached_backbone_state = None
                 else:
                     results[i] = self.process(batch[i])
 
@@ -2883,19 +3029,18 @@ class FilterSAM3Detector(Filter):
             logger.warning(
                 f"set_image_batch OOM: {e}. Clearing cache and falling back to per-frame."
             )
-            self._cached_backbone_state = None
             torch.cuda.empty_cache()
             return [self.process(frames) for frames in batch]
         except Exception as e:
             logger.warning(f"set_image_batch failed: {e}. Falling back to per-frame.")
-            self._cached_backbone_state = None
             return [self.process(frames) for frames in batch]
 
     def _can_batch(self) -> bool:
         if self.model is None or self.processor is None:
             return False
-        if self.prompt_sets:
-            return False
+        # FILTER-374: prompt_sets no longer blocks batching. process_batch computes the
+        # backbone once per frame in a batch, and _process_multi_output reuses it to run
+        # the (frame x prompt) Cartesian via the multiplexed grounding pass.
         if self.positive_boxes or self.negative_boxes:
             return False
         if self.ref_images_paths or self.ref_images_negative_paths:
@@ -2904,9 +3049,9 @@ class FilterSAM3Detector(Filter):
             return False
         has_prompts = bool(self.text_prompts or self.text_prompt)
         has_visual = self.visual_prompt_embed is not None
-        return has_prompts or has_visual
+        return has_prompts or has_visual or bool(self.prompt_sets)
 
-    def _extract_pil_image(self, frames: dict[str, Frame]) -> Optional[Image.Image]:
+    def _extract_pil_image_entry(self, frames: dict[str, Frame]) -> Optional[tuple[str, Image.Image]]:
         # Returns the first non-auxiliary image topic. Standard pipelines have
         # one image topic; if multiple exist, dict iteration order determines
         # which is used for backbone inference.
@@ -2917,8 +3062,12 @@ class FilterSAM3Detector(Filter):
             if frame is not None and frame.has_image:
                 image_bgr = frame.rw_bgr.image
                 image_rgb = image_bgr[:, :, ::-1]
-                return Image.fromarray(image_rgb)
+                return topic, Image.fromarray(image_rgb)
         return None
+
+    def _extract_pil_image(self, frames: dict[str, Frame]) -> Optional[Image.Image]:
+        entry = self._extract_pil_image_entry(frames)
+        return entry[1] if entry is not None else None
 
     def _split_backbone_states(self, batched_state: dict) -> list[dict]:
         n = len(batched_state["original_heights"])

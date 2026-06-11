@@ -40,9 +40,10 @@ class TestPromptSetsFrameSaving(unittest.TestCase):
         det.cached_text_embeddings = {"person": "emb_person", "car": "emb_car"}
         det.jsonl_file = None  # no JSONL for this test
 
-        # _inject_cached_text_embedding: return whatever state was passed in
-        det._inject_cached_text_embedding = MagicMock(
-            side_effect=lambda state, prompt: state
+        # FILTER-374: _process_multi_output now runs ONE multiplexed grounding call per
+        # prompt set via _forward_grounding_multi, returning one state per prompt.
+        det._forward_grounding_multi = MagicMock(
+            side_effect=lambda state, prompts, *args, **kwargs: ["state"] * len(prompts)
         )
 
         # _extract_detections_from_state: return one fake detection per prompt
