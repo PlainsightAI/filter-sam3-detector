@@ -684,25 +684,16 @@ class TemporalIntervalFilter(Filter):
 
     def _get_detections(self, frame: Frame) -> list[dict]:
         """Extract detections from frame metadata or top-level data."""
-        # Try new top-level frame.data["detections"] key first
-        if "detections" in frame.data:
-            dets_payload = frame.data["detections"]
-            if isinstance(dets_payload, dict) and isinstance(
-                dets_payload.get("items"), list
-            ):
-                return dets_payload["items"]
-            elif isinstance(dets_payload, list):
-                return dets_payload
-
-        # Fallback to metadata keys
+        from filter_sam3_detector.utils.detections import extract_items
+        
+        # Only use canonical extraction if detection_key is at its default
+        if self.detection_key == "sam3_detections":
+            return extract_items(frame.data)
+            
+        # Otherwise respect the explicit configuration
         meta = frame.data.get("meta", {})
         detections = meta.get(self.detection_key)
-        if not isinstance(detections, list):
-            # Check standard "detections" key as fallback in meta
-            detections = meta.get("detections")
-            if not isinstance(detections, list):
-                return []
-        return detections
+        return detections if isinstance(detections, list) else []
 
     def _aggregate_detections(self, detections: list[dict]) -> dict[str, float]:
         """
@@ -719,9 +710,12 @@ class TemporalIntervalFilter(Filter):
 
             # Get confidence score
             score = det.get(self.score_field)
-            if score is None and self.score_field != "score":
-                # Fallback to standard schema key if config specified legacy confidence alias
-                score = det.get("score")
+            if score is None:
+                # Fallback to standard schema key or legacy alias
+                for alt in ("score", "confidence"):
+                    if alt != self.score_field and alt in det:
+                        score = det[alt]
+                        break
             if score is None:
                 score = 1.0
 
@@ -731,9 +725,13 @@ class TemporalIntervalFilter(Filter):
             # Get label
             if self.label_field and self.label_field in det:
                 label = str(det[self.label_field])
-            elif self.label_field and "label" in det:
-                # Fallback to standard schema key if config specified legacy class/class_name alias
-                label = str(det["label"])
+            elif self.label_field:
+                label_fallback = None
+                for alt in ("label", "class", "class_name"):
+                    if alt != self.label_field and alt in det:
+                        label_fallback = det[alt]
+                        break
+                label = str(label_fallback) if label_fallback is not None else self.default_label
             else:
                 label = self.default_label
 

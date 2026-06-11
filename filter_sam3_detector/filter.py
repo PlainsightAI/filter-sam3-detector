@@ -10,6 +10,7 @@ import pydantic
 
 import torch
 import numpy as np
+from filter_sam3_detector.utils.bbox import to_xyxy
 from PIL import Image
 
 
@@ -316,15 +317,47 @@ class FilterSAM3DetectorConfigSchema(FilterConfigBase):
         }
     )
     ref_strip_width: int = Field(
-        default=256,
+        default=120,
         json_schema_extra={
             "x-openfilter-ui": {"group": "Reference Configuration", "advanced": True}
         }
     )
     ref_max_height: int = Field(
-        default=384,
+        default=80,
         json_schema_extra={
             "x-openfilter-ui": {"group": "Reference Configuration", "advanced": True}
+        }
+    )
+    composite_topic: str = Field(
+        default="",
+        json_schema_extra={
+            "x-openfilter-ui": {"group": "Reference Configuration", "advanced": True}
+        }
+    )
+    confusion_detection_enabled: Optional[bool] = Field(
+        default=None,
+        json_schema_extra={
+            "x-openfilter-ui": {"group": "Confusion Detection"}
+        }
+    )
+    confusion_iou_threshold: float = Field(
+        default=0.95,
+        ge=0.0,
+        le=1.0,
+        json_schema_extra={
+            "x-openfilter-ui": {"group": "Confusion Detection", "widget": "slider"}
+        }
+    )
+    remove_overlap: bool = Field(
+        default=False,
+        json_schema_extra={
+            "x-openfilter-ui": {"group": "Confusion Detection"}
+        }
+    )
+    mixed_precision: bool = Field(
+        default=True,
+        json_schema_extra={
+            "x-openfilter-ui": {"group": "Base Configuration", "advanced": True}
         }
     )
     # Exclude inherited dynamic fields that we don't want explicitly validated
@@ -414,7 +447,7 @@ class FilterSAM3Detector(Filter):
     - Example: exemplars_path="/path/to/containers/" with container1.jpg, container2.jpg, etc.
     """
 
-    # Defensive marker for future SDK changes that may consume it
+    # Defensive marker for future SDK changes that may consume class attributes for schema discovery
     __output_schema__ = FilterSAM3DetectorOutput
 
     @classmethod
@@ -1258,21 +1291,9 @@ class FilterSAM3Detector(Filter):
     @staticmethod
     def _extract_detections_from_record(record: dict) -> list:
         """Extract the flat detections list from a JSONL event record."""
+        from filter_sam3_detector.utils.detections import extract_items
         data = record.get("data", record)
-        if isinstance(data, dict):
-            detections_payload = data.get("detections")
-            if isinstance(detections_payload, dict) and isinstance(detections_payload.get("items"), list):
-                return detections_payload["items"]
-            elif isinstance(detections_payload, list):
-                return detections_payload
-
-        meta = data.get("meta", {}) if isinstance(data, dict) else {}
-        # Try common keys in order of preference
-        for key in ("detections", "sam3_detections"):
-            dets = meta.get(key)
-            if isinstance(dets, list):
-                return dets
-        return []
+        return extract_items(data)
 
     @staticmethod
     def _rewrite_record_detections(record: dict, kept: list) -> dict:
@@ -1689,8 +1710,9 @@ class FilterSAM3Detector(Filter):
                     d['label'] = label
 
                 # Store results in frame data under the canonical key
-                serialized_detections = self._serialize_detections(detections)
-                frame.data[FilterSAM3DetectorOutput.__frame_data_key__] = serialized_detections
+                canonical_dict, protege_list, classification_dict = self._normalize_detections(detections)
+                frame.data[FilterSAM3DetectorOutput.__frame_data_key__] = canonical_dict
+                serialized_detections = canonical_dict
 
                 # Store width and height in meta for backward-compatibility and logging
                 frame_meta = frame.data.setdefault('meta', {})
@@ -1698,7 +1720,9 @@ class FilterSAM3Detector(Filter):
                 frame_meta['height'] = img_height
 
                 # Restore legacy dual-writes for unmigrated consumers
-                self._add_protege_compatible_output(frame_meta, detections)
+                frame_meta['detections'] = protege_list
+                frame_meta[self.output_label] = detections
+                frame_meta['classification'] = classification_dict
 
                 # Add detection_confidence to meta
                 if detection_confidence is not None:
@@ -1944,15 +1968,20 @@ class FilterSAM3Detector(Filter):
                 output_meta = output_frame.data.setdefault('meta', {})
 
                 # Store results in frame data under the canonical 'detections' key
-                serialized_detections = self._serialize_detections(ps_detections)
-                output_frame.data[FilterSAM3DetectorOutput.__frame_data_key__] = serialized_detections
+                canonical_dict, protege_list, classification_dict = self._normalize_detections(ps_detections)
+                output_frame.data[FilterSAM3DetectorOutput.__frame_data_key__] = canonical_dict
 
                 # Store width and height in meta for backward-compatibility
                 output_meta['width'] = img_width
                 output_meta['height'] = img_height
 
                 # Restore legacy dual-writes for unmigrated consumers
-                self._add_protege_compatible_output(output_meta, ps_detections)
+                output_meta['detections'] = protege_list
+                output_meta[self.output_label] = ps_detections
+                output_meta['classification'] = classification_dict
+                
+                # Keep serialized_detections pointing to canonical for the JSONL write below
+                serialized_detections = canonical_dict
 
                 # Add to output frames with the prompt set's topic
                 output_frames[ps_topic] = output_frame
@@ -2007,105 +2036,88 @@ class FilterSAM3Detector(Filter):
                 output_frames[ps_topic] = output_frame
         return output_frames
 
-    def _add_protege_compatible_output(self, frame_meta: dict, detections: list) -> None:
+    def _normalize_detections(self, detections: list) -> tuple[dict, list, dict]:
         """
-        Add protege-compatible output format to frame metadata.
+        Single normalization pass to produce both the canonical DetectionSet dict
+        and the protege-compatible legacy detections list.
+        Returns: (canonical_dict, protege_list, classification_dict)
         """
-        if not detections:
-            frame_meta['detections'] = []
-            frame_meta[self.output_label] = []
-            frame_meta['classification'] = {
-                'classes': [],
-                'confidences': [],
-                'architecture': 'sam3',
-            }
-            return
-
-        output_detections = []
+        from filter_sam3_detector.utils.bbox import to_xyxy
+        
+        clean_items = []
+        protege_items = []
         class_max_scores = {}
-
-        for det in detections:
-            prompt = det.get('class') or det.get('class_name') or 'object'
-            label = det.get('label') or prompt
-            box = det.get('box')
-            score = max(0.0, min(float(det.get('score', 0.0)), 1.0))
-
-            if box is None:
+        
+        for d in detections:
+            clean_d = {}
+            protege_d = {}
+            
+            # --- Box Geometry ---
+            xyxy = to_xyxy(d)
+            if not xyxy:
                 continue
-
-            if label not in class_max_scores:
-                class_max_scores[label] = 0.0
-            class_max_scores[label] = max(class_max_scores[label], score)
-
-            x1, y1, x2, y2 = box
-            bbox = {
+            x1, y1, x2, y2 = xyxy
+            
+            clean_d["bbox"] = {"x1": x1, "y1": y1, "x2": x2, "y2": y2}
+            
+            protege_d["bbox"] = {
                 'x': x1,
                 'y': y1,
                 'width': x2 - x1,
                 'height': y2 - y1,
             }
-
-            output_detections.append({
-                'label': label,
-                'prompt': prompt,
-                'confidence': score,
-                'bbox': bbox,
-                'class': label,
-                'rois': [[int(x1), int(y1), int(x2), int(y2)]],
-            })
-
-        frame_meta['detections'] = output_detections
-        frame_meta[self.output_label] = output_detections
-
-        sorted_classes = sorted(class_max_scores.items(), key=lambda x: x[1], reverse=True)
-        classes = [cls for cls, _ in sorted_classes]
-        confidences = [score for _, score in sorted_classes]
-
-        frame_meta['classification'] = {
-            'classes': classes,
-            'confidences': confidences,
-            'architecture': 'sam3',
-        }
-
-    def _serialize_detections(self, detections: list) -> dict:
-        """
-        Serialize detections cleanly against FilterSAM3DetectorOutput.
-        """
-        from filter_sam3_detector.utils.bbox import to_xyxy
-        
-        # Always clean items to ensure pure python types (numpy scalars break json.dumps)
-        clean_items = []
-        for d in detections:
-            clean_d = {}
-            if "id" in d:
-                clean_d["id"] = int(d["id"])
+            protege_d['rois'] = [[int(x1), int(y1), int(x2), int(y2)]]
             
-            # Robust extraction of bbox regardless of legacy dictionary or list shape
-            xyxy = to_xyxy(d)
-            if xyxy:
-                clean_d["bbox"] = {"x1": xyxy[0], "y1": xyxy[1], "x2": xyxy[2], "y2": xyxy[3]}
-                
+            # --- Score ---
+            score = 0.0
             if "score" in d:
-                # Clamp score between 0.0 and 1.0 to prevent ValidationError
-                clean_d["score"] = max(0.0, min(float(d["score"]), 1.0))
-            if "label" in d:
-                clean_d["label"] = str(d["label"])
+                score = max(0.0, min(float(d["score"]), 1.0))
+            clean_d["score"] = score
+            protege_d["confidence"] = score
+            
+            # --- Label ---
+            label = str(d.get("label", d.get("class", d.get("class_name", "object"))))
+            prompt = str(d.get("prompt", label))
+            
+            clean_d["label"] = label
+            protege_d["label"] = label
+            protege_d["class"] = label
+            protege_d["prompt"] = prompt
+            
             if "label_id" in d and d["label_id"] is not None:
                 clean_d["label_id"] = int(d["label_id"])
+                
+            if label not in class_max_scores:
+                class_max_scores[label] = 0.0
+            class_max_scores[label] = max(class_max_scores[label], score)
+            
+            # --- Mask ---
             if "mask" in d:
-                # Copy mask structure, casting area to int
                 mask = d["mask"]
                 clean_mask = {"polygons": mask.get("polygons", [])}
                 if "area" in mask:
                     clean_mask["area"] = int(mask["area"])
                 clean_d["mask"] = clean_mask
+                
             clean_items.append(clean_d)
-
+            protege_items.append(protege_d)
+            
+        # Build canonical
         try:
-            return FilterSAM3DetectorOutput(items=clean_items).model_dump(mode="json")
+            canonical_dict = FilterSAM3DetectorOutput(items=clean_items).model_dump(mode="json")
         except pydantic.ValidationError as e:
             logger.warning(f"Detection schema validation failed, falling back to clean items: {e}")
-            return {"items": clean_items}
+            canonical_dict = {"items": clean_items}
+            
+        # Build classification
+        sorted_classes = sorted(class_max_scores.items(), key=lambda x: x[1], reverse=True)
+        classification = {
+            'classes': [cls for cls, _ in sorted_classes],
+            'confidences': [score for _, score in sorted_classes],
+            'architecture': 'sam3',
+        }
+        
+        return canonical_dict, protege_items, classification
 
     def _boxes_xywh_to_norm_cxcywh(self, boxes_xywh: list, img_w: int, img_h: int) -> list:
         """Convert list of [x, y, w, h] (pixels) to normalized [cx, cy, w, h] in [0, 1] for add_geometric_prompt."""
@@ -2182,43 +2194,41 @@ class FilterSAM3Detector(Filter):
             detection_id = id_offset + actual_id + 1  # COCO annotation ID (1-indexed)
             actual_id += 1
 
-            if self.output_boxes:
-                box = boxes[i]
-                if hasattr(box, 'tolist'):
-                    box = box.tolist()
-                box = [float(x) for x in box]
+            box = boxes[i]
+            if hasattr(box, 'tolist'):
+                box = box.tolist()
+            box = [float(x) for x in box]
 
-                # Clip box coordinates to image boundaries
-                x1, y1, x2, y2 = box
-                x1 = max(0.0, min(x1, img_width))
-                y1 = max(0.0, min(y1, img_height))
-                x2 = max(0.0, min(x2, img_width))
-                y2 = max(0.0, min(y2, img_height))
+            # Clip box coordinates to image boundaries
+            x1, y1, x2, y2 = box
+            x1 = max(0.0, min(x1, img_width))
+            y1 = max(0.0, min(y1, img_height))
+            x2 = max(0.0, min(x2, img_width))
+            y2 = max(0.0, min(y2, img_height))
 
-                # Ensure x2 > x1 and y2 > y1
-                if x2 <= x1:
-                    x2 = min(x1 + 1.0, img_width)
-                if y2 <= y1:
-                    y2 = min(y1 + 1.0, img_height)
+            # Ensure x2 > x1 and y2 > y1
+            if x2 <= x1:
+                x2 = min(x1 + 1.0, img_width)
+            if y2 <= y1:
+                y2 = min(y1 + 1.0, img_height)
 
-                # Keep original format [x1, y1, x2, y2] for compatibility (clipped)
-                detection['box'] = [float(x1), float(y1), float(x2), float(y2)]
+            # Keep original format [x1, y1, x2, y2] for compatibility (clipped)
+            detection['box'] = [float(x1), float(y1), float(x2), float(y2)]
 
-                # Convert to COCO bbox format [x, y, width, height]
-                detection['bbox'] = {
-                    "x1": float(x1),
-                    "y1": float(y1),
-                    "x2": float(x2),
-                    "y2": float(y2),
-                }
+            # Create canonical bbox dict
+            detection['bbox'] = {
+                "x1": float(x1),
+                "y1": float(y1),
+                "x2": float(x2),
+                "y2": float(y2),
+            }
 
-            if self.output_scores:
-                score = scores[i]
-                if hasattr(score, 'item'):
-                    score = score.item()
-                detection['score'] = float(score)
-                # Also add 'confidence' for protege compatibility
-                detection['confidence'] = float(score)
+            score = scores[i]
+            if hasattr(score, 'item'):
+                score = score.item()
+            detection['score'] = float(score)
+            # Also add 'confidence' for protege compatibility
+            detection['confidence'] = float(score)
 
             if self.output_masks and masks is not None and i < len(masks):
                 mask = masks[i]
@@ -2231,7 +2241,8 @@ class FilterSAM3Detector(Filter):
                 binary_mask = (mask > 0.5).astype(np.uint8)
                 
                 # Keep in-memory for internal visualization
-                detection['mask_np'] = binary_mask
+                if self.visualize or self.annotated_frames_dir is not None:
+                    detection['mask_np'] = binary_mask
 
                 # Convert mask to COCO format (polygons)
                 segmentation = self._mask_to_coco_polygons(binary_mask)
@@ -3322,7 +3333,7 @@ class FilterSAM3Detector(Filter):
                         cv2.putText(image, class_text, (cx, cy), font, font_scale, color_bgr, thickness)
                 # Draw mask overlay (semi-transparent, same hue as class BB)
                 mask_drawn = False
-                color_mask = np.zeros_like(image)
+                color_mask = None
                 raw_cls = det.get('label') or det.get('class') or det.get('class_name')
                 class_text = str(raw_cls) if raw_cls is not None and str(raw_cls) != '' else None
                 mbgr = self._viz_bgr_for_class_name(class_text)
@@ -3330,14 +3341,17 @@ class FilterSAM3Detector(Filter):
                 if 'mask_np' in det:
                     mask = det['mask_np']
                     if isinstance(mask, np.ndarray) and mask.shape == image.shape[:2]:
+                        color_mask = np.zeros_like(image)
                         color_mask[mask > 0] = mbgr
                         mask_drawn = True
                 elif 'mask' in det:
                     m_val = det['mask']
                     if isinstance(m_val, np.ndarray) and m_val.shape == image.shape[:2]:
+                        color_mask = np.zeros_like(image)
                         color_mask[m_val > 0] = mbgr
                         mask_drawn = True
                     elif isinstance(m_val, dict) and 'polygons' in m_val:
+                        color_mask = np.zeros_like(image)
                         for poly in m_val['polygons']:
                             points = poly.get('points') if isinstance(poly, dict) else getattr(poly, 'points', None)
                             if points:
@@ -3348,12 +3362,13 @@ class FilterSAM3Detector(Filter):
                         try:
                             mask = np.array(m_val, dtype=np.uint8)
                             if mask.shape == image.shape[:2]:
+                                color_mask = np.zeros_like(image)
                                 color_mask[mask > 0] = mbgr
                                 mask_drawn = True
                         except Exception:
                             pass
 
-                if mask_drawn:
+                if mask_drawn and color_mask is not None:
                     image = cv2.addWeighted(image, 1.0, color_mask, 0.3, 0)
         except Exception as e:
             logger.warning(f"Failed to visualize detections on image: {e}")

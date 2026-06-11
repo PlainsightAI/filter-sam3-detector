@@ -112,16 +112,13 @@ def convert_jsonl_to_coco(input_path: Path, output_path: Path, output_label: str
 
             image_id = image_id_remap[src_image_id]
             
-            # Try new top-level frame.data["detections"] key first
-            frame_detections = []
-            if isinstance(data, dict) and "detections" in data:
-                fd = data["detections"]
-                if isinstance(fd, dict) and isinstance(fd.get("items"), list):
-                    frame_detections = [d for d in fd["items"] if isinstance(d, dict)]
-                elif isinstance(fd, list):
-                    frame_detections = [d for d in fd if isinstance(d, dict)]
-            else:
+            from filter_sam3_detector.utils.detections import extract_items
+            
+            frame_detections = extract_items(data)
+            if not frame_detections:
                 frame_detections = _extract_frame_detections(meta, output_label)
+
+            frame_detections = [d for d in frame_detections if isinstance(d, dict)]
 
             for det in frame_detections:
                 label = _extract_label(det)

@@ -45,6 +45,7 @@ class TestPromptSetsFrameSaving(unittest.TestCase):
         def fake_extract(state, label, w, h, gid, confidence_threshold=0.5, max_detections=100):
             return [{"label": label, "box": [10, 20, 30, 40], "bbox": {"x1": 10.0, "y1": 20.0, "x2": 30.0, "y2": 40.0}, "score": 0.9}]
         det._extract_detections_from_state = MagicMock(side_effect=fake_extract)
+        det._normalize_detections = MagicMock(return_value=({"items": []}, [], {}))
 
         # _visualize_detections_on_image: return the image unchanged
         det._visualize_detections_on_image = MagicMock(side_effect=lambda img, *a, **kw: img)

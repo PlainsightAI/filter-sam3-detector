@@ -162,16 +162,8 @@ def run_temporal_detection(
         detected_frame = detector_output.get("video", detector_frame)
 
         # All detections from all prompts are returned in the canonical detections schema
-        dets_payload = detected_frame.data.get("detections", {})
-        all_detections = (
-            dets_payload.get("items", [])
-            if isinstance(dets_payload, dict)
-            else (dets_payload if isinstance(dets_payload, list) else [])
-        )
-        if not all_detections:
-            all_detections = detected_frame.data.get("meta", {}).get(
-                "sam3_detections", []
-            )
+        from filter_sam3_detector.utils.detections import extract_items
+        all_detections = extract_items(detected_frame.data)
 
         # Count detections by class (set by multi-prompt detection)
         for det in all_detections:

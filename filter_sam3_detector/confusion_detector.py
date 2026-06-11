@@ -85,8 +85,6 @@ class ConfusionDetector:
     # ------------------------------------------------------------------
 
     @staticmethod
-
-    @staticmethod
     def _class_label(det: dict) -> str:
         return det.get("class") or det.get("class_name") or det.get("label") or ""
 

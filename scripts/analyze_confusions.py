@@ -95,20 +95,8 @@ def _confusions_from_record(record: dict, iou_threshold: float) -> list[dict]:
         return filtered
 
     # Re-compute from raw detections
-    dets = None
-    if isinstance(data, dict):
-        detections_payload = data.get("detections")
-        if isinstance(detections_payload, dict) and "items" in detections_payload:
-            dets = detections_payload["items"]
-        elif isinstance(detections_payload, list):
-            dets = detections_payload
-
-    if not dets:
-        for key in ("detections", "sam3_detections"):
-            candidate = meta.get(key)
-            if isinstance(candidate, list):
-                dets = candidate
-                break
+    from filter_sam3_detector.utils.detections import extract_items
+    dets = extract_items(data)
 
     if not dets:
         return []
