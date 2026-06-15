@@ -2044,7 +2044,7 @@ class FilterSAM3Detector(Filter):
                 output_frames[ps_topic] = output_frame
         return output_frames
 
-    def _normalize_detections(self, detections: list) -> tuple[dict, list, dict]:
+    def _normalize_detections(self, detections: list[dict[str, Any]]) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any]]:
         """
         Single normalization pass to produce both the canonical DetectionSet dict
         and the protege-compatible legacy detections list.

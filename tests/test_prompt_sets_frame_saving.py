@@ -160,8 +160,7 @@ class TestPromptSetsFrameSaving(unittest.TestCase):
             self.assertEqual(len(annotated_writes), 1, f"Expected 1 annotated write, got {len(annotated_writes)}")
             self.assertIn("_people", str(annotated_writes[0]))
 
-    @patch("cv2.imwrite", return_value=True)
-    def test_process_multi_output_handles_exception_gracefully(self, mock_imwrite):
+    def test_process_multi_output_handles_exception_gracefully(self):
         """Verify that _process_multi_output handles prompt set exceptions gracefully,
         yielding degraded frames with appropriate empty structures for both canonical
         and legacy outputs, and preserving topic cardinality.
