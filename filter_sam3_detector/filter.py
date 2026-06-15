@@ -1004,17 +1004,6 @@ class FilterSAM3Detector(Filter):
         if self.mixed_precision:
             logger.info("Mixed precision enabled: bfloat16 autocast for inference")
 
-        # torch.compile the SAM3 vision backbone (FILTER-373). CUDA-only — compile
-        # gains rely on CUDA kernels and the backbone runs on the GPU.
-        self.compile_backbone = config.get("compile_backbone", False) and self.device.type == "cuda"
-        if config.get("compile_backbone", False) and self.device.type != "cuda":
-            logger.warning("compile_backbone requested but device is not CUDA; disabling")
-        if self.compile_backbone:
-            logger.info("torch.compile enabled for SAM3 vision backbone (first inference warms up)")
-
-        logger.info(f"Using device: {self.device}")
-        logger.info(f"NMS enabled: {self.nms_enabled}, threshold: {self.nms_threshold}")
-
         # Video mode configuration
         self.enable_video_mode = config.get("enable_video_mode", False)
         self.video_detection_interval = config.get("video_detection_interval", 5)
@@ -1022,6 +1011,18 @@ class FilterSAM3Detector(Filter):
             "video_min_tracking_confidence", 0.3
         )
         self.video_processor = None
+
+        # torch.compile the SAM3 vision backbone (FILTER-373). CUDA-only — compile
+        # gains rely on CUDA kernels and the backbone runs on the GPU.
+        compile_backbone_requested = config.get("compile_backbone", False)
+        self.compile_backbone = compile_backbone_requested and self.device.type == "cuda"
+        if compile_backbone_requested and self.device.type != "cuda":
+            logger.warning("compile_backbone requested but device is not CUDA; disabling")
+        if self.compile_backbone and not self.enable_video_mode:
+            logger.info("torch.compile enabled for SAM3 vision backbone (first inference warms up)")
+
+        logger.info(f"Using device: {self.device}")
+        logger.info(f"NMS enabled: {self.nms_enabled}, threshold: {self.nms_threshold}")
 
         # Load SAM3 model
         self.model = None
@@ -1031,6 +1032,19 @@ class FilterSAM3Detector(Filter):
             self._load_video_model()
         else:
             self._load_model()
+        if self.compile_backbone and not self.enable_video_mode and self.processor is not None:
+            try:
+                with torch.no_grad():
+                    self.processor.set_image(Image.new("RGB", (64, 64)))
+            except Exception as e:
+                logger.warning("torch.compile warmup failed (%s); rebuilding SAM3 without torch.compile", e)
+                if self._autocast_persistent is not None:
+                    self._autocast_persistent.__exit__(None, None, None)
+                    self._autocast_persistent = None
+                self.model = None
+                self.processor = None
+                self.compile_backbone = False
+                self._load_model()
 
         # Load exemplar images if provided
         self.visual_prompt_embed = None

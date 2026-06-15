@@ -11,6 +11,7 @@ Usage: uv run python scripts/bench_compile_backbone.py
 import time
 from pathlib import Path
 
+import numpy as np
 import torch
 from PIL import Image
 
@@ -18,14 +19,15 @@ from sam3.model_builder import build_sam3_image_model
 from sam3.model.sam3_image_processor import Sam3Processor
 
 DEVICE = "cuda"
+if not torch.cuda.is_available():
+    raise SystemExit("This benchmark requires a CUDA GPU")
 RESOLUTIONS = {"480p": (854, 480), "1080p": (1920, 1080)}
 WARMUP = 3
 ITERS = 20
 
 
 def make_image(w, h):
-    # Deterministic synthetic frame (no Math.random in scripts; gradient pattern)
-    import numpy as np
+    # Deterministic gradient image so runs are reproducible
     base = np.indices((h, w)).sum(0)
     rgb = np.stack([base % 256, (base * 2) % 256, (base * 3) % 256], axis=-1).astype("uint8")
     return Image.fromarray(rgb, "RGB")
