@@ -13,6 +13,7 @@ jobs:
     with:
       docker_image: plainsightai/openfilter-sam3-detector
       schema_module: filter_sam3_detector.filter
+      schema_class: FilterSAM3DetectorConfigSchema
       python_versions: '["3.11", "3.12"]'
       source-paths: |
         filter_*/**
