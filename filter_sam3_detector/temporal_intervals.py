@@ -21,9 +21,11 @@ import logging
 import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Any
 
-from openfilter.filter_runtime.filter import FilterConfig, Filter, Frame
+from openfilter.filter_runtime.filter import Filter, Frame
+from openfilter.filter_runtime.config import FilterConfigBase
+from filter_sam3_detector.utils.detections import extract_items
 
 __all__ = [
     "TemporalIntervalConfig",
@@ -466,8 +468,48 @@ class IntervalTracker:
         return self.tracker.get_ema(label)
 
 
-class TemporalIntervalConfig(FilterConfig):
+class TemporalIntervalConfig(FilterConfigBase):
     """Configuration for temporal interval detection filter."""
+
+    def clean(self) -> dict:
+        """Return a dictionary of this config without any hidden items starting with '_'."""
+        return {k: v for k, v in self.items() if not k.startswith("_")}
+
+    def __iter__(self):
+        return iter(self.__class__.model_fields.keys())
+
+    def __getitem__(self, key: str) -> Any:
+        try:
+            return getattr(self, key)
+        except AttributeError:
+            raise KeyError(key)
+
+    def __setitem__(self, key: str, value: Any):
+        setattr(self, key, value)
+
+    def __contains__(self, key: str) -> bool:
+        return (
+            key in self.model_fields_set
+            or (self.__pydantic_extra__ is not None and key in self.__pydantic_extra__)
+            or (hasattr(self, key) and getattr(self, key) is not None)
+        )
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return getattr(self, key, default)
+
+    def setdefault(self, key: str, default: Any = None) -> Any:
+        if not hasattr(self, key) or getattr(self, key) is None:
+            setattr(self, key, default)
+        return getattr(self, key)
+
+    def keys(self):
+        return self.__class__.model_fields.keys()
+
+    def values(self):
+        return [getattr(self, k) for k in self.keys()]
+
+    def items(self):
+        return [(k, getattr(self, k)) for k in self.keys()]
 
     # EMA parameters - specify one or both
     # If only one is specified, the other is derived automatically:
@@ -483,7 +525,7 @@ class TemporalIntervalConfig(FilterConfig):
     min_confidence: float = 0.0  # Minimum detection confidence to consider
 
     # Input configuration
-    detection_key: str = "sam3_detections"  # Key in frame.data['meta'] for detections
+    detection_key: str = "detections"  # Key in frame.data for detections
     score_field: str = "score"  # Field name for detection confidence
     label_field: Optional[str] = (
         "label"  # Field name for class label (if None, tracks all as default_label)
@@ -684,15 +726,19 @@ class TemporalIntervalFilter(Filter):
 
     def _get_detections(self, frame: Frame) -> list[dict]:
         """Extract detections from frame metadata or top-level data."""
-        from filter_sam3_detector.utils.detections import extract_items
-        
-        # Only use canonical extraction if detection_key is at its default
-        if self.detection_key == "sam3_detections":
+        # Only use canonical extraction if detection_key is at its default ("detections")
+        if self.detection_key == "detections":
             return extract_items(frame.data)
-            
-        # Otherwise respect the explicit configuration
-        meta = frame.data.get("meta", {})
-        detections = meta.get(self.detection_key)
+
+        # Otherwise respect the explicit configuration (try top-level first, then meta)
+        detections = frame.data.get(self.detection_key)
+        if detections is None:
+            meta = frame.data.get("meta", {})
+            if isinstance(meta, dict):
+                detections = meta.get(self.detection_key)
+
+        if isinstance(detections, dict) and "items" in detections:
+            return detections["items"]
         return detections if isinstance(detections, list) else []
 
     def _aggregate_detections(self, detections: list[dict]) -> dict[str, float]:
@@ -731,7 +777,11 @@ class TemporalIntervalFilter(Filter):
                     if alt != self.label_field and alt in det:
                         label_fallback = det[alt]
                         break
-                label = str(label_fallback) if label_fallback is not None else self.default_label
+                label = (
+                    str(label_fallback)
+                    if label_fallback is not None
+                    else self.default_label
+                )
             else:
                 label = self.default_label
 

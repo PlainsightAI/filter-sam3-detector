@@ -153,6 +153,113 @@ class TestFilterSAM3Detector(unittest.TestCase):
         self.assertIn("car", aggregated)
         self.assertEqual(aggregated["car"], 0.8)
 
+    def test_normalize_detections_degenerate_polygons_filtered(self):
+        """Test that _normalize_detections filters out polygons with <3 points to prevent validation errors."""
+        from filter_sam3_detector.filter import FilterSAM3Detector
+        
+        detections = [
+            {
+                "bbox": {"x1": 10.0, "y1": 20.0, "x2": 30.0, "y2": 45.0},
+                "score": 0.85,
+                "label": "car",
+                "mask": {
+                    "polygons": [
+                        {"points": [(10.0, 20.0), (30.0, 20.0)]},  # Degenerate: only 2 points
+                        {"points": [(10.0, 20.0), (30.0, 20.0), (30.0, 45.0)]}  # Valid: 3 points
+                    ],
+                    "area": 150
+                }
+            }
+        ]
+        
+        detector = FilterSAM3Detector(FilterConfig({}))
+        canonical, _, _ = detector._normalize_detections(detections)
+        
+        # Valid polygon should be kept
+        self.assertEqual(len(canonical["items"][0]["mask"]["polygons"]), 1)
+        self.assertEqual(len(canonical["items"][0]["mask"]["polygons"][0]["points"]), 3)
+
+    def test_normalize_detections_with_none_label_or_prompt(self):
+        """Test that _normalize_detections safely extracts string labels/prompts even when values are None."""
+        from filter_sam3_detector.filter import FilterSAM3Detector
+        
+        detections = [
+            {
+                "box": [10.0, 20.0, 30.0, 45.0],
+                "score": 0.85,
+                "label": None,
+                "class": "truck",
+                "prompt": None
+            }
+        ]
+        
+        detector = FilterSAM3Detector(FilterConfig({}))
+        canonical, protege, _ = detector._normalize_detections(detections)
+        
+        self.assertEqual(canonical["items"][0]["label"], "truck")
+        self.assertEqual(protege[0]["prompt"], "truck")
+
+    def test_normalize_detections_with_non_dict_mask(self):
+        """Test that _normalize_detections safely ignores non-dictionary masks instead of crashing."""
+        import numpy as np
+        from filter_sam3_detector.filter import FilterSAM3Detector
+        
+        detections = [
+            {
+                "bbox": {"x1": 10.0, "y1": 20.0, "x2": 30.0, "y2": 45.0},
+                "score": 0.85,
+                "label": "car",
+                "mask": np.zeros((100, 100), dtype=np.uint8)  # Binary array mask
+            }
+        ]
+        
+        detector = FilterSAM3Detector(FilterConfig({}))
+        canonical, _, _ = detector._normalize_detections(detections)
+        
+        self.assertIsNone(canonical["items"][0]["mask"])
+
+    def test_normalize_detections_with_direct_list_polygons(self):
+        """Test that _normalize_detections correctly processes direct list/tuple of points for polygons."""
+        from filter_sam3_detector.filter import FilterSAM3Detector
+        
+        detections = [
+            {
+                "bbox": {"x1": 10.0, "y1": 20.0, "x2": 30.0, "y2": 45.0},
+                "score": 0.85,
+                "label": "car",
+                "mask": {
+                    "polygons": [
+                        [(10.0, 20.0), (30.0, 20.0), (30.0, 45.0)]  # Direct list of points
+                    ],
+                    "area": 150
+                }
+            }
+        ]
+        
+        detector = FilterSAM3Detector(FilterConfig({}))
+        canonical, _, _ = detector._normalize_detections(detections)
+        
+        self.assertEqual(len(canonical["items"][0]["mask"]["polygons"]), 1)
+        self.assertEqual(len(canonical["items"][0]["mask"]["polygons"][0]["points"]), 3)
+
+    def test_normalize_detections_invalid_label_id(self):
+        """Test that _normalize_detections safely ignores non-integer label_id instead of crashing."""
+        from filter_sam3_detector.filter import FilterSAM3Detector
+        
+        detections = [
+            {
+                "bbox": {"x1": 10.0, "y1": 20.0, "x2": 30.0, "y2": 45.0},
+                "score": 0.85,
+                "label": "car",
+                "label_id": "not-an-integer"
+            }
+        ]
+        
+        detector = FilterSAM3Detector(FilterConfig({}))
+        canonical, _, _ = detector._normalize_detections(detections)
+        
+        self.assertIsNone(canonical["items"][0]["label_id"])
+
 
 if __name__ == '__main__':
     unittest.main()
