@@ -2031,8 +2031,16 @@ class FilterSAM3Detector(Filter):
                 logger.error(f"Error processing prompt set {prompt_set.get('name', 'unknown')}: {e}", exc_info=True)
                 ps_topic = prompt_set.get('topic', 'main')
                 output_frame = copy.deepcopy(frame)
-                output_frame.data[FilterSAM3DetectorOutput.__frame_data_key__] = {"items": []}
-                self._add_protege_compatible_output(output_frame.data.setdefault('meta', {}), [])
+                
+                # Normalize empty detections for the degraded frame
+                canonical_dict, protege_list, classification_dict = self._normalize_detections([])
+                output_frame.data[FilterSAM3DetectorOutput.__frame_data_key__] = canonical_dict
+                
+                output_meta = output_frame.data.setdefault('meta', {})
+                output_meta['detections'] = protege_list
+                output_meta[self.output_label] = []
+                output_meta['classification'] = classification_dict
+                
                 output_frames[ps_topic] = output_frame
         return output_frames
 

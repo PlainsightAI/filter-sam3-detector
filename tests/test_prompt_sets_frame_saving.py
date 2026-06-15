@@ -160,6 +160,47 @@ class TestPromptSetsFrameSaving(unittest.TestCase):
             self.assertEqual(len(annotated_writes), 1, f"Expected 1 annotated write, got {len(annotated_writes)}")
             self.assertIn("_people", str(annotated_writes[0]))
 
+    @patch("cv2.imwrite", return_value=True)
+    def test_process_multi_output_handles_exception_gracefully(self, mock_imwrite):
+        """Verify that _process_multi_output handles prompt set exceptions gracefully,
+        yielding degraded frames with appropriate empty structures for both canonical
+        and legacy outputs, and preserving topic cardinality.
+        """
+        from filter_sam3_detector.filter import FilterSAM3Detector
+
+        det = self._make_detector_stub()
+        # Mock _extract_detections_from_state to raise an error for the 'car' label
+        def selective_error_extract(state, label, w, h, gid, confidence_threshold=0.5, max_detections=100):
+            if label == "car":
+                raise ValueError("Simulated processing error for car")
+            return [{"label": label, "box": [10, 20, 30, 40], "bbox": {"x1": 10.0, "y1": 20.0, "x2": 30.0, "y2": 40.0}, "score": 0.9}]
+        
+        det._extract_detections_from_state = MagicMock(side_effect=selective_error_extract)
+        # Mock the real _normalize_detections so it actually processes [] and [d] properly
+        # inside our test instead of being a hardcoded stub
+        det._normalize_detections = FilterSAM3Detector._normalize_detections.__get__(det, FilterSAM3Detector)
+
+        frame = self._make_frame()
+        result = FilterSAM3Detector._process_multi_output(det, frame, filter_frame_id=42)
+
+        # Confirm we still have both topics returned (cardinality preserved)
+        self.assertIn("people_topic", result)
+        self.assertIn("vehicles_topic", result)
+
+        # "people" should have succeeded and got its detections (due to our mocked success return)
+        people_frame = result["people_topic"]
+        self.assertIn("detections", people_frame.data)
+        self.assertEqual(len(people_frame.data["detections"]["items"]), 1)
+        self.assertEqual(people_frame.data["meta"]["detections"][0]["confidence"], 0.9)
+
+        # "vehicles" should have hit the exception handler and generated a degraded frame
+        vehicles_frame = result["vehicles_topic"]
+        self.assertIn("detections", vehicles_frame.data)
+        self.assertEqual(vehicles_frame.data["detections"]["items"], [])
+        self.assertEqual(vehicles_frame.data["meta"]["detections"], [])
+        self.assertEqual(vehicles_frame.data["meta"]["classification"], {'classes': [], 'confidences': [], 'architecture': 'sam3'})
+        self.assertEqual(vehicles_frame.data["meta"][det.output_label], [])
+
 
 if __name__ == "__main__":
     unittest.main()

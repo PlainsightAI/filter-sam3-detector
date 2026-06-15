@@ -40,7 +40,7 @@ def _extract_score(det: dict[str, Any]) -> float:
 
 
 def _extract_frame_detections(meta: dict[str, Any], output_label: str) -> list[dict[str, Any]]:
-    # Preferred shape produced by _add_protege_compatible_output
+    # Preferred shape produced by _normalize_detections
     detections = meta.get("detections")
     if isinstance(detections, list):
         return [d for d in detections if isinstance(d, dict)]
