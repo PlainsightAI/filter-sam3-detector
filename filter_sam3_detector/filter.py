@@ -2420,10 +2420,6 @@ class FilterSAM3Detector(Filter):
                         f"Skipping invalid non-integer label_id: {d['label_id']}"
                     )
 
-            if label not in class_max_scores:
-                class_max_scores[label] = 0.0
-            class_max_scores[label] = max(class_max_scores[label], score)
-
             # --- Mask ---
             if "mask" in d and isinstance(d["mask"], dict):
                 mask = d["mask"]
@@ -2444,8 +2440,21 @@ class FilterSAM3Detector(Filter):
                         clean_mask["area"] = int(mask["area"])
                     clean_d["mask"] = clean_mask
 
-            clean_items.append(clean_d)
-            protege_items.append(protege_d)
+            # Validate the single item against the official Detection schema
+            from openfilter.filter_runtime.shapes import Detection
+            try:
+                validated_item = Detection(**clean_d)
+                clean_items.append(validated_item.model_dump(mode="json"))
+                protege_items.append(protege_d)
+
+                # Only track class scores of validated and kept detections
+                if label not in class_max_scores:
+                    class_max_scores[label] = 0.0
+                class_max_scores[label] = max(class_max_scores[label], score)
+            except Exception as e:
+                logger.warning(
+                    f"Filtering invalid detection item due to validation failure: {clean_d}. Error: {e}"
+                )
 
         # Build canonical
         try:

@@ -344,6 +344,49 @@ class TestFilterSAM3Detector(unittest.TestCase):
             self.assertEqual(frame_meta["classification"], {"classes": [], "confidences": [], "architecture": "sam3"})
             self.assertEqual(frame_meta[detector.output_label], [])
 
+    def test_normalize_detections_validate_per_item(self):
+        """Test that _normalize_detections validates detections per-item, dropping invalid ones but preserving valid ones."""
+        from filter_sam3_detector.filter import FilterSAM3Detector
+        from openfilter.filter_runtime.filter import FilterConfig
+
+        detections = [
+            # Valid item
+            {
+                "bbox": {"x1": 10.0, "y1": 20.0, "x2": 30.0, "y2": 45.0},
+                "score": 0.85,
+                "label": "car",
+            },
+            # Invalid item (x2 < x1)
+            {
+                "bbox": {"x1": 10.0, "y1": 20.0, "x2": 5.0, "y2": 45.0},
+                "score": 0.90,
+                "label": "person",
+            },
+            # Valid item 2
+            {
+                "bbox": {"x1": 100.0, "y1": 200.0, "x2": 150.0, "y2": 250.0},
+                "score": 0.80,
+                "label": "truck",
+            }
+        ]
+
+        detector = FilterSAM3Detector(FilterConfig({}))
+        canonical, protege, classification = detector._normalize_detections(detections)
+
+        # 1. The valid detections should be preserved in the canonical list
+        self.assertEqual(len(canonical["items"]), 2)
+        self.assertEqual(canonical["items"][0]["label"], "car")
+        self.assertEqual(canonical["items"][1]["label"], "truck")
+
+        # 2. The valid detections should be preserved in the protege legacy list
+        self.assertEqual(len(protege), 2)
+        self.assertEqual(protege[0]["label"], "car")
+        self.assertEqual(protege[1]["label"], "truck")
+
+        # 3. Only the valid labels should be in the classification dict
+        self.assertEqual(classification["classes"], ["car", "truck"])
+        self.assertEqual(classification["confidences"], [0.85, 0.80])
+
 
 if __name__ == '__main__':
     unittest.main()
