@@ -762,15 +762,17 @@ class TemporalIntervalFilter(Filter):
                 continue
 
             # Get confidence score
-            score = det.get(self.score_field)
-            if score is None:
+            score_val = det.get(self.score_field)
+            if score_val is None:
                 # Fallback to standard schema key or legacy alias
                 for alt in ("score", "confidence"):
                     if alt != self.score_field and alt in det:
-                        score = det[alt]
+                        score_val = det[alt]
                         break
-            if score is None:
-                score = 1.0
+            try:
+                score = float(score_val) if score_val is not None else 1.0
+            except (ValueError, TypeError):
+                score = 0.0
 
             if score < self.min_confidence:
                 continue

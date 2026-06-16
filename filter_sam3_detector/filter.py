@@ -2390,8 +2390,14 @@ class FilterSAM3Detector(Filter):
 
             # --- Score ---
             score = 0.0
-            if "score" in d:
-                score = max(0.0, min(float(d["score"]), 1.0))
+            score_val = d.get("score")
+            if score_val is None:
+                score_val = d.get("confidence")
+            if score_val is not None:
+                try:
+                    score = max(0.0, min(float(score_val), 1.0))
+                except (ValueError, TypeError):
+                    score = 0.0
             clean_d["score"] = score
             protege_d["confidence"] = score
 
