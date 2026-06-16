@@ -2102,7 +2102,27 @@ class FilterSAM3Detector(Filter):
                 import traceback
 
                 logger.debug(traceback.format_exc())
-                output_frames[topic] = frame  # forward frame on error
+
+                # Mirror multi-output error handler: ensure canonical/legacy fields are present
+                try:
+                    img_height, img_width = frame.rw_bgr.image.shape[:2]
+                except Exception:
+                    img_height, img_width = 0, 0
+
+                canonical_dict, protege_list, classification_dict = (
+                    self._normalize_detections([])
+                )
+                frame.data[FilterSAM3DetectorOutput.__frame_data_key__] = canonical_dict
+
+                frame_meta = frame.data.setdefault("meta", {})
+                if img_width > 0 and img_height > 0:
+                    frame_meta["width"] = img_width
+                    frame_meta["height"] = img_height
+                frame_meta["detections"] = protege_list
+                frame_meta[self.output_label] = []
+                frame_meta["classification"] = classification_dict
+
+                output_frames[topic] = frame
                 continue
 
         return output_frames

@@ -284,6 +284,66 @@ class TestFilterSAM3Detector(unittest.TestCase):
         self.assertEqual(normalized_twice.get("text_prompt"), "electric post")
         self.assertEqual(normalized_twice.get("confidence_threshold"), 0.85)
 
+    def test_single_output_handles_exception_gracefully(self):
+        """Verify that single-output process handles exceptions gracefully by yielding a degraded frame."""
+        from filter_sam3_detector.filter import FilterSAM3Detector
+        from openfilter.filter_runtime.filter import FilterConfig, Frame
+        from unittest.mock import MagicMock
+        import numpy as np
+
+        # Create a config
+        config = FilterSAM3Detector.normalize_config(FilterConfig({"text_prompt": "car"}))
+
+        # Create a stub detector using __new__
+        detector = FilterSAM3Detector.__new__(FilterSAM3Detector)
+        detector.config = config
+        detector.model = MagicMock()
+        detector.processor = MagicMock()
+        detector.prompt_sets = None
+        detector.text_prompts = None
+        detector.text_prompt = "car"
+        detector.positive_boxes = []
+        detector.negative_boxes = []
+        detector.ref_images_paths = None
+        detector.ref_images_negative_paths = None
+        detector.enable_temporal_intervals = False
+        detector.output_filter_name = "SAM3Detector"
+        detector.output_label = "sam3_detections"
+        detector.viz_topic = ""
+        detector.visualize = False
+        detector.jsonl_file = None
+        detector.frame_counter = 0
+
+        # Force an exception during image preprocessing or inference
+        # We mock Image.fromarray to raise an error
+        from unittest.mock import patch
+        with patch("PIL.Image.fromarray", side_effect=RuntimeError("Simulated inference error")):
+            # Create a mock Frame with image data using MagicMock to avoid shapes import issues
+            bgr_data = np.zeros((480, 640, 3), dtype=np.uint8)
+            frame = MagicMock(spec=Frame)
+            frame.has_image = True
+            rw_bgr = MagicMock()
+            rw_bgr.image = bgr_data
+            frame.rw_bgr = rw_bgr
+            frame.data = {}
+
+            # Run process
+            result_frames = detector.process({"main": frame})
+
+            # Verify that the frame was returned, but gracefully populated as a degraded frame
+            self.assertIn("main", result_frames)
+            out_frame = result_frames["main"]
+
+            self.assertIn("detections", out_frame.data)
+            self.assertEqual(out_frame.data["detections"]["items"], [])
+            
+            frame_meta = out_frame.data["meta"]
+            self.assertEqual(frame_meta["width"], 640)
+            self.assertEqual(frame_meta["height"], 480)
+            self.assertEqual(frame_meta["detections"], [])
+            self.assertEqual(frame_meta["classification"], {"classes": [], "confidences": [], "architecture": "sam3"})
+            self.assertEqual(frame_meta[detector.output_label], [])
+
 
 if __name__ == '__main__':
     unittest.main()
