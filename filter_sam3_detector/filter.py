@@ -402,7 +402,7 @@ class FilterSAM3DetectorConfig(FilterConfigBase):
         return {k: v for k, v in self.items() if not k.startswith("_")}
 
     def __iter__(self):
-        return iter(self.__class__.model_fields.keys())
+        return iter(self.keys())
 
     def __getitem__(self, key: str) -> Any:
         try:
@@ -429,7 +429,9 @@ class FilterSAM3DetectorConfig(FilterConfigBase):
         return getattr(self, key)
 
     def keys(self):
-        return self.__class__.model_fields.keys()
+        base = list(self.__class__.model_fields.keys())
+        extra = list(self.__pydantic_extra__ or {})
+        return base + [k for k in extra if k not in set(base)]
 
     def values(self):
         return [getattr(self, k) for k in self.keys()]

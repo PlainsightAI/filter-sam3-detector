@@ -260,6 +260,30 @@ class TestFilterSAM3Detector(unittest.TestCase):
         
         self.assertIsNone(canonical["items"][0]["label_id"])
 
+    def test_config_dictionary_protocol_and_idempotence(self):
+        """Test that the dictionary protocol includes extra fields and normalize_config is idempotent."""
+        from filter_sam3_detector.filter import FilterSAM3Detector
+        from openfilter.filter_runtime.filter import FilterConfig
+
+        # 1. Verify custom attributes are captured in dictionary conversion
+        custom_input = {
+            "text_prompt": "electric post",
+            "confidence_threshold": 0.85,
+            "device": "cpu",
+        }
+        config = FilterSAM3Detector.normalize_config(FilterConfig(custom_input))
+        
+        config_dict = dict(config)
+        self.assertIn("text_prompt", config_dict)
+        self.assertIn("confidence_threshold", config_dict)
+        self.assertEqual(config_dict["text_prompt"], "electric post")
+        self.assertEqual(config_dict["confidence_threshold"], 0.85)
+
+        # 2. Verify idempotence: normalizing already-normalized config retains custom values
+        normalized_twice = FilterSAM3Detector.normalize_config(config)
+        self.assertEqual(normalized_twice.get("text_prompt"), "electric post")
+        self.assertEqual(normalized_twice.get("confidence_threshold"), 0.85)
+
 
 if __name__ == '__main__':
     unittest.main()
