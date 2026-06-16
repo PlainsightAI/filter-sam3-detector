@@ -3,10 +3,25 @@ SAM3 Detector filter release notes
 
 ## [Unreleased]
 
-### Changed
+## v0.1.19 - 2026-06-03
 
-- Bump openfilter to 1.1.0
-- Bump openfilter to 1.1.1
+### Added
+- Register `FilterSAM3DetectorOutput` output schema under `openfilter.filter_runtime.shapes.DetectionSet` with `$id: https://schemas.plainsight.ai/filters/sam3-detector/v1` and data key `"detections"`.
+- Add schema-compliance unit tests to cover coordinate validation and extra field pruning in `tests/test_filter_sam3_detector.py`.
+
+### Changed
+- **BREAKING**: `TemporalIntervalFilter` default configuration for `label_field` has been changed from `None` (track all as one) to `"label"` (track per-class). Existing standalone deployments that relied on `None` for single-signal tracking must be updated to explicitly set `label_field: null`.
+- **BREAKING**: `output_boxes=False` and `output_scores=False` are no longer supported. The filter raises `ValueError` at startup if either is set; the canonical `FilterSAM3DetectorOutput` schema requires both fields.
+- **BREAKING**: Multi-output mode now publishes detections to `frame.data["detections"]` as a canonical DetectionSet dictionary (`{"items": [...]}`) rather than a flat list. Downstream aggregators that previously iterated `frame.data["detections"]` directly must be updated to expect the new schema.
+- Upgrade openfilter SDK package dependency to version 1.1.0.
+- Upgrade openfilter SDK package dependency to version 1.1.1.
+- Migrate `_extract_detections_from_state` to output canonical `bbox`, `label`, and `mask` structures.
+- Transition frame processing to write the canonical detections to the top-level `frame.data["detections"]` path (legacy meta dual-writes retained for unmigrated consumers).
+- Standardize `.jsonl` output records to follow the canonical detections schema format.
+- Update downstream internal consumers (`confusion_detector.py`, `temporal_intervals.py`, and `coco_export.py`) to support the new schema structure.
+
+### Removed
+- (No removals - legacy protege-compatible dual-writes were restored to ensure backward compatibility for unmigrated consumers.)
 
 ## v0.1.18 - 2026-04-29
 Enhances text_prompts parsing in FilterSAM3Detector with configurable delimiters and prompt→label mapping.

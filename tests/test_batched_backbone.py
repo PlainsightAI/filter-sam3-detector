@@ -1,13 +1,11 @@
 import unittest
-from unittest.mock import MagicMock, patch, PropertyMock
-from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import numpy as np
 import torch
 from PIL import Image
 
 from filter_sam3_detector.filter import FilterSAM3Detector
-from openfilter.filter_runtime.filter import FilterConfig
 from openfilter.filter_runtime.frame import Frame
 
 
@@ -216,7 +214,7 @@ class TestProcessBatch(unittest.TestCase):
         d.process = MagicMock(return_value={"main": MagicMock()})
 
         batch = [_make_frames_dict(), _make_frames_dict()]
-        results = d.process_batch(batch)
+        _ = d.process_batch(batch)
 
         d.processor.set_image_batch.assert_called_once()
         pil_images = d.processor.set_image_batch.call_args[0][0]

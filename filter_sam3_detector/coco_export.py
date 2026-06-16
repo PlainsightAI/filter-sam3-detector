@@ -13,38 +13,12 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+from filter_sam3_detector.utils.bbox import to_xywh
+from filter_sam3_detector.utils.detections import extract_items
 from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
-
-
-def _extract_bbox_xywh(det: dict[str, Any]) -> list[float] | None:
-    """Extract bbox as [x, y, w, h] from supported detection shapes."""
-    bbox = det.get("bbox")
-    if isinstance(bbox, dict):
-        x = float(bbox.get("x", 0.0))
-        y = float(bbox.get("y", 0.0))
-        w = float(bbox.get("width", 0.0))
-        h = float(bbox.get("height", 0.0))
-        return [x, y, max(0.0, w), max(0.0, h)]
-    if isinstance(bbox, (list, tuple)) and len(bbox) == 4:
-        x, y, w, h = bbox
-        return [float(x), float(y), max(0.0, float(w)), max(0.0, float(h))]
-
-    box = det.get("box")
-    if isinstance(box, (list, tuple)) and len(box) == 4:
-        x1, y1, x2, y2 = [float(v) for v in box]
-        return [x1, y1, max(0.0, x2 - x1), max(0.0, y2 - y1)]
-
-    rois = det.get("rois")
-    if isinstance(rois, list) and rois:
-        roi0 = rois[0]
-        if isinstance(roi0, (list, tuple)) and len(roi0) == 4:
-            x1, y1, x2, y2 = [float(v) for v in roi0]
-            return [x1, y1, max(0.0, x2 - x1), max(0.0, y2 - y1)]
-
-    return None
 
 
 def _extract_label(det: dict[str, Any]) -> str:
@@ -63,8 +37,10 @@ def _extract_score(det: dict[str, Any]) -> float:
     return 0.0
 
 
-def _extract_frame_detections(meta: dict[str, Any], output_label: str) -> list[dict[str, Any]]:
-    # Preferred shape produced by _add_protege_compatible_output
+def _extract_frame_detections(
+    meta: dict[str, Any], output_label: str
+) -> list[dict[str, Any]]:
+    # Preferred shape produced by _normalize_detections
     detections = meta.get("detections")
     if isinstance(detections, list):
         return [d for d in detections if isinstance(d, dict)]
@@ -77,7 +53,9 @@ def _extract_frame_detections(meta: dict[str, Any], output_label: str) -> list[d
     return []
 
 
-def convert_jsonl_to_coco(input_path: Path, output_path: Path, output_label: str) -> dict[str, Any]:
+def convert_jsonl_to_coco(
+    input_path: Path, output_path: Path, output_label: str
+) -> dict[str, Any]:
     images: list[dict[str, Any]] = []
     annotations: list[dict[str, Any]] = []
     categories: list[dict[str, Any]] = []
@@ -136,7 +114,12 @@ def convert_jsonl_to_coco(input_path: Path, output_path: Path, output_label: str
                 )
 
             image_id = image_id_remap[src_image_id]
-            frame_detections = _extract_frame_detections(meta, output_label)
+
+            frame_detections = extract_items(data)
+            if not frame_detections:
+                frame_detections = _extract_frame_detections(meta, output_label)
+
+            frame_detections = [d for d in frame_detections if isinstance(d, dict)]
 
             for det in frame_detections:
                 label = _extract_label(det)
@@ -144,7 +127,7 @@ def convert_jsonl_to_coco(input_path: Path, output_path: Path, output_label: str
                     category_to_id[label] = len(category_to_id) + 1
                     categories.append({"id": category_to_id[label], "name": label})
 
-                bbox = _extract_bbox_xywh(det)
+                bbox = to_xywh(det)
                 if bbox is None:
                     continue
                 x, y, w, h = bbox
@@ -173,7 +156,9 @@ def convert_jsonl_to_coco(input_path: Path, output_path: Path, output_label: str
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Convert detections.jsonl to COCO JSON")
+    parser = argparse.ArgumentParser(
+        description="Convert detections.jsonl to COCO JSON"
+    )
     parser.add_argument(
         "--input",
         default="./output/detections.jsonl",

@@ -14,7 +14,6 @@ import logging
 import os
 import sys
 import unittest
-from unittest.mock import MagicMock, patch
 
 import numpy as np
 
@@ -59,7 +58,9 @@ class TestStreamingVideoProcessorV1(unittest.TestCase):
 
     def test_invalid_mode_raises_error(self):
         """Test that invalid mode raises ValueError."""
-        from filter_sam3_detector.streaming_video_processor import StreamingVideoProcessor
+        from filter_sam3_detector.streaming_video_processor import (
+            StreamingVideoProcessor,
+        )
 
         with self.assertRaises(ValueError):
             StreamingVideoProcessor(device="cpu", mode="invalid")
@@ -68,7 +69,6 @@ class TestStreamingVideoProcessorV1(unittest.TestCase):
         """Test that v1 detection throttling works correctly."""
         from filter_sam3_detector.streaming_video_processor import (
             StreamingVideoProcessor,
-            StreamingState,
         )
 
         processor = StreamingVideoProcessor(
@@ -160,7 +160,10 @@ class TestFramePreprocessing(unittest.TestCase):
 
         # Should be (C, H, W) with resolution 1008
         self.assertEqual(preprocessed.shape, (3, 1008, 1008))
-        self.assertEqual(preprocessed.dtype, processor.device.type == "cpu" and preprocessed.dtype or preprocessed.dtype)
+        self.assertEqual(
+            preprocessed.dtype,
+            processor.device.type == "cpu" and preprocessed.dtype or preprocessed.dtype,
+        )
 
     def test_preprocess_frame_stores_dimensions(self):
         """Test that preprocessing stores original dimensions."""
@@ -193,6 +196,10 @@ class TestProcessingModeEnum(unittest.TestCase):
 class TestV2InferenceStateInitialization(unittest.TestCase):
     """Tests for v2 inference state initialization."""
 
+    @unittest.skipUnless(
+        os.environ.get("RUN_INTEGRATION_TESTS") == "1",
+        "Requires GPU and SAM3 model weights",
+    )
     def test_init_v2_streaming_state_structure(self):
         """Test that _init_v2_streaming_state creates proper structure."""
         from filter_sam3_detector.streaming_video_processor import (
@@ -227,7 +234,7 @@ class TestIntegration(unittest.TestCase):
 
     @unittest.skipIf(
         not os.environ.get("RUN_INTEGRATION_TESTS"),
-        "Integration tests disabled. Set RUN_INTEGRATION_TESTS=1 to enable."
+        "Integration tests disabled. Set RUN_INTEGRATION_TESTS=1 to enable.",
     )
     def test_v1_model_loading(self):
         """Test v1 model loading (requires GPU and model weights)."""
@@ -244,7 +251,7 @@ class TestIntegration(unittest.TestCase):
 
     @unittest.skipIf(
         not os.environ.get("RUN_INTEGRATION_TESTS"),
-        "Integration tests disabled. Set RUN_INTEGRATION_TESTS=1 to enable."
+        "Integration tests disabled. Set RUN_INTEGRATION_TESTS=1 to enable.",
     )
     def test_v2_model_loading(self):
         """Test v2 model loading (requires GPU and model weights)."""
@@ -260,7 +267,7 @@ class TestIntegration(unittest.TestCase):
 
     @unittest.skipIf(
         not os.environ.get("RUN_INTEGRATION_TESTS"),
-        "Integration tests disabled. Set RUN_INTEGRATION_TESTS=1 to enable."
+        "Integration tests disabled. Set RUN_INTEGRATION_TESTS=1 to enable.",
     )
     def test_v2_process_frames(self):
         """Test processing multiple frames with v2 mode."""
