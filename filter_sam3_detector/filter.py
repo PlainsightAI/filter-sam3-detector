@@ -405,26 +405,31 @@ class FilterSAM3DetectorConfig(FilterConfigBase):
         return iter(self.keys())
 
     def __getitem__(self, key: str) -> Any:
-        try:
+        if key in self.keys():
             return getattr(self, key)
-        except AttributeError:
-            raise KeyError(key)
+        raise KeyError(key)
 
     def __setitem__(self, key: str, value: Any):
         setattr(self, key, value)
 
     def __contains__(self, key: str) -> bool:
+        if key not in self.keys():
+            return False
         return (
             key in self.model_fields_set
             or (self.__pydantic_extra__ is not None and key in self.__pydantic_extra__)
-            or (hasattr(self, key) and getattr(self, key) is not None)
+            or getattr(self, key) is not None
         )
 
     def get(self, key: str, default: Any = None) -> Any:
-        return getattr(self, key, default)
+        if key in self.keys():
+            return getattr(self, key)
+        return default
 
     def setdefault(self, key: str, default: Any = None) -> Any:
-        if not hasattr(self, key) or getattr(self, key) is None:
+        if hasattr(self.__class__, key):
+            return getattr(self, key)
+        if key not in self.keys() or getattr(self, key) is None:
             setattr(self, key, default)
         return getattr(self, key)
 
@@ -2442,6 +2447,7 @@ class FilterSAM3Detector(Filter):
 
             # Validate the single item against the official Detection schema
             from openfilter.filter_runtime.shapes import Detection
+
             try:
                 validated_item = Detection(**clean_d)
                 clean_items.append(validated_item.model_dump(mode="json"))

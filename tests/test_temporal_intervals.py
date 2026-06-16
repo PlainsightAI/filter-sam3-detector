@@ -434,6 +434,30 @@ class TestTemporalIntervalFilter(TestCase):
         with self.assertRaises(ValueError):
             TemporalIntervalFilter.normalize_config({"min_confidence": "-0.1"})
 
+    def test_config_dictionary_protocol_and_idempotence(self):
+        """Test that the dictionary protocol includes extra fields and normalize_config is idempotent."""
+        # 1. Verify custom attributes are captured in dictionary conversion
+        custom_input = {
+            "half_life": 5.0,
+            "presence_threshold": 0.85,
+            "custom_telemetry_field": "some-value",
+        }
+        config = TemporalIntervalFilter.normalize_config(custom_input)
+
+        config_dict = dict(config)
+        self.assertIn("half_life", config_dict)
+        self.assertIn("presence_threshold", config_dict)
+        self.assertIn("custom_telemetry_field", config_dict)
+        self.assertEqual(config_dict["half_life"], 5.0)
+        self.assertEqual(config_dict["presence_threshold"], 0.85)
+        self.assertEqual(config_dict["custom_telemetry_field"], "some-value")
+
+        # 2. Verify idempotence: normalizing already-normalized config retains custom values
+        normalized_twice = TemporalIntervalFilter.normalize_config(config)
+        self.assertEqual(normalized_twice.get("half_life"), 5.0)
+        self.assertEqual(normalized_twice.get("presence_threshold"), 0.85)
+        self.assertEqual(normalized_twice.get("custom_telemetry_field"), "some-value")
+
     def test_setup_and_shutdown(self):
         """Test filter setup and shutdown."""
         config = TemporalIntervalFilter.normalize_config({"half_life": 5.0})
@@ -681,10 +705,7 @@ class TestTemporalIntervalFilter(TestCase):
         image = np.zeros((100, 100, 3), dtype=np.uint8)
         data = {
             "detections": {"items": [{"score": 0.9, "label": "car"}]},
-            "meta": {
-                "id": 1,
-                "sam3_detections": [{"score": 0.95, "label": "person"}]
-            },
+            "meta": {"id": 1, "sam3_detections": [{"score": 0.95, "label": "person"}]},
         }
         frame = Frame(image, data, "BGR")
 
@@ -1153,11 +1174,8 @@ class TestExtractItemsBypassEmptyList(TestCase):
 
         data = {
             "detections": [],
-            "meta": {
-                "sam3_detections": [{"score": 0.95, "label": "person"}]
-            }
+            "meta": {"sam3_detections": [{"score": 0.95, "label": "person"}]},
         }
         # Previously, this would bypass detections=[] and fall back to meta["sam3_detections"]
         # Now, it must correctly return [] immediately.
         self.assertEqual(extract_items(data), [])
-
