@@ -150,17 +150,19 @@ class ConfusionDetector:
 
                     iou = self.compute_iou(box_a, box_b)
                     if iou >= self.iou_threshold:
-                        confusions.append({
-                            "prompt_a": class_a,
-                            "prompt_b": class_b,
-                            "iou": round(iou, 4),
-                            "box_a": box_a,
-                            "box_b": box_b,
-                            "score_a": round(score_a, 4),
-                            "score_b": round(score_b, 4),
-                            "detection_id_a": id_a,
-                            "detection_id_b": id_b,
-                        })
+                        confusions.append(
+                            {
+                                "prompt_a": class_a,
+                                "prompt_b": class_b,
+                                "iou": round(iou, 4),
+                                "box_a": box_a,
+                                "box_b": box_b,
+                                "score_a": round(score_a, 4),
+                                "score_b": round(score_b, 4),
+                                "detection_id_a": id_a,
+                                "detection_id_b": id_b,
+                            }
+                        )
 
         return confusions
 
@@ -195,7 +197,9 @@ class ConfusionDetector:
             key = (c["prompt_a"], c["prompt_b"])
             pair_events.setdefault(key, []).append(c)
 
-        lines = [f"CONFUSION frame={frame_id}: {len(confusions)} cross-class overlap(s) detected."]
+        lines = [
+            f"CONFUSION frame={frame_id}: {len(confusions)} cross-class overlap(s) detected."
+        ]
 
         for (pa, pb), events in pair_events.items():
             max_iou = max(e["iou"] for e in events)

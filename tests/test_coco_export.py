@@ -35,9 +35,7 @@ def test_convert_jsonl_to_coco_skips_invalid_json_lines(tmp_path: Path) -> None:
 
     # First line is malformed JSON and should be skipped.
     malformed = "{this is not valid json}\n"
-    valid = (
-        '{"data":{"id":1,"meta":{"detections":[{"label":"car","box":[10,20,30,50],"score":0.9}]}}}\n'
-    )
+    valid = '{"data":{"id":1,"meta":{"detections":[{"label":"car","box":[10,20,30,50],"score":0.9}]}}}\n'
     input_path.write_text(malformed + valid, encoding="utf-8")
 
     coco = convert_jsonl_to_coco(input_path, output_path, "sam3_detections")

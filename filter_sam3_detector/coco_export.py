@@ -21,8 +21,6 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
-
-
 def _extract_label(det: dict[str, Any]) -> str:
     for key in ("label", "class", "class_name", "category_name"):
         val = det.get(key)
@@ -39,7 +37,9 @@ def _extract_score(det: dict[str, Any]) -> float:
     return 0.0
 
 
-def _extract_frame_detections(meta: dict[str, Any], output_label: str) -> list[dict[str, Any]]:
+def _extract_frame_detections(
+    meta: dict[str, Any], output_label: str
+) -> list[dict[str, Any]]:
     # Preferred shape produced by _normalize_detections
     detections = meta.get("detections")
     if isinstance(detections, list):
@@ -53,7 +53,9 @@ def _extract_frame_detections(meta: dict[str, Any], output_label: str) -> list[d
     return []
 
 
-def convert_jsonl_to_coco(input_path: Path, output_path: Path, output_label: str) -> dict[str, Any]:
+def convert_jsonl_to_coco(
+    input_path: Path, output_path: Path, output_label: str
+) -> dict[str, Any]:
     images: list[dict[str, Any]] = []
     annotations: list[dict[str, Any]] = []
     categories: list[dict[str, Any]] = []
@@ -112,8 +114,7 @@ def convert_jsonl_to_coco(input_path: Path, output_path: Path, output_label: str
                 )
 
             image_id = image_id_remap[src_image_id]
-            
-            
+
             frame_detections = extract_items(data)
             if not frame_detections:
                 frame_detections = _extract_frame_detections(meta, output_label)
@@ -155,7 +156,9 @@ def convert_jsonl_to_coco(input_path: Path, output_path: Path, output_label: str
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Convert detections.jsonl to COCO JSON")
+    parser = argparse.ArgumentParser(
+        description="Convert detections.jsonl to COCO JSON"
+    )
     parser.add_argument(
         "--input",
         default="./output/detections.jsonl",

@@ -19,7 +19,7 @@ from openfilter.filter_runtime.shapes import DetectionSet
 from openfilter.filter_runtime.config import FilterConfigBase
 
 from pydantic import Field
-from typing import List, Any
+from typing import List, Any, Union
 from .coco_export import convert_jsonl_to_coco
 from .temporal_intervals import DetectionInterval, IntervalTracker
 from .streaming_video_processor import StreamingVideoProcessor
@@ -42,8 +42,8 @@ class FilterSAM3DetectorConfigSchema(FilterConfigBase):
     text_prompt: Optional[str] = Field(
         default=None, description="Text prompt for detection"
     )
-    text_prompts: Optional[str] = Field(
-        default=None, description="Delimiter-separated prompts"
+    text_prompts: Optional[Union[str, List[str]]] = Field(
+        default=None, description="Delimiter-separated prompts or list of prompts"
     )
     prompt_delimiter: str = Field(
         default="###", description="Delimiter for multiple prompts"
@@ -388,8 +388,10 @@ except Exception as e:
     )
 
 
-class FilterSAM3DetectorConfig(FilterConfigBase):
+class FilterSAM3DetectorConfig(FilterSAM3DetectorConfigSchema):
     """Configuration for SAM3 object detection filter."""
+
+    model_config = {"extra": "allow"}
 
     def __init__(self, *args, **kwargs):
         if args and isinstance(args[0], dict):
@@ -2425,7 +2427,10 @@ class FilterSAM3Detector(Filter):
 
             if "label_id" in d and d["label_id"] is not None:
                 try:
-                    clean_d["label_id"] = int(d["label_id"])
+                    try:
+                        clean_d["label_id"] = int(d["label_id"])
+                    except ValueError:
+                        clean_d["label_id"] = int(float(d["label_id"]))
                 except (ValueError, TypeError):
                     logger.warning(
                         f"Skipping invalid non-integer label_id: {d['label_id']}"

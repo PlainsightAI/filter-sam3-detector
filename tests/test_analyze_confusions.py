@@ -41,7 +41,9 @@ def test_suggest_equal_avg_tie_uses_pa_as_winner() -> None:
 
 def test_detection_strength_zero_score_not_confidence() -> None:
     ac = _load_module()
-    assert ac._detection_strength({"score": 0.0, "confidence": 0.9}) == pytest.approx(0.0)
+    assert ac._detection_strength({"score": 0.0, "confidence": 0.9}) == pytest.approx(
+        0.0
+    )
 
 
 def test_get_box_formats() -> None:
@@ -78,7 +80,7 @@ def test_confusions_from_record_extraction() -> None:
                     {"box": [10, 20, 40, 60], "class": "car", "score": 0.9},
                     {"box": [12, 22, 38, 58], "class": "truck", "score": 0.8},
                 ]
-            }
+            },
         }
     }
     confusions_legacy = ac._confusions_from_record(legacy_record, iou_threshold=0.5)
@@ -92,14 +94,24 @@ def test_confusions_from_record_extraction() -> None:
             "id": 1,
             "detections": {
                 "items": [
-                    {"bbox": {"x1": 10, "y1": 20, "x2": 40, "y2": 60}, "label": "car", "score": 0.9},
-                    {"bbox": {"x1": 12, "y1": 22, "x2": 38, "y2": 58}, "label": "truck", "score": 0.8},
+                    {
+                        "bbox": {"x1": 10, "y1": 20, "x2": 40, "y2": 60},
+                        "label": "car",
+                        "score": 0.9,
+                    },
+                    {
+                        "bbox": {"x1": 12, "y1": 22, "x2": 38, "y2": 58},
+                        "label": "truck",
+                        "score": 0.8,
+                    },
                 ]
             },
-            "meta": {}
+            "meta": {},
         }
     }
-    confusions_schema_dict = ac._confusions_from_record(schema_dict_record, iou_threshold=0.5)
+    confusions_schema_dict = ac._confusions_from_record(
+        schema_dict_record, iou_threshold=0.5
+    )
     assert len(confusions_schema_dict) == 1
     assert confusions_schema_dict[0]["prompt_a"] == "car"
     assert confusions_schema_dict[0]["prompt_b"] == "truck"
@@ -109,13 +121,23 @@ def test_confusions_from_record_extraction() -> None:
         "data": {
             "id": 1,
             "detections": [
-                {"bbox": {"x1": 10, "y1": 20, "x2": 40, "y2": 60}, "label": "car", "score": 0.9},
-                {"bbox": {"x1": 12, "y1": 22, "x2": 38, "y2": 58}, "label": "truck", "score": 0.8},
+                {
+                    "bbox": {"x1": 10, "y1": 20, "x2": 40, "y2": 60},
+                    "label": "car",
+                    "score": 0.9,
+                },
+                {
+                    "bbox": {"x1": 12, "y1": 22, "x2": 38, "y2": 58},
+                    "label": "truck",
+                    "score": 0.8,
+                },
             ],
-            "meta": {}
+            "meta": {},
         }
     }
-    confusions_schema_list = ac._confusions_from_record(schema_list_record, iou_threshold=0.5)
+    confusions_schema_list = ac._confusions_from_record(
+        schema_list_record, iou_threshold=0.5
+    )
     assert len(confusions_schema_list) == 1
     assert confusions_schema_list[0]["prompt_a"] == "car"
     assert confusions_schema_list[0]["prompt_b"] == "truck"

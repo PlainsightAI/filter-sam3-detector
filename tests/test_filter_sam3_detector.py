@@ -277,6 +277,24 @@ class TestFilterSAM3Detector(unittest.TestCase):
 
         self.assertIsNone(canonical["items"][0]["label_id"])
 
+    def test_normalize_detections_float_string_label_id(self):
+        """Test that _normalize_detections robustly handles float-formatted label_id strings."""
+        from filter_sam3_detector.filter import FilterSAM3Detector
+
+        detections = [
+            {
+                "bbox": {"x1": 10.0, "y1": 20.0, "x2": 30.0, "y2": 45.0},
+                "score": 0.85,
+                "label": "car",
+                "label_id": "12.0",
+            }
+        ]
+
+        detector = FilterSAM3Detector(FilterConfig({}))
+        canonical, _, _ = detector._normalize_detections(detections)
+
+        self.assertEqual(canonical["items"][0]["label_id"], 12)
+
     def test_config_dictionary_protocol_and_idempotence(self):
         """Test that the dictionary protocol includes extra fields and normalize_config is idempotent."""
         from filter_sam3_detector.filter import FilterSAM3Detector

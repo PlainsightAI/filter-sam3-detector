@@ -1,4 +1,8 @@
-from .filter import FilterSAM3Detector, FilterSAM3DetectorConfig, FilterSAM3DetectorOutput
+from .filter import (
+    FilterSAM3Detector,
+    FilterSAM3DetectorConfig,
+    FilterSAM3DetectorOutput,
+)
 from .confusion_detector import ConfusionDetector
 from .temporal_intervals import (
     TemporalIntervalFilter,

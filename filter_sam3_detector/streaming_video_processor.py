@@ -54,18 +54,30 @@ def find_bpe_path() -> Optional[str]:
         Path to BPE file, or None if not found
     """
     # Try vendorized sam3 (in project root/sam3/assets/)
-    vendorized_bpe = Path(__file__).parent.parent / "sam3" / "assets" / "bpe_simple_vocab_16e6.txt.gz"
+    vendorized_bpe = (
+        Path(__file__).parent.parent
+        / "sam3"
+        / "assets"
+        / "bpe_simple_vocab_16e6.txt.gz"
+    )
     if vendorized_bpe.exists():
         return str(vendorized_bpe)
 
     # Try vendorized sam3/sam3/assets/ (alternative location)
-    vendorized_bpe2 = Path(__file__).parent.parent / "sam3" / "sam3" / "assets" / "bpe_simple_vocab_16e6.txt.gz"
+    vendorized_bpe2 = (
+        Path(__file__).parent.parent
+        / "sam3"
+        / "sam3"
+        / "assets"
+        / "bpe_simple_vocab_16e6.txt.gz"
+    )
     if vendorized_bpe2.exists():
         return str(vendorized_bpe2)
 
     # Try to find in installed package
     try:
         import sam3
+
         sam3_path = Path(sam3.__file__).parent
         installed_bpe = sam3_path / "assets" / "bpe_simple_vocab_16e6.txt.gz"
         if installed_bpe.exists():
@@ -79,8 +91,9 @@ def find_bpe_path() -> Optional[str]:
 
 class ProcessingMode(Enum):
     """Processing mode for streaming video processor."""
+
     V1_DETECTION_THROTTLING = "v1"  # Image mode with detection caching
-    V2_MEMORY_TRACKING = "v2"       # Video mode with memory-based tracking
+    V2_MEMORY_TRACKING = "v2"  # Video mode with memory-based tracking
 
 
 @dataclass
@@ -91,7 +104,9 @@ class StreamingState:
     frame_idx: int = 0
 
     # Text embedding cache: prompt -> language features
-    cached_text_embeddings: Dict[str, Dict[str, torch.Tensor]] = field(default_factory=dict)
+    cached_text_embeddings: Dict[str, Dict[str, torch.Tensor]] = field(
+        default_factory=dict
+    )
 
     # Detection cache for throttling (reuse detections for K frames)
     # Stores: {prompt -> last_detections}
@@ -233,12 +248,14 @@ class StreamingVideoProcessor:
         """Setup image preprocessing transforms."""
         from torchvision.transforms import v2
 
-        self.transform = v2.Compose([
-            v2.ToDtype(torch.uint8, scale=True),
-            v2.Resize(size=(self.resolution, self.resolution)),
-            v2.ToDtype(torch.float32, scale=True),
-            v2.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
-        ])
+        self.transform = v2.Compose(
+            [
+                v2.ToDtype(torch.uint8, scale=True),
+                v2.Resize(size=(self.resolution, self.resolution)),
+                v2.ToDtype(torch.float32, scale=True),
+                v2.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
+            ]
+        )
 
     def load_model(self) -> bool:
         """
@@ -292,6 +309,7 @@ class StreamingVideoProcessor:
         except Exception as e:
             logger.error(f"Failed to load SAM3 image model: {e}")
             import traceback
+
             logger.debug(traceback.format_exc())
             return False
 
@@ -330,6 +348,7 @@ class StreamingVideoProcessor:
         except Exception as e:
             logger.error(f"Failed to load SAM3 video model: {e}")
             import traceback
+
             logger.debug(traceback.format_exc())
             return False
 
@@ -343,7 +362,9 @@ class StreamingVideoProcessor:
             prompts: List of text prompts to cache
         """
         if self.mode == ProcessingMode.V2_MEMORY_TRACKING:
-            logger.warning("cache_text_embeddings is not used in v2 mode. Use set_text_prompt() instead.")
+            logger.warning(
+                "cache_text_embeddings is not used in v2 mode. Use set_text_prompt() instead."
+            )
             return
 
         if self.model is None:
@@ -361,9 +382,9 @@ class StreamingVideoProcessor:
                     )
 
                     self.state.cached_text_embeddings[prompt] = {
-                        'language_features': text_outputs.get('language_features'),
-                        'language_mask': text_outputs.get('language_mask'),
-                        'language_embeds': text_outputs.get('language_embeds'),
+                        "language_features": text_outputs.get("language_features"),
+                        "language_mask": text_outputs.get("language_mask"),
+                        "language_embeds": text_outputs.get("language_embeds"),
                     }
                     logger.debug(f"Cached embedding for: '{prompt}'")
 
@@ -462,7 +483,7 @@ class StreamingVideoProcessor:
             # Cache detections for reuse
             self.state.cached_detections = {}
             for det in detections:
-                prompt = det.get('class_name', det.get('class', 'unknown'))
+                prompt = det.get("class_name", det.get("class", "unknown"))
                 if prompt not in self.state.cached_detections:
                     self.state.cached_detections[prompt] = []
                 self.state.cached_detections[prompt].append(det)
@@ -498,7 +519,9 @@ class StreamingVideoProcessor:
         # Use prompts argument if provided, otherwise use set_text_prompt
         text_prompt = prompts[0] if prompts else self.v2_state.text_prompt
         if text_prompt is None:
-            logger.warning("No text prompt set. Use set_text_prompt() or pass prompts argument.")
+            logger.warning(
+                "No text prompt set. Use set_text_prompt() or pass prompts argument."
+            )
             return []
 
         frame_idx = self.v2_state.frame_idx
@@ -521,6 +544,7 @@ class StreamingVideoProcessor:
         except Exception as e:
             logger.error(f"Error in v2 frame processing: {e}")
             import traceback
+
             logger.debug(traceback.format_exc())
             return []
 
@@ -561,7 +585,9 @@ class StreamingVideoProcessor:
 
         return img_tensor.to(self.device)
 
-    def _init_v2_streaming_state(self, first_frame: np.ndarray, text_prompt: str) -> None:
+    def _init_v2_streaming_state(
+        self, first_frame: np.ndarray, text_prompt: str
+    ) -> None:
         """
         Initialize the v2 streaming state for the first frame.
 
@@ -651,7 +677,9 @@ class StreamingVideoProcessor:
 
         logger.info(f"Initialized v2 streaming state with text prompt: '{text_prompt}'")
 
-    def _add_frame_to_v2_state(self, frame_tensor: torch.Tensor, frame_idx: int) -> None:
+    def _add_frame_to_v2_state(
+        self, frame_tensor: torch.Tensor, frame_idx: int
+    ) -> None:
         """
         Add a preprocessed frame to the v2 streaming state.
 
@@ -699,8 +727,10 @@ class StreamingVideoProcessor:
         # Build the BatchedDatapoint with all frames
         img_batch = torch.stack(inference_state["_frame_tensors"], dim=0)
 
-        find_inputs = [copy_data_to_device(stage, self.device, non_blocking=True)
-                       for stage in inference_state["_find_inputs_list"]]
+        find_inputs = [
+            copy_data_to_device(stage, self.device, non_blocking=True)
+            for stage in inference_state["_find_inputs_list"]
+        ]
 
         input_batch = BatchedDatapoint(
             img_batch=img_batch,
@@ -719,7 +749,9 @@ class StreamingVideoProcessor:
             # Note: We keep the input_batch complete but could optimize memory here
             pass
 
-    def _run_v2_inference(self, frame_idx: int, text_prompt: str) -> List[Dict[str, Any]]:
+    def _run_v2_inference(
+        self, frame_idx: int, text_prompt: str
+    ) -> List[Dict[str, Any]]:
         """
         Run single-frame inference using SAM3 video model.
 
@@ -742,7 +774,9 @@ class StreamingVideoProcessor:
         # Extract detections from output
         detections = self._extract_v2_detections(out, text_prompt)
 
-        logger.debug(f"Frame {frame_idx}: Detected {len(detections)} objects in v2 mode")
+        logger.debug(
+            f"Frame {frame_idx}: Detected {len(detections)} objects in v2 mode"
+        )
         return detections
 
     def _extract_v2_detections(
@@ -818,19 +852,21 @@ class StreamingVideoProcessor:
                 obj_id_int = int(obj_id)
                 if obj_id_int not in self.v2_state.obj_id_to_info:
                     self.v2_state.obj_id_to_info[obj_id_int] = {
-                        'class_name': class_name,
-                        'first_seen_frame': self.v2_state.frame_idx - 1,
-                        'score': score,
+                        "class_name": class_name,
+                        "first_seen_frame": self.v2_state.frame_idx - 1,
+                        "score": score,
                     }
 
-                detections.append({
-                    'box': box,
-                    'score': score,
-                    'class': class_name,
-                    'class_name': class_name,
-                    'mask': mask_bool,
-                    'obj_id': obj_id_int,
-                })
+                detections.append(
+                    {
+                        "box": box,
+                        "score": score,
+                        "class": class_name,
+                        "class_name": class_name,
+                        "mask": mask_bool,
+                        "obj_id": obj_id_int,
+                    }
+                )
 
             return detections
 
@@ -861,12 +897,17 @@ class StreamingVideoProcessor:
 
             # Resize mask to original video resolution if needed
             if mask.shape != (H_video, W_video):
-                mask_resized = F.interpolate(
-                    torch.from_numpy(mask).unsqueeze(0).unsqueeze(0).float(),
-                    size=(H_video, W_video),
-                    mode="bilinear",
-                    align_corners=False,
-                ).squeeze().numpy() > 0.5
+                mask_resized = (
+                    F.interpolate(
+                        torch.from_numpy(mask).unsqueeze(0).unsqueeze(0).float(),
+                        size=(H_video, W_video),
+                        mode="bilinear",
+                        align_corners=False,
+                    )
+                    .squeeze()
+                    .numpy()
+                    > 0.5
+                )
                 mask = mask_resized
 
             # Get bounding box from mask
@@ -885,19 +926,21 @@ class StreamingVideoProcessor:
             # Track object info
             if obj_id not in self.v2_state.obj_id_to_info:
                 self.v2_state.obj_id_to_info[obj_id] = {
-                    'class_name': class_name,
-                    'first_seen_frame': self.v2_state.frame_idx - 1,
-                    'score': score,
+                    "class_name": class_name,
+                    "first_seen_frame": self.v2_state.frame_idx - 1,
+                    "score": score,
                 }
 
-            detections.append({
-                'box': box,
-                'score': float(score),
-                'class': class_name,
-                'class_name': class_name,
-                'mask': mask_bool,
-                'obj_id': obj_id,
-            })
+            detections.append(
+                {
+                    "box": box,
+                    "score": float(score),
+                    "class": class_name,
+                    "class_name": class_name,
+                    "mask": mask_bool,
+                    "obj_id": obj_id,
+                }
+            )
 
         return detections
 
@@ -932,15 +975,19 @@ class StreamingVideoProcessor:
                 if prompt in self.state.cached_text_embeddings:
                     cached = self.state.cached_text_embeddings[prompt]
                     # Inject into backbone_out
-                    if cached.get('language_features') is not None:
-                        state['backbone_out']['language_features'] = cached['language_features']
-                    if cached.get('language_mask') is not None:
-                        state['backbone_out']['language_mask'] = cached['language_mask']
-                    if cached.get('language_embeds') is not None:
-                        state['backbone_out']['language_embeds'] = cached['language_embeds']
+                    if cached.get("language_features") is not None:
+                        state["backbone_out"]["language_features"] = cached[
+                            "language_features"
+                        ]
+                    if cached.get("language_mask") is not None:
+                        state["backbone_out"]["language_mask"] = cached["language_mask"]
+                    if cached.get("language_embeds") is not None:
+                        state["backbone_out"]["language_embeds"] = cached[
+                            "language_embeds"
+                        ]
                     # Initialize geometric prompt if not present
-                    if 'geometric_prompt' not in state:
-                        state['geometric_prompt'] = self.model._get_dummy_prompt()
+                    if "geometric_prompt" not in state:
+                        state["geometric_prompt"] = self.model._get_dummy_prompt()
                     # Run grounding
                     state = self.processor.forward_grounding(state)
                 else:
@@ -963,12 +1010,12 @@ class StreamingVideoProcessor:
         class_name: str,
     ) -> List[Dict[str, Any]]:
         """Extract detection dicts from processor state."""
-        if 'boxes' not in state or len(state['boxes']) == 0:
+        if "boxes" not in state or len(state["boxes"]) == 0:
             return []
 
-        boxes = state['boxes']
-        scores = state['scores']
-        masks = state['masks']
+        boxes = state["boxes"]
+        scores = state["scores"]
+        masks = state["masks"]
 
         detections = []
         for i in range(len(boxes)):
@@ -989,13 +1036,15 @@ class StreamingVideoProcessor:
             obj_id = self.state.next_obj_id
             self.state.next_obj_id += 1
 
-            detections.append({
-                'box': box,
-                'score': score,
-                'class': class_name,
-                'class_name': class_name,
-                'mask': mask,
-                'obj_id': obj_id,
-            })
+            detections.append(
+                {
+                    "box": box,
+                    "score": score,
+                    "class": class_name,
+                    "class_name": class_name,
+                    "mask": mask,
+                    "obj_id": obj_id,
+                }
+            )
 
         return detections

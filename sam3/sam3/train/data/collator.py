@@ -3,8 +3,9 @@
 
 from dataclasses import dataclass
 
+
 @dataclass
 class BatchedDatapoint:
     """Stub dataclass - only used in training, not inference."""
-    pass
 
+    pass

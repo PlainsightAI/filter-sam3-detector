@@ -23,7 +23,9 @@ class TestPromptSetsFrameSaving(unittest.TestCase):
         det = MagicMock()
         # Instance attributes read by _process_multi_output
         det.frames_dir = Path(frames_dir) if frames_dir else None
-        det.annotated_frames_dir = Path(annotated_frames_dir) if annotated_frames_dir else None
+        det.annotated_frames_dir = (
+            Path(annotated_frames_dir) if annotated_frames_dir else None
+        )
         det.positive_boxes = []
         det.negative_boxes = []
         det.output_label = "sam3_detections"
@@ -39,16 +41,30 @@ class TestPromptSetsFrameSaving(unittest.TestCase):
         det.jsonl_file = None  # no JSONL for this test
 
         # _inject_cached_text_embedding: return whatever state was passed in
-        det._inject_cached_text_embedding = MagicMock(side_effect=lambda state, prompt: state)
+        det._inject_cached_text_embedding = MagicMock(
+            side_effect=lambda state, prompt: state
+        )
 
         # _extract_detections_from_state: return one fake detection per prompt
-        def fake_extract(state, label, w, h, gid, confidence_threshold=0.5, max_detections=100):
-            return [{"label": label, "box": [10, 20, 30, 40], "bbox": {"x1": 10.0, "y1": 20.0, "x2": 30.0, "y2": 40.0}, "score": 0.9}]
+        def fake_extract(
+            state, label, w, h, gid, confidence_threshold=0.5, max_detections=100
+        ):
+            return [
+                {
+                    "label": label,
+                    "box": [10, 20, 30, 40],
+                    "bbox": {"x1": 10.0, "y1": 20.0, "x2": 30.0, "y2": 40.0},
+                    "score": 0.9,
+                }
+            ]
+
         det._extract_detections_from_state = MagicMock(side_effect=fake_extract)
         det._normalize_detections = MagicMock(return_value=({"items": []}, [], {}))
 
         # _visualize_detections_on_image: return the image unchanged
-        det._visualize_detections_on_image = MagicMock(side_effect=lambda img, *a, **kw: img)
+        det._visualize_detections_on_image = MagicMock(
+            side_effect=lambda img, *a, **kw: img
+        )
 
         # processor.set_image / forward_grounding: return a dummy state
         det.processor = MagicMock()
@@ -83,10 +99,13 @@ class TestPromptSetsFrameSaving(unittest.TestCase):
 
             # Filter imwrite calls to the frames_dir (original frames)
             original_writes = [
-                c for c in mock_imwrite.call_args_list
-                if frames_dir in str(c)
+                c for c in mock_imwrite.call_args_list if frames_dir in str(c)
             ]
-            self.assertEqual(len(original_writes), 1, f"Expected 1 original frame write, got {len(original_writes)}: {original_writes}")
+            self.assertEqual(
+                len(original_writes),
+                1,
+                f"Expected 1 original frame write, got {len(original_writes)}: {original_writes}",
+            )
 
     @patch("cv2.imwrite", return_value=True)
     def test_saves_annotated_frame_per_prompt_set(self, mock_imwrite):
@@ -104,16 +123,25 @@ class TestPromptSetsFrameSaving(unittest.TestCase):
 
             # Filter imwrite calls to the annotated_dir
             annotated_writes = [
-                c for c in mock_imwrite.call_args_list
-                if annotated_dir in str(c)
+                c for c in mock_imwrite.call_args_list if annotated_dir in str(c)
             ]
             # 2 prompt sets, each with detections -> 2 annotated writes
-            self.assertEqual(len(annotated_writes), 2, f"Expected 2 annotated frame writes, got {len(annotated_writes)}: {annotated_writes}")
+            self.assertEqual(
+                len(annotated_writes),
+                2,
+                f"Expected 2 annotated frame writes, got {len(annotated_writes)}: {annotated_writes}",
+            )
 
             # Filenames must include the prompt set name for disambiguation
             written_paths = [str(c[0][0]) for c in annotated_writes]
-            self.assertTrue(any("_people" in p for p in written_paths), f"Missing 'people' set in filenames: {written_paths}")
-            self.assertTrue(any("_vehicles" in p for p in written_paths), f"Missing 'vehicles' set in filenames: {written_paths}")
+            self.assertTrue(
+                any("_people" in p for p in written_paths),
+                f"Missing 'people' set in filenames: {written_paths}",
+            )
+            self.assertTrue(
+                any("_vehicles" in p for p in written_paths),
+                f"Missing 'vehicles' set in filenames: {written_paths}",
+            )
 
     @patch("cv2.imwrite", return_value=True)
     def test_no_writes_when_dirs_not_configured(self, mock_imwrite):
@@ -123,7 +151,9 @@ class TestPromptSetsFrameSaving(unittest.TestCase):
         det = self._make_detector_stub(frames_dir=None, annotated_frames_dir=None)
         frame = self._make_frame()
 
-        result = FilterSAM3Detector._process_multi_output(det, frame, filter_frame_id=42)
+        result = FilterSAM3Detector._process_multi_output(
+            det, frame, filter_frame_id=42
+        )
 
         mock_imwrite.assert_not_called()
         # Should still produce output frames for both topics
@@ -142,22 +172,38 @@ class TestPromptSetsFrameSaving(unittest.TestCase):
             det = self._make_detector_stub(annotated_frames_dir=annotated_dir)
             # Make extract return empty for the second prompt set ("car")
             call_count = [0]
-            def selective_extract(state, label, w, h, gid, confidence_threshold=0.5, max_detections=100):
+
+            def selective_extract(
+                state, label, w, h, gid, confidence_threshold=0.5, max_detections=100
+            ):
                 call_count[0] += 1
                 if label == "car":
                     return []
-                return [{"label": label, "box": [10, 20, 30, 40], "bbox": {"x1": 10.0, "y1": 20.0, "x2": 30.0, "y2": 40.0}, "score": 0.9}]
-            det._extract_detections_from_state = MagicMock(side_effect=selective_extract)
+                return [
+                    {
+                        "label": label,
+                        "box": [10, 20, 30, 40],
+                        "bbox": {"x1": 10.0, "y1": 20.0, "x2": 30.0, "y2": 40.0},
+                        "score": 0.9,
+                    }
+                ]
+
+            det._extract_detections_from_state = MagicMock(
+                side_effect=selective_extract
+            )
 
             frame = self._make_frame()
             _ = FilterSAM3Detector._process_multi_output(det, frame, filter_frame_id=42)
 
             annotated_writes = [
-                c for c in mock_imwrite.call_args_list
-                if annotated_dir in str(c)
+                c for c in mock_imwrite.call_args_list if annotated_dir in str(c)
             ]
             # Only 1 annotated write (for "people" set; "vehicles" had no detections)
-            self.assertEqual(len(annotated_writes), 1, f"Expected 1 annotated write, got {len(annotated_writes)}")
+            self.assertEqual(
+                len(annotated_writes),
+                1,
+                f"Expected 1 annotated write, got {len(annotated_writes)}",
+            )
             self.assertIn("_people", str(annotated_writes[0]))
 
     def test_process_multi_output_handles_exception_gracefully(self):
@@ -168,19 +214,35 @@ class TestPromptSetsFrameSaving(unittest.TestCase):
         from filter_sam3_detector.filter import FilterSAM3Detector
 
         det = self._make_detector_stub()
+
         # Mock _extract_detections_from_state to raise an error for the 'car' label
-        def selective_error_extract(state, label, w, h, gid, confidence_threshold=0.5, max_detections=100):
+        def selective_error_extract(
+            state, label, w, h, gid, confidence_threshold=0.5, max_detections=100
+        ):
             if label == "car":
                 raise ValueError("Simulated processing error for car")
-            return [{"label": label, "box": [10, 20, 30, 40], "bbox": {"x1": 10.0, "y1": 20.0, "x2": 30.0, "y2": 40.0}, "score": 0.9}]
-        
-        det._extract_detections_from_state = MagicMock(side_effect=selective_error_extract)
+            return [
+                {
+                    "label": label,
+                    "box": [10, 20, 30, 40],
+                    "bbox": {"x1": 10.0, "y1": 20.0, "x2": 30.0, "y2": 40.0},
+                    "score": 0.9,
+                }
+            ]
+
+        det._extract_detections_from_state = MagicMock(
+            side_effect=selective_error_extract
+        )
         # Mock the real _normalize_detections so it actually processes [] and [d] properly
         # inside our test instead of being a hardcoded stub
-        det._normalize_detections = FilterSAM3Detector._normalize_detections.__get__(det, FilterSAM3Detector)
+        det._normalize_detections = FilterSAM3Detector._normalize_detections.__get__(
+            det, FilterSAM3Detector
+        )
 
         frame = self._make_frame()
-        result = FilterSAM3Detector._process_multi_output(det, frame, filter_frame_id=42)
+        result = FilterSAM3Detector._process_multi_output(
+            det, frame, filter_frame_id=42
+        )
 
         # Confirm we still have both topics returned (cardinality preserved)
         self.assertIn("people_topic", result)
@@ -197,7 +259,10 @@ class TestPromptSetsFrameSaving(unittest.TestCase):
         self.assertIn("detections", vehicles_frame.data)
         self.assertEqual(vehicles_frame.data["detections"]["items"], [])
         self.assertEqual(vehicles_frame.data["meta"]["detections"], [])
-        self.assertEqual(vehicles_frame.data["meta"]["classification"], {'classes': [], 'confidences': [], 'architecture': 'sam3'})
+        self.assertEqual(
+            vehicles_frame.data["meta"]["classification"],
+            {"classes": [], "confidences": [], "architecture": "sam3"},
+        )
         self.assertEqual(vehicles_frame.data["meta"][det.output_label], [])
 
 

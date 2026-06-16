@@ -163,6 +163,7 @@ def run_temporal_detection(
 
         # All detections from all prompts are returned in the canonical detections schema
         from filter_sam3_detector.utils.detections import extract_items
+
         all_detections = extract_items(detected_frame.data)
 
         # Count detections by class (set by multi-prompt detection)

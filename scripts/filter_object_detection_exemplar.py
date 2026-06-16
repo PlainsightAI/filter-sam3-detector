@@ -32,6 +32,7 @@ from pathlib import Path
 
 try:
     from dotenv import load_dotenv
+
     load_dotenv()
 except ImportError:
     pass
@@ -50,21 +51,27 @@ def _parse_ref_images_env(env_value: str):
     return parts if parts else None
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     video_path = os.getenv("VIDEO_PATH", "")
-    output_dir = os.getenv('FILTER_OUTPUT_DIR', './output')
-    visualize = os.getenv('FILTER_VISUALIZE', 'false').lower() == 'true'
+    output_dir = os.getenv("FILTER_OUTPUT_DIR", "./output")
+    visualize = os.getenv("FILTER_VISUALIZE", "false").lower() == "true"
 
-    ref_images = _parse_ref_images_env(os.getenv('FILTER_REF_IMAGES', ''))
-    ref_images_negative = _parse_ref_images_env(os.getenv('FILTER_REF_IMAGES_NEGATIVE', ''))
-    composite_topic = (os.getenv('FILTER_COMPOSITE_TOPIC') or '').strip()
+    ref_images = _parse_ref_images_env(os.getenv("FILTER_REF_IMAGES", ""))
+    ref_images_negative = _parse_ref_images_env(
+        os.getenv("FILTER_REF_IMAGES_NEGATIVE", "")
+    )
+    composite_topic = (os.getenv("FILTER_COMPOSITE_TOPIC") or "").strip()
 
     print(f"Using VideoIn with path: {video_path}")
-    print(f"Text prompt: {os.getenv('FILTER_TEXT_PROMPT') or '(none; ref images/boxes can be used without)'}")
+    print(
+        f"Text prompt: {os.getenv('FILTER_TEXT_PROMPT') or '(none; ref images/boxes can be used without)'}"
+    )
     print(f"Positive boxes: {os.getenv('FILTER_POSITIVE_BOXES') or '(none)'}")
     print(f"Negative boxes: {os.getenv('FILTER_NEGATIVE_BOXES') or '(none)'}")
     print(f"Ref images (FILTER_REF_IMAGES): {ref_images if ref_images else '(none)'}")
-    print(f"Ref images negative: {ref_images_negative if ref_images_negative else '(none)'}")
+    print(
+        f"Ref images negative: {ref_images_negative if ref_images_negative else '(none)'}"
+    )
     if composite_topic:
         print(f"Composite topic: {composite_topic}")
     print(f"Device: {os.getenv('FILTER_DEVICE', 'cuda')}")
@@ -98,12 +105,15 @@ if __name__ == '__main__':
         ),
         (FilterSAM3Detector, detector_config),
         (
-            Webvis, dict(sources="tcp://localhost:5552",
-            port=9000,
-        )),
+            Webvis,
+            dict(
+                sources="tcp://localhost:5552",
+                port=9000,
+            ),
+        ),
     ]
 
-    if os.getenv('FILTER_POSITIVE_BOXES') or os.getenv('FILTER_NEGATIVE_BOXES'):
+    if os.getenv("FILTER_POSITIVE_BOXES") or os.getenv("FILTER_NEGATIVE_BOXES"):
         mode = "reference-boxes"
     elif ref_images or ref_images_negative:
         mode = "reference-images (REF_IMGS)"
