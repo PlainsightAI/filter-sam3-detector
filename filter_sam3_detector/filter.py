@@ -1015,11 +1015,13 @@ class FilterSAM3Detector(Filter):
         # torch.compile the SAM3 vision backbone (FILTER-373). CUDA-only — compile
         # gains rely on CUDA kernels and the backbone runs on the GPU.
         compile_backbone_requested = config.get("compile_backbone", False)
-        self.compile_backbone = compile_backbone_requested and self.device.type == "cuda"
+        self.compile_backbone = compile_backbone_requested and self.device.type == "cuda" and not self.enable_video_mode
         if compile_backbone_requested and self.device.type != "cuda":
             logger.warning("compile_backbone requested but device is not CUDA; disabling")
-        if self.compile_backbone and not self.enable_video_mode:
-            logger.info("torch.compile enabled for SAM3 vision backbone (first inference warms up)")
+        if compile_backbone_requested and self.enable_video_mode:
+            logger.warning("compile_backbone requested but video mode does not support torch.compile; disabling")
+        if self.compile_backbone:
+            logger.info("torch.compile enabled for SAM3 image model (first inference warms up)")
 
         logger.info(f"Using device: {self.device}")
         logger.info(f"NMS enabled: {self.nms_enabled}, threshold: {self.nms_threshold}")
@@ -1032,10 +1034,12 @@ class FilterSAM3Detector(Filter):
             self._load_video_model()
         else:
             self._load_model()
-        if self.compile_backbone and not self.enable_video_mode and self.processor is not None:
+        if self.compile_backbone and self.processor is not None:
             try:
                 with torch.no_grad():
-                    self.processor.set_image(Image.new("RGB", (64, 64)))
+                    state = self.processor.set_image(Image.new("RGB", (64, 64)))
+                    state = self.processor.set_text_prompt_no_grounding("object", state)
+                    self.processor.forward_grounding(state)
             except Exception as e:
                 logger.warning("torch.compile warmup failed (%s); rebuilding SAM3 without torch.compile", e)
                 if self._autocast_persistent is not None:
