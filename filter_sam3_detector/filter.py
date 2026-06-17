@@ -2191,12 +2191,8 @@ class FilterSAM3Detector(Filter):
 
         output_frames = {}
 
-        # Extract image from frame (convert BGR to RGB PIL)
+        # Extract image dimensions from frame
         image_bgr = frame.rw_bgr.image
-        image_rgb = image_bgr[:, :, ::-1]  # BGR to RGB
-        pil_image = Image.fromarray(image_rgb)
-
-        # Get image dimensions for clipping boxes
         img_height, img_width = image_bgr.shape[:2]
 
         # Set image in processor ONCE (this is the expensive backbone pass).
@@ -2204,6 +2200,8 @@ class FilterSAM3Detector(Filter):
         if backbone_state is not None:
             state = backbone_state
         else:
+            image_rgb = image_bgr[:, :, ::-1]  # BGR to RGB
+            pil_image = Image.fromarray(image_rgb)
             state = self.processor.set_image(pil_image)
 
         # Get frame metadata for ID tracking and filename (same format as single-output)
@@ -2863,9 +2861,9 @@ class FilterSAM3Detector(Filter):
             text_outputs = self.model.backbone.forward_text(prompts, device=str(self.device))
             for i, prompt in enumerate(prompts):
                 self.cached_text_embeddings[prompt] = {
-                    'language_features': text_outputs.get('language_features').narrow(1, i, 1) if text_outputs.get('language_features') is not None else None,
-                    'language_mask': text_outputs.get('language_mask').narrow(0, i, 1) if text_outputs.get('language_mask') is not None else None,
-                    'language_embeds': text_outputs.get('language_embeds').narrow(1, i, 1) if text_outputs.get('language_embeds') is not None else None,
+                    'language_features': text_outputs.get('language_features').narrow(1, i, 1).clone() if text_outputs.get('language_features') is not None else None,
+                    'language_mask': text_outputs.get('language_mask').narrow(0, i, 1).clone() if text_outputs.get('language_mask') is not None else None,
+                    'language_embeds': text_outputs.get('language_embeds').narrow(1, i, 1).clone() if text_outputs.get('language_embeds') is not None else None,
                 }
             return {
                 'language_features': text_outputs.get('language_features'),
@@ -2896,7 +2894,7 @@ class FilterSAM3Detector(Filter):
 
         from sam3.model import box_ops
         from sam3.model.data_misc import FindStage
-        output_masks = getattr(self, "output_masks", True)
+        output_masks = getattr(self, "output_masks", False)
         if output_masks:
             from sam3.model.data_misc import interpolate
 
@@ -2962,11 +2960,14 @@ class FilterSAM3Detector(Filter):
 
                 per_prompt_states.append(prompt_state)
             return per_prompt_states
-        except torch.cuda.OutOfMemoryError as e:
+        except (torch.cuda.OutOfMemoryError, RuntimeError) as e:
+            if not (isinstance(e, torch.cuda.OutOfMemoryError) or "out of memory" in str(e)):
+                raise
             if not allow_oom_fallback:
                 raise
             logger.warning(f"Multiplexed grounding OOM: {e}. Clearing cache and falling back to per-prompt grounding.")
-            torch.cuda.empty_cache()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
             out = []
             for prompt in prompts:
                 out.extend(self._forward_grounding_multi(state, [prompt], keep_threshold, allow_oom_fallback=False))
@@ -3025,11 +3026,15 @@ class FilterSAM3Detector(Filter):
 
             return results
 
-        except torch.cuda.OutOfMemoryError as e:
+        except (torch.cuda.OutOfMemoryError, RuntimeError) as e:
+            if not (isinstance(e, torch.cuda.OutOfMemoryError) or "out of memory" in str(e)):
+                logger.warning(f"set_image_batch failed: {e}. Falling back to per-frame.")
+                return [self.process(frames) for frames in batch]
             logger.warning(
                 f"set_image_batch OOM: {e}. Clearing cache and falling back to per-frame."
             )
-            torch.cuda.empty_cache()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
             return [self.process(frames) for frames in batch]
         except Exception as e:
             logger.warning(f"set_image_batch failed: {e}. Falling back to per-frame.")
