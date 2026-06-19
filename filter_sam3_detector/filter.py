@@ -1037,7 +1037,13 @@ class FilterSAM3Detector(Filter):
         if self.compile_backbone and self.processor is not None:
             try:
                 with torch.no_grad():
-                    state = self.processor.set_image(Image.new("RGB", (64, 64)))
+                    target_bs = getattr(self.cfg, "batch_size", 1) or 1
+                    dummy_img = Image.new("RGB", (64, 64))
+                    if target_bs > 1:
+                        batched_state = self.processor.set_image_batch([dummy_img] * target_bs)
+                        state = self._split_backbone_states(batched_state)[0]
+                    else:
+                        state = self.processor.set_image(dummy_img)
                     state = self.processor.set_text_prompt_no_grounding("object", state)
                     self.processor.forward_grounding(state)
             except Exception as e:
@@ -2843,6 +2849,11 @@ class FilterSAM3Detector(Filter):
 
         if not pil_images:
             return [self.process(frames) for frames in batch]
+
+        if getattr(self, "compile_backbone", False):
+            target_bs = getattr(self.cfg, "batch_size", 1) or 1
+            if len(pil_images) < target_bs:
+                pil_images.extend([pil_images[-1]] * (target_bs - len(pil_images)))
 
         try:
             batched_state = self.processor.set_image_batch(pil_images)
