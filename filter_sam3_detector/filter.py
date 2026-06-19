@@ -548,6 +548,9 @@ class FilterSAM3Detector(Filter):
             "remove_overlap": False,  # FILTER_REMOVE_OVERLAP; when true, shutdown pass removes lower-confidence duplicates
             # Mixed precision inference
             "mixed_precision": True,  # Use bfloat16 autocast for inference (CUDA only)
+            # torch.compile the SAM3 vision backbone (FILTER-373). CUDA-only; first
+            # inference pays a one-time compile warmup. Off by default.
+            "compile_backbone": False,
         }
 
         for key, default_value in defaults.items():
@@ -603,6 +606,7 @@ class FilterSAM3Detector(Filter):
             "confusion_iou_threshold": float,
             "remove_overlap": bool,
             "mixed_precision": bool,
+            "compile_backbone": bool,
         }
 
         def _parse_boxes_env(env_val: str):
@@ -1000,9 +1004,6 @@ class FilterSAM3Detector(Filter):
         if self.mixed_precision:
             logger.info("Mixed precision enabled: bfloat16 autocast for inference")
 
-        logger.info(f"Using device: {self.device}")
-        logger.info(f"NMS enabled: {self.nms_enabled}, threshold: {self.nms_threshold}")
-
         # Video mode configuration
         self.enable_video_mode = config.get("enable_video_mode", False)
         self.video_detection_interval = config.get("video_detection_interval", 5)
@@ -1010,6 +1011,20 @@ class FilterSAM3Detector(Filter):
             "video_min_tracking_confidence", 0.3
         )
         self.video_processor = None
+
+        # torch.compile the SAM3 vision backbone (FILTER-373). CUDA-only — compile
+        # gains rely on CUDA kernels and the backbone runs on the GPU.
+        compile_backbone_requested = config.get("compile_backbone", False)
+        self.compile_backbone = compile_backbone_requested and self.device.type == "cuda" and not self.enable_video_mode
+        if compile_backbone_requested and self.device.type != "cuda":
+            logger.warning("compile_backbone requested but device is not CUDA; disabling")
+        if compile_backbone_requested and self.enable_video_mode:
+            logger.warning("compile_backbone requested but video mode does not support torch.compile; disabling")
+        if self.compile_backbone:
+            logger.info("torch.compile enabled for SAM3 image model (first inference warms up)")
+
+        logger.info(f"Using device: {self.device}")
+        logger.info(f"NMS enabled: {self.nms_enabled}, threshold: {self.nms_threshold}")
 
         # Load SAM3 model
         self.model = None
@@ -1019,6 +1034,27 @@ class FilterSAM3Detector(Filter):
             self._load_video_model()
         else:
             self._load_model()
+        if self.compile_backbone and self.processor is not None:
+            try:
+                with torch.no_grad():
+                    target_bs = getattr(self.cfg, "batch_size", 1) or 1
+                    dummy_img = Image.new("RGB", (64, 64))
+                    if target_bs > 1:
+                        batched_state = self.processor.set_image_batch([dummy_img] * target_bs)
+                        state = self._split_backbone_states(batched_state)[0]
+                    else:
+                        state = self.processor.set_image(dummy_img)
+                    state = self.processor.set_text_prompt_no_grounding("object", state)
+                    self.processor.forward_grounding(state)
+            except Exception as e:
+                logger.warning("torch.compile warmup failed (%s); rebuilding SAM3 without torch.compile", e)
+                if self._autocast_persistent is not None:
+                    self._autocast_persistent.__exit__(None, None, None)
+                    self._autocast_persistent = None
+                self.model = None
+                self.processor = None
+                self.compile_backbone = False
+                self._load_model()
 
         # Load exemplar images if provided
         self.visual_prompt_embed = None
@@ -2814,6 +2850,11 @@ class FilterSAM3Detector(Filter):
         if not pil_images:
             return [self.process(frames) for frames in batch]
 
+        if getattr(self, "compile_backbone", False):
+            target_bs = getattr(self.cfg, "batch_size", 1) or 1
+            if len(pil_images) < target_bs:
+                pil_images.extend([pil_images[-1]] * (target_bs - len(pil_images)))
+
         try:
             batched_state = self.processor.set_image_batch(pil_images)
             per_frame_states = self._split_backbone_states(batched_state)
@@ -2994,6 +3035,7 @@ class FilterSAM3Detector(Filter):
                 device=str(self.device),
                 eval_mode=True,
                 load_from_HF=True,
+                compile=self.compile_backbone,
             )
 
             # Create processor
