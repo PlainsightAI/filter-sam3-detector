@@ -91,6 +91,163 @@ class TestMultiplexCallCount(unittest.TestCase):
         self.assertEqual(self._run(3), 1)
 
 
+
+class TestMultiplexUnit(unittest.TestCase):
+    """Pure CPU unit tests verifying multiplexed grounding, slicing, OOM fallback, and thresholding."""
+
+    def _make_detector(self):
+        d = FilterSAM3Detector.__new__(FilterSAM3Detector)
+        d.device = "cpu"
+        d.model = MagicMock()
+        d.processor = MagicMock()
+        d.confidence_threshold = 0.5
+        d.max_detections = 100
+        d.frame_counter = 0
+        d.global_detection_id = 0
+        d.frames_dir = None
+        d.annotated_frames_dir = None
+        d.positive_boxes = []
+        d.negative_boxes = []
+        d.output_label = "sam3_detections"
+        d.nms_enabled = False
+        d.output_masks = False
+        d.visualize = False
+
+        d.prompt_sets = [
+            {
+                "name": "set_1",
+                "prompts": ["a", "b"],
+                "topic": "topic_1",
+                "confidence_threshold": 0.4
+            },
+            {
+                "name": "set_2",
+                "prompts": ["c"],
+                "topic": "topic_2",
+                "confidence_threshold": None
+            }
+        ]
+
+        d.cached_text_embeddings = {
+            "a": {
+                "language_features": torch.zeros(4, 1, 8),
+                "language_mask": torch.zeros(1, 4),
+                "language_embeds": torch.zeros(4, 1, 8),
+            },
+            "b": {
+                "language_features": torch.ones(4, 1, 8),
+                "language_mask": torch.zeros(1, 4),
+                "language_embeds": torch.zeros(4, 1, 8),
+            },
+            "c": {
+                "language_features": torch.zeros(4, 1, 8),
+                "language_mask": torch.zeros(1, 4),
+                "language_embeds": torch.zeros(4, 1, 8),
+            },
+        }
+        d._normalize_detections = FilterSAM3Detector._normalize_detections.__get__(d, FilterSAM3Detector)
+        d._forward_grounding_multi = FilterSAM3Detector._forward_grounding_multi.__get__(d, FilterSAM3Detector)
+        d._build_multiplexed_language_features = FilterSAM3Detector._build_multiplexed_language_features.__get__(d, FilterSAM3Detector)
+        d._extract_detections_from_state = FilterSAM3Detector._extract_detections_from_state.__get__(d, FilterSAM3Detector)
+        d._process_multi_output = FilterSAM3Detector._process_multi_output.__get__(d, FilterSAM3Detector)
+        return d
+
+    def _make_frame(self):
+        frame = MagicMock()
+        frame.rw_bgr.image = np.zeros((480, 640, 3), dtype=np.uint8)
+        frame.data = {"meta": {"id": 123}}
+        frame.timestamp = 1000.0
+        return frame
+
+    def test_process_multi_output_correctness(self):
+        """Verify _process_multi_output returns correct, sliced, distinguishable detections."""
+        d = self._make_detector()
+        frame = self._make_frame()
+
+        def grounding(backbone_out, find_input, geometric_prompt, **kwargs):
+            n = len(find_input.text_ids)
+            pred_boxes = torch.zeros(n, 1, 4)
+            for i in range(n):
+                pred_boxes[i, 0] = torch.tensor([0.1 * i, 0.1 * i, 0.1 * (i+1), 0.1 * (i+1)])
+            
+            pred_logits = torch.full((n, 1, 1), 10.0)
+            presence_logit_dec = torch.full((n, 1), 10.0)
+
+            return {
+                "pred_boxes": pred_boxes,
+                "pred_logits": pred_logits,
+                "presence_logit_dec": presence_logit_dec,
+            }
+
+        d.model.forward_grounding = MagicMock(side_effect=grounding)
+        d.model._get_dummy_prompt = MagicMock(return_value=None)
+        d.processor.set_image = MagicMock(return_value={
+            "original_height": 480,
+            "original_width": 640,
+            "backbone_out": {"vision_features": torch.zeros(1, 8)},
+        })
+
+        out_frames = d._process_multi_output(frame, filter_frame_id=42)
+
+        self.assertIn("topic_1", out_frames)
+        self.assertIn("topic_2", out_frames)
+        self.assertEqual(d.model.forward_grounding.call_count, 2)
+
+        frame_1 = out_frames["topic_1"]
+        dets_1 = frame_1.data["detections"]["items"]
+        self.assertEqual(len(dets_1), 2)
+        det_a = [det for det in dets_1 if det["label"] == "a"][0]
+        det_b = [det for det in dets_1 if det["label"] == "b"][0]
+        self.assertNotEqual(det_a["bbox"], det_b["bbox"])
+
+        frame_2 = out_frames["topic_2"]
+        dets_2 = frame_2.data["detections"]["items"]
+        self.assertEqual(len(dets_2), 1)
+        self.assertEqual(dets_2[0]["label"], "c")
+
+    def test_oom_fallback_robustness(self):
+        """Verify fallback to sequential single-prompt runs isolates a hard runtime error."""
+        d = self._make_detector()
+        frame = self._make_frame()
+
+        calls = []
+
+        def grounding(backbone_out, find_input, geometric_prompt, **kwargs):
+            n = len(find_input.text_ids)
+            calls.append(n)
+            if n > 1:
+                raise RuntimeError("out of memory")
+            
+            # check prompt b
+            if backbone_out["language_features"].sum() > 0:
+                raise ValueError("hard failure for prompt b")
+
+            pred_boxes = torch.zeros(1, 1, 4)
+            pred_logits = torch.full((1, 1, 1), 10.0)
+            presence_logit_dec = torch.full((1, 1), 10.0)
+            return {
+                "pred_boxes": pred_boxes,
+                "pred_logits": pred_logits,
+                "presence_logit_dec": presence_logit_dec,
+            }
+
+        d.model.forward_grounding = MagicMock(side_effect=grounding)
+        d.model._get_dummy_prompt = MagicMock(return_value=None)
+        d.processor.set_image = MagicMock(return_value={
+            "original_height": 480,
+            "original_width": 640,
+            "backbone_out": {"vision_features": torch.zeros(1, 8)},
+        })
+
+        out_frames = d._process_multi_output(frame, filter_frame_id=42)
+
+        self.assertIn("topic_1", out_frames)
+        frame_1 = out_frames["topic_1"]
+        dets_1 = frame_1.data["detections"]["items"]
+        
+        self.assertEqual(len(dets_1), 1)
+        self.assertEqual(dets_1[0]["label"], "a")
+        self.assertEqual(calls, [2, 1, 1, 1])
 # --------------------------------------------------------------------------- #
 # Layer 2: equivalence (real model, GPU)
 # --------------------------------------------------------------------------- #

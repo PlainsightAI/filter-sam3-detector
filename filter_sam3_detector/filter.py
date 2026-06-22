@@ -2250,9 +2250,12 @@ class FilterSAM3Detector(Filter):
                 ps_name = prompt_set["name"]
                 ps_prompts = prompt_set["prompts"]
                 ps_topic = prompt_set.get("topic", "main")
-                ps_threshold = prompt_set.get(
-                    "confidence_threshold", self.confidence_threshold
-                )
+                ps_threshold = prompt_set.get("confidence_threshold")
+                if ps_threshold is None:
+                    ps_threshold = self.confidence_threshold
+
+
+
                 ps_max_detections = prompt_set.get(
                     "max_detections", self.max_detections
                 )
@@ -2970,7 +2973,25 @@ class FilterSAM3Detector(Filter):
                 torch.cuda.empty_cache()
             out = []
             for prompt in prompts:
-                out.extend(self._forward_grounding_multi(state, [prompt], keep_threshold, allow_oom_fallback=False))
+                try:
+                    out.extend(self._forward_grounding_multi(state, [prompt], keep_threshold, allow_oom_fallback=False))
+                except Exception as seq_err:
+                    logger.warning(
+                        f"Isolated failure during sequential fallback for prompt '{prompt}': {seq_err}. "
+                        "Returning empty detection state."
+                    )
+                    img_h = state["original_height"]
+                    img_w = state["original_width"]
+                    empty_state = {
+                        "original_height": img_h,
+                        "original_width": img_w,
+                        "boxes": torch.zeros((0, 4), device=self.device),
+                        "scores": torch.zeros((0,), device=self.device),
+                    }
+                    if getattr(self, "output_masks", False):
+                        empty_state["masks_logits"] = torch.zeros((0, 1, img_h, img_w), device=self.device)
+                        empty_state["masks"] = torch.zeros((0, 1, img_h, img_w), device=self.device, dtype=torch.bool)
+                    out.append(empty_state)
             return out
 
     # -- Batched backbone inference (FILTER-369) ----------------------------------
