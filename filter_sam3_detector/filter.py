@@ -921,7 +921,8 @@ class FilterSAM3Detector(Filter):
         self.confidence_threshold = config.get("confidence_threshold", 0.5)
         self.mask_threshold = config.get("mask_threshold", 0.5)
         self.max_detections = config.get("max_detections", 100)
-        self.output_masks = config.get("output_masks", True)
+        self.output_masks = config.get("output_masks", False)
+
         self.output_boxes = config.get("output_boxes", True)
         self.output_scores = config.get("output_scores", True)
         if not self.output_boxes or not self.output_scores:
@@ -2253,9 +2254,6 @@ class FilterSAM3Detector(Filter):
                 ps_threshold = prompt_set.get("confidence_threshold")
                 if ps_threshold is None:
                     ps_threshold = self.confidence_threshold
-
-
-
                 ps_max_detections = prompt_set.get(
                     "max_detections", self.max_detections
                 )

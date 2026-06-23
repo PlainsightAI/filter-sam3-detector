@@ -9,6 +9,7 @@ SAM3 Detector filter release notes
 ## v0.1.20 - 2026-06-19
 
 ### Added
+ - **opt-in torch.compile for SAM3 vision backbone ([FILTER-373](https://plainsight-ai.atlassian.net/browse/FILTER-373))**
 - **Multiplex grounding ([FILTER-374](https://plainsight-ai.atlassian.net/browse/FILTER-374))**: Multi-prompt detection now batches all prompts into a single decoder pass. Peak VRAM logic limits memory via fallback.
 
 ## v0.1.19 - 2026-06-03
