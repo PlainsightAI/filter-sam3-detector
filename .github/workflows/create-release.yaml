@@ -11,7 +11,7 @@ jobs:
   release:
     uses: PlainsightAI/gh-actions-public/.github/workflows/filter-release.yaml@main
     with:
-      docker_image: plainsightai/openfilter-sam3-detector
+      docker_image: docker.io/plainsightai/openfilter-sam3-detector
       schema_module: filter_sam3_detector.filter
       schema_class: FilterSAM3DetectorConfigSchema
       python_versions: '["3.11", "3.12"]'
