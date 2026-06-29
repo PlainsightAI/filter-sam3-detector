@@ -3,6 +3,10 @@ SAM3 Detector filter release notes
 
 ## [Unreleased]
 
+### Changed
+
+- Bump openfilter to 1.1.2
+
 ### Added
 - **opt-in torch.compile for SAM3 vision backbone ([FILTER-373](https://plainsight-ai.atlassian.net/browse/FILTER-373))**
 
