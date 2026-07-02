@@ -6,6 +6,7 @@ SAM3 Detector filter release notes
 ### Changed
 
 - Bump openfilter to 1.1.2
+- `detect_objects_video` example: `--prompt` now accepts multiple values (`--prompt "cup" "bowl"` or repeated `--prompt` flags), wiring them into the detector's `text_prompts`. Simplified the pipeline to write JSONL + frames directly via the detector's `output_path` / `frames_output_dir` (removing the `Recorder` and `ImageOut` sink filters, which expect `file://` outputs and cannot be chained over ZMQ).
 
 ### Added
 - **opt-in torch.compile for SAM3 vision backbone ([FILTER-373](https://plainsight-ai.atlassian.net/browse/FILTER-373))**
