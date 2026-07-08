@@ -3,12 +3,19 @@ import unittest
 from unittest.mock import patch, MagicMock
 from pathlib import Path
 
-# Mock out external libraries that might not be installed
-sys.modules["openfilter"] = MagicMock()
-sys.modules["openfilter.filter_runtime"] = MagicMock()
-sys.modules["openfilter.filter_runtime.filter"] = MagicMock()
-sys.modules["openfilter.filter_runtime.filters.video_in"] = MagicMock()
-sys.modules["filter_sam3_detector"] = MagicMock()
+# Mock out external libraries only if they are not already installed/importable
+try:
+    import openfilter  # noqa: F401
+except ImportError:
+    sys.modules["openfilter"] = MagicMock()
+    sys.modules["openfilter.filter_runtime"] = MagicMock()
+    sys.modules["openfilter.filter_runtime.filter"] = MagicMock()
+    sys.modules["openfilter.filter_runtime.filters.video_in"] = MagicMock()
+
+try:
+    import filter_sam3_detector  # noqa: F401
+except ImportError:
+    sys.modules["filter_sam3_detector"] = MagicMock()
 
 # Add root directory to sys.path to allow importing from examples
 root_dir = Path(__file__).parent.parent
