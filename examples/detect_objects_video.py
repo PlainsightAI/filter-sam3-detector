@@ -54,14 +54,17 @@ from filter_sam3_detector import FilterSAM3Detector
 def main():
     parser = argparse.ArgumentParser(description="Detect objects in video using SAM3")
     parser.add_argument("--video", nargs="+", required=True, help="Input video file(s)")
-    parser.add_argument(
+
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument(
         "--prompt",
         nargs="+",
         action="extend",
         help="Text prompt(s) for detection; repeatable "
         "(e.g., --prompt 'cup' 'bowl' or --prompt 'cup' --prompt 'bowl')",
     )
-    parser.add_argument("--exemplars", help="Directory with exemplar images")
+    group.add_argument("--exemplars", help="Directory with exemplar images")
+
     parser.add_argument("--output-dir", default="./output", help="Output directory")
     parser.add_argument(
         "--confidence", type=float, default=0.5, help="Confidence threshold"
@@ -80,11 +83,21 @@ def main():
     )
     args = parser.parse_args()
 
-    if not args.prompt and not args.exemplars:
-        parser.error("Must provide either --prompt or --exemplars")
+    # Early input validation
+    for video_path in args.video:
+        if not Path(video_path).is_file():
+            parser.error(f"Input video file does not exist: {video_path}")
+
+    if args.exemplars:
+        exemplars_path = Path(args.exemplars)
+        if not exemplars_path.exists():
+            parser.error(f"Exemplars path does not exist: {args.exemplars}")
 
     output_dir = Path(args.output_dir)
-    output_dir.mkdir(exist_ok=True, parents=True)
+    try:
+        output_dir.mkdir(exist_ok=True, parents=True)
+    except OSError as e:
+        parser.error(f"Failed to create output directory '{output_dir}': {e}")
 
     # Build video sources with topics
     video_sources = []
@@ -101,6 +114,25 @@ def main():
     frames_dir = str(output_dir / "frames")
     jsonl_path = str(output_dir / "detections.jsonl")
 
+    # Sequentially construct the detector configuration
+    detector_config = {
+        "sources": "tcp://127.0.0.1:5555",
+        "confidence_threshold": args.confidence,
+        "device": args.device,
+        "output_label": "detections",
+        "output_path": jsonl_path,
+    }
+
+    if args.prompt:
+        # Deduplicate prompt values preserving order
+        detector_config["text_prompts"] = list(dict.fromkeys(args.prompt))
+    if args.exemplars:
+        detector_config["exemplars_path"] = args.exemplars
+
+    if args.visualize:
+        detector_config["save_annotated_frames"] = True
+        detector_config["annotated_frames_output_dir"] = frames_dir
+
     filters = [
         # Input: Stream video frames
         (
@@ -110,22 +142,10 @@ def main():
                 "outputs": ["tcp://127.0.0.1:5555"],
             },
         ),
-        # Detect objects with SAM3 and write results to disk.
-        # text_prompts accepts a list (single- or multi-element); normalize_config
-        # treats list inputs as raw prompts, so no per-length dispatch is needed.
+        # Detect objects with SAM3 and write results directly
         (
             FilterSAM3Detector,
-            {
-                "sources": "tcp://127.0.0.1:5555",
-                **({"text_prompts": args.prompt} if args.prompt else {}),
-                "exemplars_path": args.exemplars,
-                "confidence_threshold": args.confidence,
-                "device": args.device,
-                "output_label": "detections",
-                "output_path": jsonl_path,
-                "frames_output_dir": frames_dir,
-                **({"save_annotated_frames": True} if args.visualize else {}),
-            },
+            detector_config,
         ),
     ]
 
@@ -139,7 +159,8 @@ def main():
 
     print(f"\nDone! Results saved to {output_dir}")
     print("  - detections.jsonl: Frame-by-frame detections")
-    print("  - frames/: Saved frames")
+    if args.visualize:
+        print("  - frames/: Saved annotated frames")
 
 
 if __name__ == "__main__":
