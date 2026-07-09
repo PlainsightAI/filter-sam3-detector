@@ -10,6 +10,11 @@ SAM3 Detector filter release notes
 ### Added
 - **opt-in torch.compile for SAM3 vision backbone ([FILTER-373](https://plainsight-ai.atlassian.net/browse/FILTER-373))**
 
+## v0.1.21 - 2026-07-09
+
+### Fixed
+- Guard the SAM3 weight-bake step in `Dockerfile` against a missing/empty `HF_TOKEN`. Dependabot and fork PR builds run without repo secrets, so the mounted `hf_token` secret is empty; the build now skips `snapshot_download` in that case instead of sending an illegal `Bearer ` header and failing the `dry-run-publish` check. The real publish path is unaffected and still bakes weights.
+
 ## v0.1.20 - 2026-06-19
 
 ### Added
