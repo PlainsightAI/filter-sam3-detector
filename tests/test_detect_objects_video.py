@@ -166,6 +166,30 @@ class TestDetectObjectsVideo(unittest.TestCase):
         self.assertNotIn("text_prompts", detector_config)
         self.assertEqual(detector_config["exemplars_path"], "./cup_examples/")
 
+    @patch("examples.detect_objects_video.Filter.run_multi")
+    @patch("examples.detect_objects_video.Path.mkdir")
+    def test_combined_prompts_and_exemplars(self, mock_mkdir, mock_run_multi):
+        """Test configured with both prompts and exemplars together (non-exclusive)."""
+        test_args = [
+            "detect_objects_video.py",
+            "--video",
+            "input.mp4",
+            "--prompt",
+            "cup",
+            "--exemplars",
+            "./cup_examples/",
+            "--output-dir",
+            "./results",
+        ]
+        with patch.object(sys, "argv", test_args):
+            main()
+
+        mock_run_multi.assert_called_once()
+        filters = mock_run_multi.call_args[0][0]
+        detector_class, detector_config = filters[1]
+        self.assertEqual(detector_config["text_prompts"], ["cup"])
+        self.assertEqual(detector_config["exemplars_path"], "./cup_examples/")
+
     @patch("argparse.ArgumentParser.error", side_effect=SystemExit)
     def test_no_prompts_or_exemplars(self, mock_error):
         """Ensure script fails when neither --prompt nor --exemplars is provided."""
@@ -181,7 +205,7 @@ class TestDetectObjectsVideo(unittest.TestCase):
                 main()
 
         mock_error.assert_called_once_with(
-            "one of the arguments --prompt --exemplars is required"
+            "At least one of the arguments --prompt or --exemplars is required"
         )
 
     @patch("examples.detect_objects_video.Filter.run_multi")

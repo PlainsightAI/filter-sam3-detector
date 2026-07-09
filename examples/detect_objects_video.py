@@ -55,15 +55,14 @@ def main():
     parser = argparse.ArgumentParser(description="Detect objects in video using SAM3")
     parser.add_argument("--video", nargs="+", required=True, help="Input video file(s)")
 
-    group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument(
+    parser.add_argument(
         "--prompt",
         nargs="+",
         action="extend",
         help="Text prompt(s) for detection; repeatable "
         "(e.g., --prompt 'cup' 'bowl' or --prompt 'cup' --prompt 'bowl')",
     )
-    group.add_argument("--exemplars", help="Directory with exemplar images")
+    parser.add_argument("--exemplars", help="Directory with exemplar images")
 
     parser.add_argument("--output-dir", default="./output", help="Output directory")
     parser.add_argument(
@@ -72,9 +71,6 @@ def main():
     parser.add_argument(
         "--resize", type=int, help="Resize max dimension (e.g., 480 for 480p)"
     )
-    parser.add_argument(
-        "--sample-rate", type=int, default=1, help="Process every Nth frame"
-    )
     parser.add_argument("--device", default="cuda", help="Device: cuda, cpu, mps")
     parser.add_argument(
         "--visualize",
@@ -82,6 +78,10 @@ def main():
         help="Save annotated frames with bboxes drawn",
     )
     args = parser.parse_args()
+
+    # Ensure at least one of --prompt or --exemplars is provided
+    if not args.prompt and not args.exemplars:
+        parser.error("At least one of the arguments --prompt or --exemplars is required")
 
     # Early input validation
     for video_path in args.video:
