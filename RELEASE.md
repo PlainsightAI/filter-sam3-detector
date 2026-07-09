@@ -8,8 +8,10 @@ SAM3 Detector filter release notes
 - Bump openfilter to 1.1.2
 - `detect_objects_video` example: `--prompt` now accepts multiple values (`--prompt "cup" "bowl"` or repeated `--prompt` flags), wiring them into the detector's `text_prompts`. Simplified the pipeline to write JSONL directly via the detector's built-in `output_path` (with annotated frames being written to `annotated_frames_output_dir` opt-in via `--visualize`), removing the `Recorder` and `ImageOut` sink filters.
 
-### Added
-- **opt-in torch.compile for SAM3 vision backbone ([FILTER-373](https://plainsight-ai.atlassian.net/browse/FILTER-373))**
+## v0.1.21 - 2026-07-09
+
+### Fixed
+- Guard the SAM3 weight-bake step in `Dockerfile` against a missing/empty `HF_TOKEN`. Dependabot and fork PR builds run without repo secrets, so the mounted `hf_token` secret is empty; the build now skips `snapshot_download` in that case instead of sending an illegal `Bearer ` header and failing the `dry-run-publish` check. The real publish path is unaffected and still bakes weights.
 
 ## v0.1.20 - 2026-06-19
 
