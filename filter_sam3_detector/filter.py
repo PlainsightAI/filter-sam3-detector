@@ -2142,7 +2142,7 @@ class FilterSAM3Detector(Filter):
                     output_frames[topic] = frame
 
             except Exception as e:
-                logger.error(f"Error processing frame from {topic}: {e}")
+                logger.error(f"Error processing frame from {topic}: {e}", exc_info=True)
                 import traceback
 
                 logger.debug(traceback.format_exc())
