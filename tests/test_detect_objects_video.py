@@ -31,15 +31,15 @@ class TestDetectObjectsVideo(unittest.TestCase):
         self.is_file_patcher = patch(
             "examples.detect_objects_video.Path.is_file", return_value=True
         )
-        self.exists_patcher = patch(
-            "examples.detect_objects_video.Path.exists", return_value=True
+        self.is_dir_patcher = patch(
+            "examples.detect_objects_video.Path.is_dir", return_value=True
         )
         self.mock_is_file = self.is_file_patcher.start()
-        self.mock_exists = self.exists_patcher.start()
+        self.mock_is_dir = self.is_dir_patcher.start()
 
     def tearDown(self):
         self.is_file_patcher.stop()
-        self.exists_patcher.stop()
+        self.is_dir_patcher.stop()
 
     @patch("examples.detect_objects_video.Filter.run_multi")
     @patch("examples.detect_objects_video.Path.mkdir")
@@ -205,6 +205,46 @@ class TestDetectObjectsVideo(unittest.TestCase):
         self.assertTrue(detector_config["save_annotated_frames"])
         self.assertEqual(
             detector_config["annotated_frames_output_dir"], str(Path("./output/frames"))
+        )
+
+    @patch("argparse.ArgumentParser.error", side_effect=SystemExit)
+    def test_invalid_video_file(self, mock_error):
+        """Ensure script fails when input video does not exist."""
+        test_args = [
+            "detect_objects_video.py",
+            "--video",
+            "nonexistent.mp4",
+            "--prompt",
+            "cup",
+        ]
+        self.mock_is_file.return_value = False
+        with patch.object(sys, "argv", test_args):
+            with self.assertRaises(SystemExit):
+                main()
+        self.mock_is_file.return_value = True
+
+        mock_error.assert_called_once_with(
+            "Input video file does not exist: nonexistent.mp4"
+        )
+
+    @patch("argparse.ArgumentParser.error", side_effect=SystemExit)
+    def test_invalid_exemplars_dir(self, mock_error):
+        """Ensure script fails when exemplars path is not a directory."""
+        test_args = [
+            "detect_objects_video.py",
+            "--video",
+            "input.mp4",
+            "--exemplars",
+            "not_a_dir.jpg",
+        ]
+        self.mock_is_dir.return_value = False
+        with patch.object(sys, "argv", test_args):
+            with self.assertRaises(SystemExit):
+                main()
+        self.mock_is_dir.return_value = True
+
+        mock_error.assert_called_once_with(
+            "Exemplars path is not a directory: not_a_dir.jpg"
         )
 
 

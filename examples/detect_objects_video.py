@@ -6,7 +6,7 @@ This demonstrates a pipeline for object detection in video:
 - VideoIn: Stream video frames with optional resizing
 - FilterSAM3Detector: Detect objects using text prompts, save JSONL + frames
 
-The detector uses its built-in output_path (JSONL) and frames_output_dir
+The detector uses its built-in output_path (JSONL) and annotated_frames_output_dir
 capabilities. Recorder and ImageOut are openfilter sink filters that expect
 file:// outputs, not ZMQ, so they cannot be chained via ZMQ in a pipeline.
 
@@ -90,8 +90,8 @@ def main():
 
     if args.exemplars:
         exemplars_path = Path(args.exemplars)
-        if not exemplars_path.exists():
-            parser.error(f"Exemplars path does not exist: {args.exemplars}")
+        if not exemplars_path.is_dir():
+            parser.error(f"Exemplars path is not a directory: {args.exemplars}")
 
     output_dir = Path(args.output_dir)
     try:
@@ -111,7 +111,6 @@ def main():
     # The detector writes JSONL and frames directly via output_path / frames_output_dir.
     # No Recorder or ImageOut needed (those are sink filters that expect file:// outputs,
     # not ZMQ addresses, and cannot be chained in a ZMQ pipeline).
-    frames_dir = str(output_dir / "frames")
     jsonl_path = str(output_dir / "detections.jsonl")
 
     # Sequentially construct the detector configuration
@@ -130,6 +129,7 @@ def main():
         detector_config["exemplars_path"] = args.exemplars
 
     if args.visualize:
+        frames_dir = str(output_dir / "frames")
         detector_config["save_annotated_frames"] = True
         detector_config["annotated_frames_output_dir"] = frames_dir
 
