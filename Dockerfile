@@ -36,10 +36,11 @@ RUN uv pip install --system -e .
 # The model is cached at /root/.cache/huggingface/hub (default HF cache location).
 # At runtime, no HF_TOKEN is needed since model is already in the image.
 RUN --mount=type=secret,id=hf_token python -c "\
-from huggingface_hub import snapshot_download; \
+from huggingface_hub import hf_hub_download; \
 token = open('/run/secrets/hf_token').read().strip(); \
 print(f'Token present: {bool(token)}'); \
-snapshot_download(repo_id='facebook/sam3', token=token); \
+hf_hub_download(repo_id='facebook/sam3', filename='config.json', token=token); \
+hf_hub_download(repo_id='facebook/sam3', filename='sam3.pt', token=token); \
 print('SAM3 model weights baked into container')"
 
 # Serve SAM3 weights from baked cache; skip hub revalidation for air-gapped runs.
