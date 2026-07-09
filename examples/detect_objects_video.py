@@ -108,7 +108,8 @@ def main():
         video_sources.append(f"{source};video{i}")
 
     # Define pipeline: VideoIn → FilterSAM3Detector
-    # The detector writes JSONL and frames directly via output_path / frames_output_dir.
+    # The detector writes JSONL directly via output_path (and opt-in annotated
+    # frames via annotated_frames_output_dir when --visualize is passed).
     # No Recorder or ImageOut needed (those are sink filters that expect file:// outputs,
     # not ZMQ addresses, and cannot be chained in a ZMQ pipeline).
     jsonl_path = str(output_dir / "detections.jsonl")
