@@ -29,7 +29,7 @@ COPY filter_sam3_detector/ /app/filter_sam3_detector/
 COPY scripts/ /app/scripts/
 
 # Install dependencies using uv (respects tool.uv.sources for local sam3)
-RUN uv pip install --system -e .
+RUN uv pip install --no-cache --system -e .
 
 # Download SAM3 model weights during build and bake into image.
 # Uses BuildKit secret mount for secure authentication with gated models.
