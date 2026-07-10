@@ -30,8 +30,8 @@ dependencies = [
   "torchvision>=0.15.0",
   "numpy>=1.24.0",
   "pillow>=10.0.0",
-  "transformers>=4.46.0",
-  "av",
+  "transformers>=4.46.0, <5.0.0",
+  "av~=16.1.0",
   "opencv-python>=4.8.0",
   "python-dotenv>=1.0.0",
   "tomli>=2.0.0; python_version < '3.11'",  # Required for Python < 3.11 (OpenFilter uses tomllib in 3.11+)
@@ -52,6 +52,7 @@ dev = [
   "pytest~=8.3.4",
   "pytest-cov~=6.0.0",
   "pandas~=2.0.3",
+  "psutil~=7.2.2",
 ]
 
 [project.scripts]

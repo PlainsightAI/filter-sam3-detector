@@ -1734,96 +1734,158 @@ class FilterSAM3Detector(Filter):
             )
             return frame
 
+        frame_meta = frame.data.setdefault("meta", {})
+        frame_id_hint = (
+            filter_frame_id if filter_frame_id is not None else frame_meta.get("id")
+        )
+        frame_idx = self.frame_counter
+
         # --- MEMORY PRUNING BLOCK (REPLACES OLD RESTART TRIGGER) ---
         prune_every_n_frames = 30
         video_memory_prune_to = 15
         max_conditioning_frames = 10 # keep only the first and last 9 conditioning frames, delete the rest
         if (
-            self.prune_video_memory and
-            self.frame_counter != 0 and
-            self.frame_counter % prune_every_n_frames == 0
+            self.prune_video_memory
+            and self.frame_counter != 0
+            and self.frame_counter % prune_every_n_frames == 0
         ):
-            logger.info(f"===== Pruning old session memory at frame {self.frame_counter} (Preserving IDs) =====")
-            
-            # Keep a small buffer window of recent frames so the model has local temporal context
-            cutoff_frame = self.frame_counter - video_memory_prune_to
-            
-            if torch.cuda.is_available():
-                allocated_gb = torch.cuda.memory_allocated(self.device) / 1024 ** 3
-                reserved_gb = torch.cuda.memory_reserved(self.device) / 1024 ** 3
-                logger.debug("Memory usage before: allocated=%.2f GB, reserved=%.2f GB", allocated_gb, reserved_gb)
-            
-            #------------------------------------------------------------------
-            # GPU MEMORY
-            #------------------------------------------------------------------
-            if hasattr(self.video_inference_session, "output_dict_per_obj"):
-                for obj_idx, obj_store in self.video_inference_session.output_dict_per_obj.items():
-                    # 1. STRICTLY target non-conditioning frames
-                    if "non_cond_frame_outputs" in obj_store:
-                        non_cond_dict = obj_store["non_cond_frame_outputs"]
-                        for f_idx in list(non_cond_dict.keys()):
-                            if isinstance(f_idx, int) and f_idx < cutoff_frame:
-                                del non_cond_dict[f_idx]
-                                
-                    # 2. CONDITIONING frames: keep only the first and last 9 frames since conditioning frames are important. 
-                    if "cond_frame_outputs" in obj_store:
-                        cond_dict = obj_store["cond_frame_outputs"]
-                        if len(cond_dict) > max_conditioning_frames:
-                            sorted_keys = sorted(cond_dict.keys())
-                            
-                            # Identify the exact keys to keep
-                            keys_to_keep = set(sorted_keys[:1] + sorted_keys[-max_conditioning_frames:])
-                            
-                            # Find the keys to delete by finding the difference between sets
-                            keys_to_delete = set(cond_dict.keys()) - keys_to_keep
-                            for f_idx in keys_to_delete:
-                                if isinstance(f_idx, int):
-                                    del cond_dict[f_idx]
-                            
-            # ------------------------------------------------------------------
-            # CPU MEMORY
-            # ------------------------------------------------------------------
-            if hasattr(self.video_inference_session, "processed_frames"):
-                before = len(self.video_inference_session.processed_frames)
-                for f_idx in list(self.video_inference_session.processed_frames.keys()):
-                    if f_idx < cutoff_frame:
-                        del self.video_inference_session.processed_frames[f_idx]
-                after = len(self.video_inference_session.processed_frames)
+            try:
+                logger.info(
+                    "===== Pruning old session memory at frame %s (Preserving IDs) =====",
+                    self.frame_counter,
+                )
 
-            # Force garbage collection to release the unreferenced tensors from VRAM
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-                allocated_gb = torch.cuda.memory_allocated(self.device) / 1024 ** 3
-                reserved_gb = torch.cuda.memory_reserved(self.device) / 1024 ** 3
-                logger.debug("Memory usage after pruning: allocated=%.2f GB, reserved=%.2f GB", allocated_gb, reserved_gb)
-                
-        image_bgr = frame.rw_bgr.image
-        image_rgb = image_bgr[:, :, ::-1]
-        pil_image = Image.fromarray(image_rgb)
-        img_height, img_width = image_bgr.shape[:2]
+                # Keep a small buffer window of recent frames so the model has local temporal context
+                cutoff_frame = self.frame_counter - video_memory_prune_to
 
-        inputs = self.video_processor(images=pil_image, return_tensors="pt")
-        inputs = inputs.to(self.device)
+                if torch.cuda.is_available():
+                    allocated_gb = torch.cuda.memory_allocated(self.device) / 1024 ** 3
+                    reserved_gb = torch.cuda.memory_reserved(self.device) / 1024 ** 3
+                    logger.debug(
+                        "Memory usage before: allocated=%.2f GB, reserved=%.2f GB",
+                        allocated_gb,
+                        reserved_gb,
+                    )
 
-        model_outputs = self.video_model(
-            inference_session=self.video_inference_session,
-            frame=inputs.pixel_values[0],
-            frame_idx=self.frame_counter,
-        )
-        processed_outputs = self.video_processor.postprocess_outputs(
-            self.video_inference_session,
-            model_outputs,
-            original_sizes=inputs.original_sizes,
-        )
+                # ------------------------------------------------------------------
+                # GPU MEMORY
+                # ------------------------------------------------------------------
+                if hasattr(self.video_inference_session, "output_dict_per_obj"):
+                    for obj_idx, obj_store in self.video_inference_session.output_dict_per_obj.items():
+                        # 1. STRICTLY target non-conditioning frames
+                        if "non_cond_frame_outputs" in obj_store:
+                            non_cond_dict = obj_store["non_cond_frame_outputs"]
+                            for f_idx in list(non_cond_dict.keys()):
+                                if isinstance(f_idx, int) and f_idx < cutoff_frame:
+                                    del non_cond_dict[f_idx]
+
+                        # 2. CONDITIONING frames: keep only the first and last 9 frames since conditioning frames are important.
+                        if "cond_frame_outputs" in obj_store:
+                            cond_dict = obj_store["cond_frame_outputs"]
+                            if len(cond_dict) > max_conditioning_frames:
+                                sorted_keys = sorted(cond_dict.keys())
+
+                                # Identify the exact keys to keep
+                                keys_to_keep = set(
+                                    sorted_keys[:1]
+                                    + sorted_keys[-max_conditioning_frames + 1 :]
+                                )
+
+                                # Find the keys to delete by finding the difference between sets
+                                keys_to_delete = set(cond_dict.keys()) - keys_to_keep
+                                for f_idx in keys_to_delete:
+                                    if isinstance(f_idx, int):
+                                        del cond_dict[f_idx]
+                else:
+                    logger.warning(
+                        "video_inference_session has no attribute 'output_dict_per_obj'; "
+                        "Please check your transformers version; skipping GPU memory pruning."
+                    )
+
+                # ------------------------------------------------------------------
+                # CPU MEMORY
+                # ------------------------------------------------------------------
+                if hasattr(self.video_inference_session, "processed_frames"):
+                    for f_idx in list(self.video_inference_session.processed_frames.keys()):
+                        if f_idx < cutoff_frame:
+                            del self.video_inference_session.processed_frames[f_idx]
+                else:
+                    logger.warning(
+                        "video_inference_session has no attribute 'processed_frames'; "
+                        "Please check your transformers version; skipping CPU memory pruning."
+                    )
+
+                # Force garbage collection to release unreferenced tensors.
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                    allocated_gb = torch.cuda.memory_allocated(self.device) / 1024 ** 3
+                    reserved_gb = torch.cuda.memory_reserved(self.device) / 1024 ** 3
+                    logger.debug(
+                        "Memory usage after pruning: allocated=%.2f GB, reserved=%.2f GB",
+                        allocated_gb,
+                        reserved_gb,
+                    )
+            except Exception:
+                # Pruning is best-effort only; keep processing this frame.
+                logger.exception(
+                    "Video-mode memory pruning failed (frame_idx=%s frame_id=%s); continuing without pruning",
+                    frame_idx,
+                    frame_id_hint,
+                )
+
+        try:
+            image_bgr = frame.rw_bgr.image
+            image_rgb = image_bgr[:, :, ::-1]
+            pil_image = Image.fromarray(image_rgb)
+            img_height, img_width = image_bgr.shape[:2]
+        except Exception as e:
+            logger.exception(
+                "Video-mode frame preprocessing failed (frame_idx=%s frame_id=%s): %s",
+                frame_idx,
+                frame_id_hint,
+                e,
+            )
+            raise
+
+        try:
+            inputs = self.video_processor(images=pil_image, return_tensors="pt")
+            inputs = inputs.to(self.device)
+
+            model_outputs = self.video_model(
+                inference_session=self.video_inference_session,
+                frame=inputs.pixel_values[0],
+                frame_idx=self.frame_counter,
+            )
+            processed_outputs = self.video_processor.postprocess_outputs(
+                self.video_inference_session,
+                model_outputs,
+                original_sizes=inputs.original_sizes,
+            )
+        except Exception as e:
+            logger.exception(
+                "Video-mode inference failed (frame_idx=%s frame_id=%s): %s",
+                frame_idx,
+                frame_id_hint,
+                e,
+            )
+            raise
         
-        detections = self._video_outputs_to_detections(processed_outputs)
-        canonical_dict, protege_list, classification_dict = self._normalize_detections(
-            detections
-        )
+        try:
+            detections = self._video_outputs_to_detections(processed_outputs)
+            canonical_dict, protege_list, classification_dict = self._normalize_detections(
+                detections
+            )
+        except Exception as e:
+            logger.exception(
+                "Video-mode postprocessing/normalization failed (frame_idx=%s frame_id=%s): %s",
+                frame_idx,
+                frame_id_hint,
+                e,
+            )
+            raise
         frame.data[FilterSAM3DetectorOutput.__frame_data_key__] = canonical_dict
 
-        frame_meta = frame.data.setdefault("meta", {})
         frame_meta["width"] = img_width
         frame_meta["height"] = img_height
         frame_meta["detections"] = protege_list
@@ -1966,26 +2028,18 @@ class FilterSAM3Detector(Filter):
                 if self.video_mode_topic is None:
                     self.video_mode_topic = topic
                     
-                try:
-                    # video mode is only available for single topic support
-                    if topic != self.video_mode_topic:
-                        raise ValueError(
-                            f"Video mode processing is enabled, but is only supported for a single topic."
-                        )
-                        
-                    video_frame = self._process_video_mode_frame(
-                        frame, filter_frame_id
+                if topic != self.video_mode_topic:
+                    raise ValueError(
+                        f"Video mode processing is enabled, but is only supported for a single topic."
                     )
-                    output_frames[topic] = video_frame
-                    if self.viz_topic and getattr(self, "_video_mode_viz_frame", None) is not None:
-                        output_frames[self.viz_topic] = self._video_mode_viz_frame
-                except Exception as e:
-                    logger.error(f"Error in SAM3 video-mode processing: {e}")
-                    import traceback
-
-                    logger.debug(traceback.format_exc())
-                    
-                    output_frames[topic] = frame
+                # Let genuine inference/runtime errors bubble up with context.
+                video_frame = self._process_video_mode_frame(frame, filter_frame_id)
+                output_frames[topic] = video_frame
+                if (
+                    self.viz_topic
+                    and getattr(self, "_video_mode_viz_frame", None) is not None
+                ):
+                    output_frames[self.viz_topic] = self._video_mode_viz_frame
                 continue
 
             # Check if model is loaded

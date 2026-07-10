@@ -1,17 +1,3 @@
-# Exemplar-based detection example
-# Uses visual exemplar images instead of text prompts for few-shot detection
-#
-# Usage:
-#   1. Place your exemplar images in ./exemplars/ directory
-#   2. Place your input video as ./data/input.mp4
-#   3. Run: docker compose -f examples/docker-compose.exemplars.yaml up
-#   4. View results at http://localhost:8001
-#
-# Example with avocado detection:
-#   mkdir -p exemplars
-#   # Add clean avocado images to exemplars/
-#   docker compose -f examples/docker-compose.exemplars.yaml up
-
 services:
   video_in:
     image: containers.openfilter.io/plainsightai/openfilter-video-in:v0.1.10
