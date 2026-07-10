@@ -51,6 +51,7 @@ dev = [
   "wheel~=0.44.0",
   "pytest~=8.3.4",
   "pytest-cov~=6.0.0",
+  "pandas~=2.0.3",
 ]
 
 [project.scripts]
