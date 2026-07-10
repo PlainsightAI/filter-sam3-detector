@@ -11,13 +11,6 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     UV_COMPILE_BYTECODE=1 \
     UV_PYTHON_DOWNLOADS=never
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    git \
-    libgl1 \
-    libglib2.0-0 \
-    && rm -rf /var/lib/apt/lists/*
-
 WORKDIR /app
 
 # Copy vendorized sam3 first (needed for local install via tool.uv.sources)
@@ -28,14 +21,22 @@ COPY pyproject.toml VERSION README.md LICENSE LICENSING.md /app/
 COPY filter_sam3_detector/ /app/filter_sam3_detector/
 COPY scripts/ /app/scripts/
 
-# Install dependencies using uv (respects tool.uv.sources for local sam3)
-RUN uv pip install --system -e .
+# Install build dependencies, install package with uv, and then purge build dependencies
+# in a single layer to minimize intermediate disk footprint and layer size.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    git \
+    libgl1 \
+    libglib2.0-0 \
+    && uv pip install --no-cache --system -e . \
+    && apt-get purge -y build-essential git \
+    && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/*
 
 # Download SAM3 model weights during build and bake into image.
 # Uses BuildKit secret mount for secure authentication with gated models.
 # The model is cached at /root/.cache/huggingface/hub (default HF cache location).
 # At runtime, no HF_TOKEN is needed since model is already in the image.
-#
 # When HF_TOKEN is unavailable (e.g. Dependabot/fork PR builds, where GitHub
 # withholds repo secrets), the mounted secret is empty. In that case we skip the
 # weight bake instead of calling snapshot_download with an empty token, which

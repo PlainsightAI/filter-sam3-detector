@@ -1226,7 +1226,7 @@ class FilterSAM3Detector(Filter):
             self.processor = None
 
         # Clear CUDA cache if applicable
-        if torch.cuda.is_available():
+        if hasattr(self, "device") and "cuda" in str(self.device) and torch.cuda.is_available():
             torch.cuda.empty_cache()
 
         logger.info("FilterSAM3Detector shutdown complete")
@@ -2142,7 +2142,7 @@ class FilterSAM3Detector(Filter):
                     output_frames[topic] = frame
 
             except Exception as e:
-                logger.error(f"Error processing frame from {topic}: {e}")
+                logger.error(f"Error processing frame from {topic}: {e}", exc_info=True)
                 import traceback
 
                 logger.debug(traceback.format_exc())
@@ -3220,7 +3220,7 @@ class FilterSAM3Detector(Filter):
 
             # Enable persistent bfloat16 autocast for all subsequent inference
             # (mirrors SAM3 video path in sam3_tracking_predictor.py)
-            if self.mixed_precision:
+            if self.mixed_precision and "cuda" in str(self.device):
                 if not torch.cuda.is_bf16_supported():
                     logger.warning(
                         "bfloat16 not natively supported on this GPU, disabling mixed precision"
@@ -3234,6 +3234,8 @@ class FilterSAM3Detector(Filter):
                     logger.info(
                         "Entered persistent bfloat16 autocast context for inference"
                     )
+            else:
+                self.mixed_precision = False
 
             logger.info(f"SAM3 model loaded successfully on {self.device}")
 
