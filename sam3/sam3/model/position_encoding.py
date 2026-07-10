@@ -43,11 +43,16 @@ class PositionEmbeddingSine(nn.Module):
                 (precompute_resolution // 16, precompute_resolution // 16),
                 (precompute_resolution // 32, precompute_resolution // 32),
             ]
-            for size in precompute_sizes:
+            cuda_working = False
+            if torch.cuda.is_available():
                 try:
-                    tensors = torch.zeros((1, 1) + size, device="cuda")
+                    torch.zeros(1, device="cuda")
+                    cuda_working = True
                 except Exception:
-                    tensors = torch.zeros((1, 1) + size, device="cpu")
+                    pass
+            device = "cuda" if cuda_working else "cpu"
+            for size in precompute_sizes:
+                tensors = torch.zeros((1, 1) + size, device=device)
                 self.forward(tensors)
                 # further clone and detach it in the cache (just to be safe)
                 self.cache[size] = self.cache[size].clone().detach()
