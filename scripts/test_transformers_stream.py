@@ -1,17 +1,51 @@
-import os
-import json
-import random  # For random chunk simulation
-from pathlib import Path
-from dotenv import load_dotenv
+#!/usr/bin/env python3
+"""
+benchmark_sam3_video_memory.py
 
-load_dotenv()  # Load environment variables from .env file if present
+Benchmark the memory usage of HuggingFace Sam3VideoModel while streaming
+frames one-by-one, while optionally saving cropped objects, annotated frames,
+and tinted segmentation overlays.
+
+Example:
+
+python benchmark_sam3_video_memory.py \
+    --video data/bread_occlusion_fps5.mp4 \
+    --prompt bread
+
+python benchmark_sam3_video_memory.py \
+    --video data/bread_occlusion_fps5.mp4 \
+    --prompt bread \
+    --prune-every 500
+"""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import gc
+import json
+import os
+import time
+from pathlib import Path
 
 import cv2
 import numpy as np
+import psutil
 import torch
+from dotenv import load_dotenv
 from PIL import Image
-from transformers import Sam3TrackerVideoModel, Sam3TrackerVideoProcessor, Sam3VideoModel, Sam3VideoProcessor
+
+load_dotenv()  # Load environment variables from .env file if present
+
+from transformers import (
+    Sam3VideoModel,
+    Sam3VideoProcessor,
+)
 from transformers.video_utils import load_video
+
+################################################################################
+# Visualization & Saving Utilities (Imported from test_transformers_stream.py)
+################################################################################
 
 
 def frame_to_bgr(frame):
@@ -56,61 +90,7 @@ def draw_top_right_counts(image, counts):
         text_y += text_height + line_gap
 
 
-def load_point_tracks(path):
-    if path is None:
-        return None
-
-    track_path = Path(path)
-    if not track_path.exists():
-        return None
-
-    with open(track_path, "r", encoding="utf-8") as handle:
-        payload = json.load(handle)
-
-    tracks = payload.get("tracks") if isinstance(payload, dict) else None
-    if not isinstance(tracks, list):
-        raise ValueError(f"Point prompt file must contain a top-level 'tracks' list: {track_path}")
-    
-
-    return tracks
-
-
-def frame_points_for_tracks(tracks, frame_idx, frame_width, frame_height):
-    if not tracks or frame_idx < 0 or frame_idx >= len(tracks):
-        return []
-
-    frame_points = tracks[frame_idx]
-    if isinstance(frame_points, dict):
-        frame_points = frame_points.get("points") or frame_points.get("tracks") or []
-
-    if not isinstance(frame_points, list):
-        return []
-
-    cleaned_points = []
-    for point in frame_points:
-        if not isinstance(point, (list, tuple)) or len(point) < 2:
-            continue
-
-        try:
-            x_coord = float(point[0])
-            y_coord = float(point[1])
-        except (TypeError, ValueError):
-            continue
-
-        if 0.0 <= x_coord <= 1.0 and 0.0 <= y_coord <= 1.0:
-            x_coord *= float(frame_width)
-            y_coord *= float(frame_height)
-
-        cleaned_points.append([x_coord, y_coord])
-
-    return cleaned_points
-
-
 def mask_to_bool_array(mask, fill_holes=True, remove_sprinkles=True, sprinkle_threshold=150):
-    """
-    Natively recreates SAM3's post-processing cleanup on the CPU using OpenCV.
-    Fills internal mask holes and filters out noisy background components ('sprinkles').
-    """
     mask_array = mask.detach().cpu().numpy() if torch.is_tensor(mask) else np.asarray(mask)
 
     while mask_array.ndim > 2 and 1 in mask_array.shape:
@@ -122,22 +102,19 @@ def mask_to_bool_array(mask, fill_holes=True, remove_sprinkles=True, sprinkle_th
     if mask_array.ndim != 2:
         return None
 
-    # Convert to standard binary image matrix (0 or 255)
     binary_mask = (mask_array > 0).astype(np.uint8) * 255
     if not np.any(binary_mask):
         return binary_mask > 0
 
-    # 1. Custom Hole Filling: Find all structural contours and draw them solid
     if fill_holes:
         contours, _ = cv2.findContours(binary_mask, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
         for i in range(len(contours)):
             cv2.drawContours(binary_mask, contours, i, 255, -1)
 
-    # 2. Custom Sprinkle Removal: Compute component statistics and delete tiny island noise
     if remove_sprinkles:
         num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(binary_mask)
         cleaned_mask = np.zeros_like(binary_mask)
-        for i in range(1, num_labels):  # Index 0 is background
+        for i in range(1, num_labels):
             if stats[i, cv2.CC_STAT_AREA] >= sprinkle_threshold:
                 cleaned_mask[labels == i] = 255
         binary_mask = cleaned_mask
@@ -146,7 +123,6 @@ def mask_to_bool_array(mask, fill_holes=True, remove_sprinkles=True, sprinkle_th
 
 
 def mask_to_bbox(mask):
-    # Runs the custom hole-filled and sprinkle-removed mask array
     mask_bool = mask_to_bool_array(mask)
     if mask_bool is None or not np.any(mask_bool):
         return None
@@ -181,280 +157,516 @@ def save_class_tinted_overlay(frame_bgr, object_ids, masks, id_to_clean_class, c
     cv2.imwrite(output_path, np.clip(overlay, 0, 255).astype(np.uint8))
 
 
-# 1. Device Configuration (Reverted to bfloat16 for peak VRAM efficiency)
-if torch.cuda.is_available():
-    device_index = 1 if torch.cuda.device_count() > 1 else 0
-    device = f"cuda:{device_index}"
-    model_dtype = torch.bfloat16
-else:
-    device = "cpu"
-    model_dtype = torch.float32
+################################################################################
+# Core Utilities
+################################################################################
 
-# 2. Load Video Frames
-video_frames, _ = load_video("./data/bread_occlusion_fps5.mp4")
 
-# Extract properties from seed frame upfront to allow 0-frame session registrations
-seed_frame_idx = 0
-seed_frame_cv = frame_to_bgr(video_frames[seed_frame_idx])
-frame_height, frame_width = seed_frame_cv.shape[:2]
+def parse_args():
+    parser = argparse.ArgumentParser()
 
-# 3. CONFIGURATION TOGGLE
-load_point_prompts = False  # Set to True for Point Tracking, False for Text Tracking
-output_subname = "transformers_streamed" if load_point_prompts else "transformers_streamed_bread_occlusion"
-output_dir = f"output/{output_subname}"
-
-text_concepts = {
-    "bread": "bread",
-    # "cheese_text": "square yellow cheese slice with smooth flat surface",
-}
-long_prompt_to_short_name = {long_desc: short for short, long_desc in text_concepts.items()}
-
-point_concepts = {
-    "bread_point_1": "./data/fiveguys/bread_tracks.json",
-    "bread_point_2": "./data/fiveguys/bread_tracks.json",
-    "cheese_point": "./data/fiveguys/cheese_tracks.json"
-}
-
-point_id_to_class = {}
-
-# =====================================================================
-# BRANCH A: POINT TRACKING CONFIGURATION (TRUE EMPTY SESSION)
-# =====================================================================
-if load_point_prompts:
-    model = Sam3TrackerVideoModel.from_pretrained("facebook/sam3", torch_dtype=model_dtype).to(device)
-    processor = Sam3TrackerVideoProcessor.from_pretrained("facebook/sam3")
-    all_short_names = list(point_concepts.keys())
-
-    # Natively initialize with ZERO pre-loaded frames 
-    inference_session = processor.init_video_session(
-        inference_device=device,
-        processing_device="cpu",       
-        video_storage_device="cpu",     
-        dtype=torch.bfloat16            
+    parser.add_argument(
+        "--video",
+        required=True,
+        type=Path,
+        help="Input video.",
     )
 
-    obj_ids_for_frame = []
-    input_points_for_frame = []
-    input_labels_for_frame = []
-
-    for idx, (class_name, tracks_path) in enumerate(point_concepts.items()):
-        obj_id = 100 + idx  
-        point_id_to_class[obj_id] = class_name
-        print(f"Loading point tracks for {class_name} from {tracks_path}")
-        tracks = load_point_tracks(tracks_path)
-        if tracks:
-            positive_points = frame_points_for_tracks(tracks, seed_frame_idx, frame_width, frame_height)
-            if class_name == "bread_point_1":
-                positive_points = positive_points[:2]  
-            elif class_name == "bread_point_2":
-                positive_points = positive_points[2:]  
-            print("\t positive points: ", positive_points)
-            
-            if positive_points:
-                obj_ids_for_frame.append(obj_id)
-                input_points_for_frame.append(positive_points)
-                input_labels_for_frame.append([1] * len(positive_points))
-    
-    negative_points_for_frame = [[] for _ in obj_ids_for_frame]
-    negative_labels_for_frame = [[] for _ in obj_ids_for_frame]
-    for i, obj_id in enumerate(obj_ids_for_frame):
-        for j, other_obj_id in enumerate(obj_ids_for_frame):
-            if i != j:
-                negative_points_for_frame[i].extend(input_points_for_frame[j])
-                negative_labels_for_frame[i].extend([0] * len(input_points_for_frame[j]))
-
-    for i in range(len(obj_ids_for_frame)):
-        input_points_for_frame[i].extend(negative_points_for_frame[i])
-        input_labels_for_frame[i].extend(negative_labels_for_frame[i])
-        
-    for i, obj_id in enumerate(obj_ids_for_frame):
-        debug_frame = seed_frame_cv.copy()
-        class_name = point_id_to_class.get(obj_id, f"object_{obj_id}")
-        points = input_points_for_frame[i]
-        labels = input_labels_for_frame[i]
-        
-        for point, label in zip(points, labels):
-            x, y = int(point[0]), int(point[1])
-            color = (0, 255, 0) if label == 1 else (0, 0, 255)
-            cv2.circle(debug_frame, (x, y), 5, color, -1)
-        
-        cv2.imwrite(f"{output_dir}/debug_input_frame_{class_name}.jpg", debug_frame)
-
-    if obj_ids_for_frame:
-        # Crucial configuration shift: must pass original_size when initializing an open stream
-        processor.add_inputs_to_inference_session(
-            inference_session=inference_session,
-            frame_idx=seed_frame_idx,
-            obj_ids=obj_ids_for_frame,
-            input_points=[input_points_for_frame],  
-            input_labels=[input_labels_for_frame],
-            original_size=(frame_height, frame_width)  
-        )
-
-# =====================================================================
-# BRANCH B: TEXT TRACKING CONFIGURATION (TRUE EMPTY SESSION)
-# =====================================================================
-else:
-    model = Sam3VideoModel.from_pretrained("facebook/sam3", torch_dtype=model_dtype).to(device)
-    processor = Sam3VideoProcessor.from_pretrained("facebook/sam3")
-    all_short_names = list(text_concepts.keys())
-
-    # Initialize empty streaming session here too
-    inference_session = processor.init_video_session(
-        inference_device=device,
-        processing_device="cpu",       
-        video_storage_device="cpu",     
-        dtype=torch.bfloat16            
+    parser.add_argument(
+        "--prompt",
+        action="append",
+        required=True,
+        help="Text prompt. Can be specified multiple times.",
     )
 
-    for detailed_description in text_concepts.values():
-        inference_session = processor.add_text_prompt(
-            inference_session=inference_session,
-            text=detailed_description,
+    parser.add_argument(
+        "--prune-every",
+        type=int,
+        default=0,
+        help="Restart inference session every N frames. 0 = never.",
+    )
+
+    parser.add_argument(
+        "--chunk-size",
+        type=int,
+        default=1,
+        help="Frames processed before printing progress.",
+    )
+
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=Path("memory_benchmark"),
+    )
+
+    parser.add_argument(
+        "--model",
+        default="facebook/sam3",
+    )
+
+    parser.add_argument(
+        "--dtype",
+        choices=["bf16", "fp16", "fp32"],
+        default="bf16",
+    )
+
+    return parser.parse_args()
+
+
+def get_dtype(dtype: str):
+    if dtype == "bf16":
+        return torch.bfloat16
+    if dtype == "fp16":
+        return torch.float16
+    return torch.float32
+
+
+def gpu_stats(device):
+    if not torch.cuda.is_available():
+        return {}
+
+    return {
+        "allocated_gb": torch.cuda.memory_allocated(device) / 1024 ** 3,
+        "reserved_gb": torch.cuda.memory_reserved(device) / 1024 ** 3,
+        "max_allocated_gb": torch.cuda.max_memory_allocated(device) / 1024 ** 3,
+        "max_reserved_gb": torch.cuda.max_memory_reserved(device) / 1024 ** 3,
+    }
+
+
+def cpu_memory_gb():
+    process = psutil.Process(os.getpid())
+    return process.memory_info().rss / 1024 ** 3
+
+def log_memory(prefix, device):
+    cpu = cpu_memory_gb()
+
+    if torch.cuda.is_available():
+        alloc = torch.cuda.memory_allocated(device) / 1024**3
+        reserved = torch.cuda.memory_reserved(device) / 1024**3
+        print(
+            f"{prefix}"
+            f"CPU={cpu:.2f} GB | "
+            f"GPU alloc={alloc:.2f} GB | "
+            f"GPU reserved={reserved:.2f} GB"
+        )
+    else:
+        print(f"{prefix}CPU={cpu:.2f} GB")
+
+################################################################################
+# Session Helpers
+################################################################################
+
+def create_session(processor, prompts, device, dtype):
+    session = processor.init_video_session(
+        inference_device=device,
+        processing_device="cpu",
+        video_storage_device="cpu",
+        dtype=dtype,
+    )
+
+    for prompt in prompts:
+        session = processor.add_text_prompt(
+            inference_session=session,
+            text=prompt,
         )
 
+    return session
 
-# Setup directory structures
-crop_base_dir = f"{output_dir}/saved_bboxes"
-annotated_dir = f"{output_dir}/annotated_frames"
-overlay_dir = f"{output_dir}/segmentation_overlays"
-os.makedirs(crop_base_dir, exist_ok=True)
-os.makedirs(annotated_dir, exist_ok=True)
-os.makedirs(overlay_dir, exist_ok=True)
 
-for short_name in all_short_names:
-    os.makedirs(os.path.join(crop_base_dir, short_name), exist_ok=True)
+################################################################################
+# Benchmark Main Execution
+################################################################################
 
-class_colors = {
-    "bread_text": (0, 215, 255),
-    "cheese_text": (0, 255, 128),
-    "bread_point": (255, 0, 255),
-    "cheese_point": (255, 255, 0),
-}
 
-# =====================================================================
-# 5. TRUE ASYNCHRONOUS MICRO-BATCH STREAMING LOOP
-# =====================================================================
-outputs_per_frame = {}
-total_frames = len(video_frames)
-current_idx = 0
+def main():
 
-while current_idx < total_frames:
-    # Pick a random size of frames arriving together from our "network stream"
-    chunk_size = 15
-    end_idx = min(current_idx + chunk_size, total_frames)
-    print(f"\n>>> [OpenFilter Simulator] Chunk Arrived! Processing {end_idx - current_idx} frames step-by-step...")
-    
-    # Process sequential frames one-by-one exactly like an OpenFilter pipe
-    for frame_idx in range(current_idx, end_idx):
-        frame = video_frames[frame_idx]
-        frame_cv = frame_to_bgr(frame)
-        frame_height, frame_width = frame_cv.shape[:2]
+    args = parse_args()
 
-        # Standard preprocessing on the standalone arriving image frame
-        inputs = processor(images=frame, return_tensors="pt").to(device)
-        if model_dtype == torch.bfloat16:
-            inputs["pixel_values"] = inputs["pixel_values"].to(torch.bfloat16)
+    # Define paths for artifact retention
+    crop_base_dir = args.output_dir / "saved_bboxes"
+    annotated_dir = args.output_dir / "annotated_frames"
+    overlay_dir = args.output_dir / "segmentation_overlays"
 
-        # True streaming forward pass: call model() directly with the single pixel tensor
-        # This appends features to the internal state memory structure on the fly
-        model_outputs = model(
-            inference_session=inference_session,
-            frame=inputs.pixel_values[0]
+    crop_base_dir.mkdir(parents=True, exist_ok=True)
+    annotated_dir.mkdir(parents=True, exist_ok=True)
+    overlay_dir.mkdir(parents=True, exist_ok=True)
+
+    # Dynamically build maps for short names and directory labels from prompt names
+    long_prompt_to_short_name = {}
+    all_short_names = []
+    for prompt in args.prompt:
+        short_name = prompt.lower().replace(" ", "_")[:20]
+        long_prompt_to_short_name[prompt] = short_name
+        all_short_names.append(short_name)
+        (crop_base_dir / short_name).mkdir(parents=True, exist_ok=True)
+
+    class_colors = {
+        "bread": (0, 215, 255),
+        "cheese": (0, 255, 128),
+    }
+
+    if torch.cuda.is_available():
+        device = "cuda:1"
+    else:
+        device = "cpu"
+
+    dtype = get_dtype(args.dtype)
+
+    print("Loading model...")
+
+    model = Sam3VideoModel.from_pretrained(
+        args.model,
+        torch_dtype=dtype,
+    ).to(device)
+
+    processor = Sam3VideoProcessor.from_pretrained(args.model)
+
+    print("Loading video...")
+
+    video_frames, _ = load_video(str(args.video))
+    # if args.prune_every > 0:
+    #     black_frame = np.zeros_like(video_frames[0])
+    #     # verify that the model can redetect objects after a session restart by inserting black frames
+    #     video_frames = np.concatenate([video_frames[0:args.prune_every-15], [black_frame] * (args.prune_every)], axis=0)
+    video_frames = np.concatenate([video_frames] * 100, axis=0)  # Duplicate frames to simulate a longer video
+    print(f"{len(video_frames)} frames")
+
+    session = create_session(
+        processor,
+        args.prompt,
+        device,
+        dtype,
+    )
+
+    csv_path = args.output_dir / f"memory_prune_every_{args.prune_every}.csv"
+
+    # Store mask data across iterations for session restarts
+    last_mask_data = None
+
+    with open(csv_path, "w", newline="") as f:
+
+        writer = csv.writer(f)
+
+        writer.writerow(
+            [
+                "frame",
+                "restart",
+                "allocated_gb",
+                "reserved_gb",
+                "max_allocated_gb",
+                "max_reserved_gb",
+                "cpu_gb",
+                "frame_time_ms",
+                "num_objects",
+            ]
         )
 
-        if load_point_prompts:
-            processed_masks = processor.post_process_masks(
-                [model_outputs.pred_masks],
-                original_sizes=[[frame_height, frame_width]],  # Swapped to localized frame sizes
-                binarize=True,
-            )[0]
-            
-            if hasattr(model_outputs, "object_score_logits") and model_outputs.object_score_logits is not None:
-                scores = torch.sigmoid(model_outputs.object_score_logits).reshape(-1)
-            else:
-                scores = torch.ones(len(model_outputs.object_ids))
-                
-            processed_outputs = {
-                "object_ids": list(model_outputs.object_ids or []),
-                "masks": processed_masks,
-                "scores": scores,
-            }
-        else:
-            processed_outputs = processor.postprocess_outputs(
-                inference_session, 
-                model_outputs,
-                original_sizes=inputs.original_sizes  # Automatically scales results back during streaming
+        for frame_idx, frame in enumerate(video_frames):
+
+            restarted = False
+
+            if (
+                args.prune_every > 0
+                and frame_idx > 0
+                and frame_idx % args.prune_every == 0
+            ):
+                print(f"\n===== Pruning old session memory @ frame {frame_idx} (Preserving IDs) =====")
+
+
+                history_buffer_window = 30
+                cutoff_frame = frame_idx - history_buffer_window
+
+                log_memory("Before prune: ", device)
+
+                #
+                # ------------------------------------------------------------------
+                # GPU MEMORY
+                # ------------------------------------------------------------------
+                #
+
+                # if hasattr(session, "output_dict_per_obj"):
+                #     logged=False
+                #     print("output_dict_per_obj keys:", session.output_dict_per_obj.keys())
+                #     for obj_store in session.output_dict_per_obj.values():
+                #         print("obj_store keys:", obj_store.keys())
+                #         for frame_dict_key, frame_dict in obj_store.items():
+                #             print(f"Frame dict '{frame_dict_key}' keys:", frame_dict.keys())
+                #             if isinstance(frame_dict, dict):
+                #                 for f_idx in list(frame_dict.keys()):
+                #                     print(f"Checking frame_dict for key: {f_idx}")
+                #                     print(frame_dict[f_idx].keys())
+                #                     if isinstance(f_idx, int) and f_idx < cutoff_frame:
+                #                         del frame_dict[f_idx]
+                if hasattr(session, "output_dict_per_obj"):
+                    print("output_dict_per_obj keys:", session.output_dict_per_obj.keys())
+                    for obj_idx, obj_store in session.output_dict_per_obj.items():
+                        # 1. STRICTLY target non-conditioning frames
+                        if "non_cond_frame_outputs" in obj_store:
+                            non_cond_dict = obj_store["non_cond_frame_outputs"]
+                            print(f"Object {obj_idx} non_cond_frame_outputs keys before pruning: {list(non_cond_dict.keys())}")
+                            for f_idx in list(non_cond_dict.keys()):
+                                print(f"Checking non_cond_dict for key: {f_idx}")
+                                print(non_cond_dict[f_idx].keys())
+                                if isinstance(f_idx, int) and f_idx < cutoff_frame:
+                                    del non_cond_dict[f_idx]
+                            print(f"Object {obj_idx} non_cond_frame_outputs keys after pruning: {list(non_cond_dict.keys())}")
+                        # Optional: If you MUST prune conditioning frames because of extreme memory limits,
+                        # ensure you keep at least the very first frame (the initial prompt)
+                        if "cond_frame_outputs" in obj_store:
+                            cond_dict = obj_store["cond_frame_outputs"]
+                            
+                            if len(cond_dict) > 10:
+                                print(f"Object {obj_idx} cond_frame_outputs keys before pruning: {list(cond_dict.keys())}")
+                                sorted_keys = sorted(cond_dict.keys())
+                                
+                                # Identify the exact keys to keep
+                                keys_to_keep = set(sorted_keys[:1] + sorted_keys[-9:])
+                                
+                                # Find the keys to delete by finding the difference between sets
+                                keys_to_delete = set(cond_dict.keys()) - keys_to_keep
+                                
+                                for f_idx in keys_to_delete:
+                                    if isinstance(f_idx, int):
+                                        del cond_dict[f_idx]
+                                        
+                                print(f"Object {obj_idx} cond_frame_outputs keys after pruning: {list(cond_dict.keys())}")
+                #
+                # ------------------------------------------------------------------
+                # CPU MEMORY
+                # ------------------------------------------------------------------
+                #
+
+                # Cached processed image tensors
+                if hasattr(session, "processed_frames"):
+                    before = len(session.processed_frames)
+                    for f_idx in list(session.processed_frames.keys()):
+                        if f_idx < cutoff_frame:
+                            del session.processed_frames[f_idx]
+                    after = len(session.processed_frames)
+
+                # tracker_meta = getattr(session, "tracker_metadata", None)
+
+                # if tracker_meta is not None:
+
+                #     score_history = tracker_meta.get("obj_id_to_tracker_score_frame_wise")
+                #     if isinstance(score_history, dict):
+                #         before = len(score_history)
+                #         for f_idx in list(score_history.keys()):
+                #             if f_idx < cutoff_frame:
+                #                 del score_history[f_idx]
+                #         print(f"tracker_score_history: {before} -> {len(score_history)}")
+
+                #     suppressed = tracker_meta.get("suppressed_obj_ids")
+                #     if isinstance(suppressed, dict):
+                #         before = len(suppressed)
+                #         for f_idx in list(suppressed.keys()):
+                #             if f_idx < cutoff_frame:
+                #                 del suppressed[f_idx]
+                #         print(f"suppressed_obj_ids: {before} -> {len(suppressed)}")
+
+                #     overlap = tracker_meta.get("overlap_pair_to_frame_inds")
+                #     if isinstance(overlap, dict):
+                #         removed = 0
+                #         for pair, frame_list in overlap.items():
+                #             if isinstance(frame_list, list):
+                #                 old = len(frame_list)
+                #                 overlap[pair] = [f for f in frame_list if f >= cutoff_frame]
+                #                 removed += old - len(overlap[pair])
+                #         print(f"overlap history removed {removed} frame references")
+
+                #     unmatched = tracker_meta.get("unmatched_frame_inds")
+                #     if isinstance(unmatched, dict):
+                #         removed = 0
+                #         for obj_id, frame_list in unmatched.items():
+                #             if isinstance(frame_list, list):
+                #                 old = len(frame_list)
+                #                 unmatched[obj_id] = [f for f in frame_list if f >= cutoff_frame]
+                #                 removed += old - len(unmatched[obj_id])
+                #         print(f"unmatched history removed {removed} frame references")
+
+                #
+                # ------------------------------------------------------------------
+                # Cleanup
+                # ------------------------------------------------------------------
+                #
+
+                gc.collect()
+
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+
+                log_memory("After prune : ", device)
+
+               
+
+                # Keep this True so your CSV logger still tracks when a memory clear occurs
+                restarted = True
+
+            frame_cv = frame_to_bgr(frame)
+            frame_height, frame_width = frame_cv.shape[:2]
+
+            inputs = processor(
+                images=frame,
+                return_tensors="pt",
+            ).to(device)
+
+            if dtype != torch.float32:
+                inputs["pixel_values"] = inputs["pixel_values"].to(dtype)
+
+            start = time.perf_counter()
+
+            outputs = model(
+                inference_session=session,
+                frame=inputs.pixel_values[0],
+                frame_idx=frame_idx,
             )
+
+            elapsed_ms = (time.perf_counter() - start) * 1000
+
+            processed = processor.postprocess_outputs(
+                session,
+                outputs,
+                original_sizes=inputs.original_sizes,
+            )
+
+            num_objects = len(processed.get("object_ids", []))
+            print(processed.keys())
+            # Update tracked mask data with current frame results
+            # =====================================================================
+            # Visual Processing and Saving Execution Engine
+            # =====================================================================
+            annotated_frame = frame_cv.copy()
+            masks = processed.get("masks", processed.get("masks", []))
+            scores = processed.get("scores", [])
+            object_ids = processed.get("object_ids", [])
+            class_counts = {class_name: 0 for class_name in all_short_names}
             
-        outputs_per_frame[frame_idx] = processed_outputs
-        annotated_frame = frame_cv.copy()
+            prompt_to_obj_ids = processed.get("prompt_to_obj_ids", {})
+            id_to_clean_class = {}
 
-        masks = processed_outputs.get("masks", [])
-        scores = processed_outputs.get("scores", [])
-        object_ids = processed_outputs.get("object_ids", [])
-        class_counts = {class_name: 0 for class_name in all_short_names}
-        
-        prompt_to_obj_ids = processed_outputs.get("prompt_to_obj_ids", {})
-        id_to_clean_class = {}
+            for long_prompt, detected_ids in prompt_to_obj_ids.items():
+                short_name = long_prompt_to_short_name.get(long_prompt, "unknown_text")
+                for oid in detected_ids:
+                    id_to_clean_class[int(oid)] = short_name
 
-        for long_prompt, detected_ids in prompt_to_obj_ids.items():
-            short_name = long_prompt_to_short_name.get(long_prompt, "unknown_text")
-            for oid in detected_ids:
-                id_to_clean_class[int(oid)] = short_name
+            for i, obj_id in enumerate(object_ids):
+                obj_id_int = int(obj_id.item() if torch.is_tensor(obj_id) else obj_id)
+                score_tensor = scores[i] if len(scores) > i else torch.tensor(0.0)
+                score = float(score_tensor.item() if torch.is_tensor(score_tensor) else score_tensor)
+                
+                bbox = mask_to_bbox(masks[i]) if len(masks) > i else None
+                short_name = id_to_clean_class.get(obj_id_int, f"object_{obj_id_int}")
+                
+                if short_name in class_counts:
+                    class_counts[short_name] += 1
 
-        for oid, short_name in point_id_to_class.items():
-            id_to_clean_class[int(oid)] = short_name
-        
-        for i, obj_id in enumerate(object_ids):
-            obj_id_int = int(obj_id.item() if torch.is_tensor(obj_id) else obj_id)
-            score_tensor = scores[i] if len(scores) > i else torch.tensor(0.0)
-            score = float(score_tensor.item() if torch.is_tensor(score_tensor) else score_tensor)
-            
-            bbox = mask_to_bbox(masks[i]) if len(masks) > i else None
+                if bbox is None:
+                    continue
 
-            short_name = id_to_clean_class.get(obj_id_int, f"object_{obj_id_int}")
-            if short_name in class_counts:
-                class_counts[short_name] += 1
+                xmin, ymin, xmax, ymax = bbox
+                xmin, ymin = max(0, xmin), max(0, ymin)
+                xmax, ymax = min(frame_width, xmax), min(frame_height, ymax)
+                
+                if xmax > xmin and ymax > ymin:
+                    crop = frame_cv[ymin:ymax, xmin:xmax]
+                    crop_filename = f"frame_{frame_idx:04d}_id_{obj_id_int}.jpg"
+                    crop_path = crop_base_dir / short_name / crop_filename
+                    cv2.imwrite(str(crop_path), crop)
+                
+                label = f"{short_name} {obj_id_int} ({score:.2f})"
+                cv2.rectangle(annotated_frame, (xmin, ymin), (xmax, ymax), (0, 255, 0), 2)
+                
+                (text_w, text_h), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+                label_top = max(0, ymin - text_h - 10)
+                cv2.rectangle(annotated_frame, (xmin, label_top), (xmin + text_w, ymin), (0, 255, 0), -1)
+                
+                text_y = ymin - 5 if ymin - 5 > text_h else min(frame_height - 5, ymax + text_h + 5)
+                cv2.putText(annotated_frame, label, (xmin, text_y), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1, cv2.LINE_AA)
+                            
+            draw_top_right_counts(annotated_frame, class_counts)
 
-            if bbox is None:
-                continue
+            cv2.imwrite(str(annotated_dir / f"frame_{frame_idx:04d}.jpg"), annotated_frame)
 
-            xmin, ymin, xmax, ymax = bbox
-            xmin, ymin = max(0, xmin), max(0, ymin)
-            xmax, ymax = min(frame_width, xmax), min(frame_height, ymax)
-            
-            if xmax > xmin and ymax > ymin:
-                crop = frame_cv[ymin:ymax, xmin:xmax]
-                crop_filename = f"frame_{frame_idx:04d}_id_{obj_id_int}.jpg"
-                crop_path = os.path.join(crop_base_dir, short_name, crop_filename)
-                cv2.imwrite(crop_path, crop)
-            
-            label = f"{short_name} {obj_id_int} ({score:.2f})"
-            cv2.rectangle(annotated_frame, (xmin, ymin), (xmax, ymax), (0, 255, 0), 2)
-            
-            (text_w, text_h), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
-            label_top = max(0, ymin - text_h - 10)
-            cv2.rectangle(annotated_frame, (xmin, label_top), (xmin + text_w, ymin), (0, 255, 0), -1)
-            
-            text_y = ymin - 5 if ymin - 5 > text_h else min(frame_height - 5, ymax + text_h + 5)
-            cv2.putText(annotated_frame, label, (xmin, text_y), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1, cv2.LINE_AA)
-                        
-        draw_top_right_counts(annotated_frame, class_counts)
+            save_class_tinted_overlay(
+                frame_cv,
+                object_ids,
+                masks,
+                id_to_clean_class,
+                class_colors,
+                str(overlay_dir / f"frame_{frame_idx:04d}.jpg")
+            )
 
-        cv2.imwrite(os.path.join(annotated_dir, f"frame_{frame_idx:04d}.jpg"), annotated_frame)
+            # =====================================================================
+            # Stats Logging Execution
+            # =====================================================================
+            stats = gpu_stats(device)
 
-        save_class_tinted_overlay(
-            frame_cv,
-            object_ids,
-            masks,
-            id_to_clean_class,
-            class_colors,
-            os.path.join(overlay_dir, f"frame_{frame_idx:04d}.jpg")
-        )
-        
-        print(f"Processed Frame {frame_idx} (Mode: {output_subname})")
+            writer.writerow(
+                [
+                    frame_idx,
+                    restarted,
+                    stats.get("allocated_gb", 0),
+                    stats.get("reserved_gb", 0),
+                    stats.get("max_allocated_gb", 0),
+                    stats.get("max_reserved_gb", 0),
+                    cpu_memory_gb(),
+                    elapsed_ms,
+                    num_objects,
+                ]
+            )
 
-    # Slide our micro-batch processing window pointer forward
-    current_idx = end_idx
+            if frame_idx % args.chunk_size == 0:
+
+                print(
+                    f"Frame {frame_idx:5d} | "
+                    f"Alloc {stats.get('allocated_gb',0):6.2f} GB | "
+                    f"Reserved {stats.get('reserved_gb',0):6.2f} GB | "
+                    f"CPU {cpu_memory_gb():6.2f} GB | "
+                    f"Objects {num_objects}"
+                )
+
+                # Optional introspection of inference session
+                try:
+                    attrs = vars(session)
+
+                    interesting = [
+                        k
+                        for k in attrs.keys()
+                        if any(
+                            x in k.lower()
+                            for x in (
+                                "cache",
+                                "memory",
+                                "feature",
+                                "embedding",
+                                "prompt",
+                            )
+                        )
+                    ]
+
+                    if interesting:
+                        print("Session state:")
+                        for k in sorted(interesting):
+                            value = attrs[k]
+
+                            try:
+                                size = len(value)
+                            except Exception:
+                                size = "-"
+
+                            print(f"    {k:35s} len={size}")
+
+                except Exception:
+                    pass
+
+    with open(args.output_dir / "config.json", "w") as f:
+        json.dump(vars(args), f, indent=2, default=str)
+
+    print()
+    print("Done.")
+    print(f"Results written to {csv_path}")
+
+
+if __name__ == "__main__":
+    main()

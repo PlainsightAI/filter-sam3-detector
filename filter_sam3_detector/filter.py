@@ -7,6 +7,7 @@ import time
 from typing import Optional, ClassVar
 from pathlib import Path
 import pydantic
+import gc
 
 import torch
 import numpy as np
@@ -235,18 +236,12 @@ class FilterSAM3DetectorConfigSchema(FilterConfigBase):
         description="Use video mode with temporal tracking",
         json_schema_extra={"x-openfilter-ui": {"group": "Video Tracking"}},
     )
-    video_detection_interval: int = Field(
-        default=5, json_schema_extra={"x-openfilter-ui": {"group": "Video Tracking"}}
+    prune_video_memory: bool = Field(
+        default=True,
+        description="Prune video inference state to reduce memory usage",
+        json_schema_extra={"x-openfilter-ui": {"group": "Video Tracking"}},
     )
-    video_min_tracking_confidence: float = Field(
-        default=0.3,
-        ge=0.0,
-        le=1.0,
-        json_schema_extra={
-            "x-openfilter-ui": {"group": "Video Tracking", "widget": "slider"}
-        },
-    )
-
+    
     # Reference Boxes and Layout
     positive_boxes: Optional[List[Any]] = Field(
         default=None,
@@ -532,8 +527,7 @@ class FilterSAM3Detector(Filter):
             "temporal_label_field": None,  # Detection field for class label (None = use text_prompt)
             # Video mode options (experimental - uses memory-based tracking)
             "enable_video_mode": False,  # Use video mode with temporal tracking
-            "video_detection_interval": 5,  # Frames between full detection runs in video mode
-            "video_min_tracking_confidence": 0.3,  # Re-detect if tracking confidence drops
+            "prune_video_memory": True,  # Prune video inference state to reduce memory usage
             # Reference boxes on the original image (SAM3-style): list of [x, y, w, h] in pixels per box
             "positive_boxes": None,
             "negative_boxes": None,
@@ -603,8 +597,7 @@ class FilterSAM3Detector(Filter):
             "grounding_cache_frames": int,
             # Video mode env mappings
             "enable_video_mode": bool,
-            "video_detection_interval": int,
-            "video_min_tracking_confidence": float,
+            "prune_video_memory": bool,
             # Cross-prompt overlap / confusion detection
             "confusion_detection_enabled": bool,
             "confusion_iou_threshold": float,
@@ -758,7 +751,10 @@ class FilterSAM3Detector(Filter):
             raise ValueError(
                 f"confusion_iou_threshold must be between 0 and 1, got {confusion_iou_threshold}"
             )
-
+        prune_video_memory = config.get("prune_video_memory", True)
+        if not isinstance(prune_video_memory, bool):
+            raise ValueError(f"prune_video_memory must be a boolean, got {prune_video_memory}")
+            
         class_delimiter = config.get("class_delimiter")
         prompt_delimiter = config.get("prompt_delimiter")
         if not class_delimiter or not prompt_delimiter:
@@ -1016,10 +1012,8 @@ class FilterSAM3Detector(Filter):
 
         # Video mode configuration
         self.enable_video_mode = config.get("enable_video_mode", False)
-        self.video_detection_interval = config.get("video_detection_interval", 5)
-        self.video_min_tracking_confidence = config.get(
-            "video_min_tracking_confidence", 0.3
-        )
+        self.prune_video_memory = config.get("prune_video_memory", True)
+       
         self.video_processor = None
         if self.enable_video_mode and (
             self.exemplars_path
@@ -1740,6 +1734,70 @@ class FilterSAM3Detector(Filter):
             )
             return frame
 
+        # --- MEMORY PRUNING BLOCK (REPLACES OLD RESTART TRIGGER) ---
+        prune_every_n_frames = 30
+        video_memory_prune_to = 15
+        max_conditioning_frames = 10 # keep only the first and last 9 conditioning frames, delete the rest
+        if (
+            self.prune_video_memory and
+            self.frame_counter != 0 and
+            self.frame_counter % prune_every_n_frames == 0
+        ):
+            logger.info(f"===== Pruning old session memory at frame {self.frame_counter} (Preserving IDs) =====")
+            
+            # Keep a small buffer window of recent frames so the model has local temporal context
+            cutoff_frame = self.frame_counter - video_memory_prune_to
+            
+            if torch.cuda.is_available():
+                allocated_gb = torch.cuda.memory_allocated(self.device) / 1024 ** 3
+                reserved_gb = torch.cuda.memory_reserved(self.device) / 1024 ** 3
+                logger.debug("Memory usage before: allocated=%.2f GB, reserved=%.2f GB", allocated_gb, reserved_gb)
+            
+            #------------------------------------------------------------------
+            # GPU MEMORY
+            #------------------------------------------------------------------
+            if hasattr(self.video_inference_session, "output_dict_per_obj"):
+                for obj_idx, obj_store in self.video_inference_session.output_dict_per_obj.items():
+                    # 1. STRICTLY target non-conditioning frames
+                    if "non_cond_frame_outputs" in obj_store:
+                        non_cond_dict = obj_store["non_cond_frame_outputs"]
+                        for f_idx in list(non_cond_dict.keys()):
+                            if isinstance(f_idx, int) and f_idx < cutoff_frame:
+                                del non_cond_dict[f_idx]
+                                
+                    # 2. CONDITIONING frames: keep only the first and last 9 frames since conditioning frames are important. 
+                    if "cond_frame_outputs" in obj_store:
+                        cond_dict = obj_store["cond_frame_outputs"]
+                        if len(cond_dict) > max_conditioning_frames:
+                            sorted_keys = sorted(cond_dict.keys())
+                            
+                            # Identify the exact keys to keep
+                            keys_to_keep = set(sorted_keys[:1] + sorted_keys[-max_conditioning_frames:])
+                            
+                            # Find the keys to delete by finding the difference between sets
+                            keys_to_delete = set(cond_dict.keys()) - keys_to_keep
+                            for f_idx in keys_to_delete:
+                                if isinstance(f_idx, int):
+                                    del cond_dict[f_idx]
+                            
+            # ------------------------------------------------------------------
+            # CPU MEMORY
+            # ------------------------------------------------------------------
+            if hasattr(self.video_inference_session, "processed_frames"):
+                before = len(self.video_inference_session.processed_frames)
+                for f_idx in list(self.video_inference_session.processed_frames.keys()):
+                    if f_idx < cutoff_frame:
+                        del self.video_inference_session.processed_frames[f_idx]
+                after = len(self.video_inference_session.processed_frames)
+
+            # Force garbage collection to release the unreferenced tensors from VRAM
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                allocated_gb = torch.cuda.memory_allocated(self.device) / 1024 ** 3
+                reserved_gb = torch.cuda.memory_reserved(self.device) / 1024 ** 3
+                logger.debug("Memory usage after pruning: allocated=%.2f GB, reserved=%.2f GB", allocated_gb, reserved_gb)
+                
         image_bgr = frame.rw_bgr.image
         image_rgb = image_bgr[:, :, ::-1]
         pil_image = Image.fromarray(image_rgb)
@@ -1751,13 +1809,14 @@ class FilterSAM3Detector(Filter):
         model_outputs = self.video_model(
             inference_session=self.video_inference_session,
             frame=inputs.pixel_values[0],
+            frame_idx=self.frame_counter,
         )
         processed_outputs = self.video_processor.postprocess_outputs(
             self.video_inference_session,
             model_outputs,
             original_sizes=inputs.original_sizes,
         )
-
+        
         detections = self._video_outputs_to_detections(processed_outputs)
         canonical_dict, protege_list, classification_dict = self._normalize_detections(
             detections
