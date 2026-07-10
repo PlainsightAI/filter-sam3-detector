@@ -1013,7 +1013,7 @@ class FilterSAM3Detector(Filter):
         # Video mode configuration
         self.enable_video_mode = config.get("enable_video_mode", False)
         self.prune_video_memory = config.get("prune_video_memory", True)
-       
+        self.video_mode_topic = None # current video mode only supports a single topic; future versions may support multiple topics
         self.video_processor = None
         if self.enable_video_mode and (
             self.exemplars_path
@@ -1963,7 +1963,16 @@ class FilterSAM3Detector(Filter):
                 continue
 
             if self.enable_video_mode:
+                if self.video_mode_topic is None:
+                    self.video_mode_topic = topic
+                    
                 try:
+                    # video mode is only available for single topic support
+                    if topic != self.video_mode_topic:
+                        raise ValueError(
+                            f"Video mode processing is enabled, but is only supported for a single topic."
+                        )
+                        
                     video_frame = self._process_video_mode_frame(
                         frame, filter_frame_id
                     )
