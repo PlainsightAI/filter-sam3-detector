@@ -2,22 +2,21 @@
 SAM3 Detector filter release notes
 
 ## [Unreleased]
-
-## v0.1.22
-### Added 
-- Transformer's Sam3VideoModel support enabled
-
-### Removed
-- Streaming video processor and related tests removed
-
-
-
-
-
 ### Changed
 
 - Bump openfilter to 1.1.2
 - `detect_objects_video` example: `--prompt` now accepts multiple values (`--prompt "cup" "bowl"` or repeated `--prompt` flags), wiring them into the detector's `text_prompts`. Simplified the pipeline to write JSONL directly via the detector's built-in `output_path` (with annotated frames being written to `annotated_frames_output_dir` opt-in via `--visualize`), removing the `Recorder` and `ImageOut` sink filters.
+
+
+
+
+## v0.1.22
+### Added 
+- Transformer's Sam3VideoModel support enabled
+- Occasionally prunes session state to keep gpu memory under wraps. 
+
+### Removed
+- Streaming video processor and related tests removed
 
 ## v0.1.21 - 2026-07-09
 
