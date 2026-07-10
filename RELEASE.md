@@ -3,6 +3,17 @@ SAM3 Detector filter release notes
 
 ## [Unreleased]
 
+## v0.1.22
+### Added 
+- Transformer's Sam3VideoModel support enabled
+
+### Removed
+- Streaming video processor and related tests removed
+
+
+
+
+
 ### Changed
 
 - Bump openfilter to 1.1.2
