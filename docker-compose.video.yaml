@@ -27,13 +27,12 @@ services:
 
       # single prompt
       FILTER_TEXT_PROMPT: ${FILTER_TEXT_PROMPT}
-      # FILTER_ENABLE_VIDEO_MODE: true
-      # FILTER_PRUNE_VIDEO_MEMORY: true
+      FILTER_ENABLE_VIDEO_MODE: true
+      FILTER_PRUNE_VIDEO_MEMORY: true
 
       # multi prompt
       # FILTER_TEXT_PROMPTS: ${FILTER_TEXT_PROMPTS}
 
-      # Exemplar-based detection config
       FILTER_CONFIDENCE_THRESHOLD: ${CONFIDENCE_THRESHOLD:-0.5}
       FILTER_NMS_THRESHOLD: ${NMS_THRESHOLD:-0.1}
       FILTER_OUTPUT_LABEL: ${OUTPUT_LABEL:-exemplar_detections}
@@ -73,7 +72,3 @@ services:
 
 networks:
   filter-network:
-
-secrets:
-  hf_token:
-    environment: HF_TOKEN

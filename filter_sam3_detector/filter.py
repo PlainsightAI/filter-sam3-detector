@@ -1860,6 +1860,16 @@ class FilterSAM3Detector(Filter):
 
             detections.append(detection)
 
+        if len(detections) > self.max_detections:
+            detections.sort(key=lambda d: float(d.get("score", 0.0)), reverse=True)
+            logger.info(
+                "Video-mode detections truncated from %d to %d using max_detections=%d",
+                len(detections),
+                self.max_detections,
+                self.max_detections,
+            )
+            detections = detections[: self.max_detections]
+
         return detections
 
     def _process_video_mode_frame(

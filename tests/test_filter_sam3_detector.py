@@ -470,6 +470,32 @@ class TestFilterSAM3Detector(unittest.TestCase):
         self.assertIs(result, frame)
         self.assertEqual(frame.data, {})
 
+    def test_video_mode_applies_max_detections(self):
+        """Verify that video-mode detections are truncated to max_detections by score."""
+        from filter_sam3_detector.filter import FilterSAM3Detector
+
+        detector = FilterSAM3Detector.__new__(FilterSAM3Detector)
+        detector.config = {}
+        detector.output_masks = False
+        detector.max_detections = 2
+
+        processed_outputs = {
+            "object_ids": [1, 2, 3],
+            "scores": [0.25, 0.9, 0.5],
+            "boxes": [
+                [0.0, 0.0, 10.0, 10.0],
+                [10.0, 10.0, 20.0, 20.0],
+                [20.0, 20.0, 30.0, 30.0],
+            ],
+            "prompt_to_obj_ids": {"car": [1, 2, 3]},
+        }
+
+        detections = detector._video_outputs_to_detections(processed_outputs)
+
+        self.assertEqual(len(detections), 2)
+        self.assertGreaterEqual(detections[0]["score"], detections[1]["score"])
+        self.assertEqual([det["id"] for det in detections], [2, 3])
+
     def test_normalize_detections_validate_per_item(self):
         """Test that _normalize_detections validates detections per-item, dropping invalid ones but preserving valid ones."""
         from filter_sam3_detector.filter import FilterSAM3Detector
