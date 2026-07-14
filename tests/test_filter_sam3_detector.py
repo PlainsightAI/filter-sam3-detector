@@ -319,6 +319,35 @@ class TestFilterSAM3Detector(unittest.TestCase):
         self.assertEqual(normalized_twice.get("text_prompt"), "electric post")
         self.assertEqual(normalized_twice.get("confidence_threshold"), 0.85)
 
+    def test_deprecated_video_env_vars_warn(self):
+        """Test that deprecated video throttling env vars emit warnings instead of failing silently."""
+        from filter_sam3_detector.filter import FilterSAM3Detector
+        from openfilter.filter_runtime.filter import FilterConfig
+
+        original_env = {
+            "FILTER_VIDEO_DETECTION_INTERVAL": os.environ.get(
+                "FILTER_VIDEO_DETECTION_INTERVAL"
+            ),
+            "FILTER_VIDEO_MIN_TRACKING_CONFIDENCE": os.environ.get(
+                "FILTER_VIDEO_MIN_TRACKING_CONFIDENCE"
+            ),
+        }
+        try:
+            os.environ["FILTER_VIDEO_DETECTION_INTERVAL"] = "10"
+            os.environ["FILTER_VIDEO_MIN_TRACKING_CONFIDENCE"] = "0.7"
+            with self.assertLogs("filter_sam3_detector.filter", level="WARNING") as logs:
+                FilterSAM3Detector.normalize_config(FilterConfig({}))
+
+            warning_text = "\n".join(logs.output)
+            self.assertIn("FILTER_VIDEO_DETECTION_INTERVAL", warning_text)
+            self.assertIn("FILTER_VIDEO_MIN_TRACKING_CONFIDENCE", warning_text)
+        finally:
+            for key, value in original_env.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
     def test_single_output_handles_exception_gracefully(self):
         """Verify that single-output process handles exceptions gracefully by yielding a degraded frame."""
         from filter_sam3_detector.filter import FilterSAM3Detector
@@ -344,6 +373,7 @@ class TestFilterSAM3Detector(unittest.TestCase):
         detector.ref_images_paths = None
         detector.ref_images_negative_paths = None
         detector.enable_temporal_intervals = False
+        detector.enable_video_mode = False
         detector.output_filter_name = "SAM3Detector"
         detector.output_label = "sam3_detections"
         detector.viz_topic = ""

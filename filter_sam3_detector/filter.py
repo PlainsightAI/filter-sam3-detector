@@ -481,6 +481,22 @@ class FilterSAM3Detector(Filter):
         config = super().normalize_config(config)
         config = FilterSAM3DetectorConfig(config)
 
+        deprecated_video_keys = {
+            "video_detection_interval": "FILTER_VIDEO_DETECTION_INTERVAL",
+            "video_min_tracking_confidence": "FILTER_VIDEO_MIN_TRACKING_CONFIDENCE",
+        }
+        for deprecated_key, env_key in deprecated_video_keys.items():
+            if config.get(deprecated_key) is not None:
+                logger.warning(
+                    "%s is deprecated and ignored; video throttling/tracking confidence controls were removed without replacement.",
+                    deprecated_key,
+                )
+            if os.getenv(env_key) is not None:
+                logger.warning(
+                    "%s is deprecated and ignored; video throttling/tracking confidence controls were removed without replacement.",
+                    env_key,
+                )
+
         # NOTE: Existing comma-separated configs may need updating
         # NOTE: List inputs are treated as raw prompts (no class mapping)
 
