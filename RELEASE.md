@@ -8,8 +8,6 @@ SAM3 Detector filter release notes
 - `detect_objects_video` example: `--prompt` now accepts multiple values (`--prompt "cup" "bowl"` or repeated `--prompt` flags), wiring them into the detector's `text_prompts`. Simplified the pipeline to write JSONL directly via the detector's built-in `output_path` (with annotated frames being written to `annotated_frames_output_dir` opt-in via `--visualize`), removing the `Recorder` and `ImageOut` sink filters.
 
 
-
-
 ## v0.1.22
 ### Added 
 - Transformer's Sam3VideoModel support enabled

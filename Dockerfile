@@ -1,6 +1,5 @@
 # syntax=docker/dockerfile:1.4
-# PyTorch 2.9.1 with CUDA 12.8 supports sm_120 (RTX 50-series / Blackwell)
-FROM pytorch/pytorch:2.9.1-cuda12.8-cudnn9-runtime
+FROM pytorch/pytorch:2.12.1-cuda12.6-cudnn9-runtime
 
 # Install uv for fast, correct dependency resolution
 COPY --from=ghcr.io/astral-sh/uv:0.9.26 /uv /uvx /bin/
@@ -9,59 +8,88 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     UV_LINK_MODE=copy \
     UV_COMPILE_BYTECODE=1 \
-    UV_PYTHON_DOWNLOADS=never
+    UV_PYTHON_DOWNLOADS=never \
+    UV_BREAK_SYSTEM_PACKAGES=1
 
 WORKDIR /app
 
-# Copy vendorized sam3 first (needed for local install via tool.uv.sources)
-COPY sam3/ /app/sam3/
-
-# Copy project files
-COPY pyproject.toml VERSION README.md LICENSE LICENSING.md /app/
-COPY filter_sam3_detector/ /app/filter_sam3_detector/
-COPY scripts/ /app/scripts/
-
-# Install build dependencies, install package with uv, and then purge build dependencies
-# in a single layer to minimize intermediate disk footprint and layer size.
+# STEP 1: Install system packages immediately. 
+# These rarely change, so they should be cached at the very top.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     git \
     libgl1 \
     libglib2.0-0 \
-    && uv pip install --no-cache --system -e . \
-    && apt-get purge -y build-essential git \
-    && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 
-# Download SAM3 model weights during build and bake into image.
-# Uses BuildKit secret mount for secure authentication with gated models.
-# The model is cached at /root/.cache/huggingface/hub (default HF cache location).
-# At runtime, no HF_TOKEN is needed since model is already in the image.
-# When HF_TOKEN is unavailable (e.g. Dependabot/fork PR builds, where GitHub
-# withholds repo secrets), the mounted secret is empty. In that case we skip the
-# weight bake instead of calling snapshot_download with an empty token, which
-# would send an illegal "Bearer " header and fail the build. Such images are only
-# ever produced by the dry-run publish and are never released, so a weightless
-# image is acceptable there; the real publish path always has the token.
+# STEP 2: Pre-install huggingface_hub globally so we can download assets early.
+RUN uv pip install --system huggingface_hub
+
+
+# STEP 3: Download heavy assets (weights and kernels) BEFORE copying your project code.
 RUN --mount=type=secret,id=hf_token python <<'PY'
 import os
 from huggingface_hub import snapshot_download
 
+# Read Hugging Face token if present
 secret_path = "/run/secrets/hf_token"
-token = open(secret_path).read().strip() if os.path.exists(secret_path) else ""
+token = open(secret_path).read().strip() if os.path.exists(secret_path) else None
 print(f"Token present: {bool(token)}")
-if token:
-    snapshot_download(repo_id="facebook/sam3", token=token)
-    print("SAM3 model weights baked into container")
-else:
-    print("No HF_TOKEN provided (e.g. Dependabot/fork build); skipping SAM3 weight bake")
-PY
 
-# Serve SAM3 weights from baked cache; skip hub revalidation for air-gapped runs.
-# Placed after snapshot_download so the build step is never gated by these flags,
-# regardless of future huggingface_hub behavior around explicit `token=` + offline.
+# 1. Download the custom cv-utils GPU kernel (Version 1 is stored on revision 'v1')
+print("Caching cv-utils GPU kernel...")
+try:
+    snapshot_download(
+        repo_id="kernels-community/cv-utils",
+        repo_type="kernel",
+        revision="v1",
+        token=token
+    )
+    print("✓ cv-utils kernel cached successfully")
+except Exception as e:
+    print(f"✗ Failed to cache cv-utils kernel: {e}")
+    raise e
+
+# 2. Download the SAM3 model weights
+if token:
+    print("Caching SAM3 model weights...")
+    snapshot_download(
+        repo_id="facebook/sam3", 
+        token=token
+    )
+    print("✓ SAM3 model weights baked into container")
+else:
+    print("No HF_TOKEN provided; skipping SAM3 weight bake")
+PY
+# STEP 4: Copy the vendorized dependency (changes rarely)
+COPY sam3/ /app/sam3/
+
+# STEP 5: Copy ONLY your dependency definitions
+COPY pyproject.toml VERSION README.md LICENSE LICENSING.md /app/
+
+# STEP 6: Dummy Skeleton Trick
+# Because 'uv pip install -e .' expects your project folder to exist, we create a 
+# placeholder directory. This allows uv to resolve and download all heavy external 
+# PyPI packages and cache them. 
+# We also use a BuildKit cache mount (--mount=type=cache) so even if you add a new 
+# package to pyproject.toml, uv won't re-download the unchanged ones!
+
+# Create the placeholder skeleton directory first
+RUN mkdir -p /app/filter_sam3_detector && touch /app/filter_sam3_detector/__init__.py
+
+# Run the installer with the cache mount correctly attached to the RUN command
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install --system --break-system-packages -e .
+
+# STEP 7: Copy your actual changing source code at the ABSOLUTE BOTTOM.
+# Now, editing your code will build the container in less than 1 second.
+COPY filter_sam3_detector/ /app/filter_sam3_detector/
+COPY scripts/ /app/scripts/
+
+# Finalize the editable install tracking to point to the real files (instantaneous)
+RUN uv pip install --system --break-system-packages -e .
+
 ENV HF_HUB_OFFLINE=1 \
     TRANSFORMERS_OFFLINE=1
 
-# Default: run SAM3 detector filter
 CMD ["python", "-m", "filter_sam3_detector.filter"]

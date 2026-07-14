@@ -1594,6 +1594,133 @@ class FilterSAM3Detector(Filter):
 
         return None
 
+    def _finalize_frame_outputs(
+        self,
+        frame: Frame,
+        detections: list,
+        serialized_detections: dict,
+        *,
+        img_width: int,
+        img_height: int,
+        filter_frame_id: Optional[int],
+        output_filter_name: str,
+        topic: str,
+        has_ref_boxes: bool = False,
+        positive_boxes: Optional[list] = None,
+        negative_boxes: Optional[list] = None,
+    ) -> tuple[Frame, Optional[Frame]]:
+        """Persist frame artifacts and return the primary and optional viz frame.
+
+        This centralizes the shared frame-id derivation, filename scheme, frame saving,
+        JSONL emission, and viz-topic handling used by both single-frame and video-mode
+        processing paths.
+        """
+        frame_meta = frame.data.get("meta", {})
+        frame_ts = (
+            getattr(frame, "timestamp", None)
+            or frame_meta.get("ts", None)
+            or frame_meta.get("timestamp", None)
+            or frame.data.get("timestamp", None)
+        )
+        frame_id_num = (
+            filter_frame_id
+            if filter_frame_id is not None
+            else frame_meta.get("id", None)
+        )
+        frame_counter = self.frame_counter
+        self.frame_counter += 1
+
+        if frame_ts is not None:
+            timestamp_str = f"{float(frame_ts):.3f}".replace(".", "_")
+        else:
+            timestamp_str = f"{time.time():.3f}".replace(".", "_")
+
+        if isinstance(frame_id_num, (int, float)):
+            frame_id_str = f"{int(frame_id_num):06d}"
+        else:
+            frame_id_str = f"{frame_counter:06d}"
+
+        frame_filename_str = (
+            f"frame_{frame_id_str}_ts{timestamp_str}_count{frame_counter:06d}.jpg"
+        )
+
+        frame_filename = None
+        annotated_frame_filename = None
+        if self.frames_dir is not None:
+            frame_filename = self.frames_dir / frame_filename_str
+        if self.annotated_frames_dir is not None:
+            annotated_frame_filename = self.annotated_frames_dir / frame_filename_str
+
+        try:
+            import cv2
+
+            image_bgr_original = frame.rw_bgr.image.copy()
+            if self.frames_dir is not None and frame_filename:
+                cv2.imwrite(str(frame_filename), image_bgr_original)
+            if (
+                self.annotated_frames_dir is not None
+                and annotated_frame_filename
+                and (detections or has_ref_boxes)
+            ):
+                image_bgr_annotated = image_bgr_original.copy()
+                image_bgr_annotated = self._visualize_detections_on_image(
+                    image_bgr_annotated,
+                    detections,
+                    positive_boxes if has_ref_boxes else None,
+                    negative_boxes if has_ref_boxes else None,
+                )
+                cv2.imwrite(str(annotated_frame_filename), image_bgr_annotated)
+        except Exception as e:
+            logger.warning(f"Failed to save frame: {e}")
+
+        if hasattr(self, "jsonl_file") and self.jsonl_file is not None:
+            try:
+                output_frame_id = (
+                    frame_id_num if frame_id_num is not None else frame_counter
+                )
+                jsonl_meta = {
+                    "frame_id": output_frame_id,
+                    "width": img_width,
+                    "height": img_height,
+                    "filename": frame_filename_str,
+                }
+                event_record = {
+                    "filter_name": output_filter_name,
+                    "topic": topic,
+                    "data": {
+                        "id": output_frame_id,
+                        "detections": serialized_detections,
+                        "meta": jsonl_meta,
+                    },
+                }
+                self.jsonl_file.write(json.dumps(event_record) + "\n")
+                self.jsonl_file.flush()
+            except Exception as e:
+                logger.warning(f"Failed to save annotation to JSONL: {e}")
+
+        if self.viz_topic:
+            if self.visualize and (detections or has_ref_boxes):
+                return (
+                    frame,
+                    self._visualize_detections(
+                        frame,
+                        detections,
+                        positive_boxes if has_ref_boxes else None,
+                        negative_boxes if has_ref_boxes else None,
+                    ),
+                )
+            return frame, None
+
+        if self.visualize and (detections or has_ref_boxes):
+            frame = self._visualize_detections(
+                frame,
+                detections,
+                positive_boxes if has_ref_boxes else None,
+                negative_boxes if has_ref_boxes else None,
+            )
+
+        return frame, None
+
     def _collect_video_prompts(self) -> list[str]:
         """Collect unique text prompts for SAM3 video mode."""
         prompts: list[str] = []
@@ -1669,6 +1796,7 @@ class FilterSAM3Detector(Filter):
             prompt_text = obj_id_to_prompt.get(obj_id_int, "object")
             class_name = prompt_label_map.get(prompt_text, prompt_text)
 
+            
             detection: dict[str, Any] = {
                 "id": obj_id_int,
                 "box": [x1, y1, x2, y2],
@@ -1726,14 +1854,7 @@ class FilterSAM3Detector(Filter):
         if self.video_model is None or self.video_processor is None:
             logger.warning("SAM3 video model not loaded, forwarding frame unchanged")
             return frame
-
-        prompts_to_use = self._collect_video_prompts()
-        if not prompts_to_use:
-            logger.warning(
-                "No text prompt(s) configured for SAM3 video mode, forwarding frame unchanged"
-            )
-            return frame
-
+        
         frame_meta = frame.data.setdefault("meta", {})
         frame_id_hint = (
             filter_frame_id if filter_frame_id is not None else frame_meta.get("id")
@@ -1846,7 +1967,6 @@ class FilterSAM3Detector(Filter):
                 frame_id_hint,
                 e,
             )
-            raise
 
         try:
             inputs = self.video_processor(images=pil_image, return_tensors="pt")
@@ -1869,7 +1989,6 @@ class FilterSAM3Detector(Filter):
                 frame_id_hint,
                 e,
             )
-            raise
         
         try:
             detections = self._video_outputs_to_detections(processed_outputs)
@@ -1883,7 +2002,6 @@ class FilterSAM3Detector(Filter):
                 frame_id_hint,
                 e,
             )
-            raise
         frame.data[FilterSAM3DetectorOutput.__frame_data_key__] = canonical_dict
 
         frame_meta["width"] = img_width
@@ -1899,101 +2017,19 @@ class FilterSAM3Detector(Filter):
         if self.enable_temporal_intervals:
             self._process_temporal_intervals(frame, detections)
 
-        frame_ts = (
-            getattr(frame, "timestamp", None)
-            or frame_meta.get("ts", None)
-            or frame_meta.get("timestamp", None)
-            or frame.data.get("timestamp", None)
+        frame, video_mode_viz_frame = self._finalize_frame_outputs(
+            frame,
+            detections,
+            canonical_dict,
+            img_width=img_width,
+            img_height=img_height,
+            filter_frame_id=filter_frame_id,
+            output_filter_name=self.output_filter_name,
+            topic="main",
         )
-        frame_id_num = (
-            filter_frame_id if filter_frame_id is not None else frame_meta.get("id", None)
-        )
-        frame_counter = self.frame_counter
-        self.frame_counter += 1
-
-        if frame_ts is not None:
-            timestamp_str = f"{float(frame_ts):.3f}".replace(".", "_")
-        else:
-            timestamp_str = f"{time.time():.3f}".replace(".", "_")
-
-        if isinstance(frame_id_num, (int, float)):
-            frame_id_str = f"{int(frame_id_num):06d}"
-        else:
-            frame_id_str = f"{frame_counter:06d}"
-
-        frame_filename_str = (
-            f"frame_{frame_id_str}_ts{timestamp_str}_count{frame_counter:06d}.jpg"
-        )
-
-        frame_filename = None
-        annotated_frame_filename = None
-        if self.frames_dir is not None:
-            frame_filename = self.frames_dir / frame_filename_str
-        if self.annotated_frames_dir is not None:
-            annotated_frame_filename = self.annotated_frames_dir / frame_filename_str
-
-        try:
-            import cv2
-
-            image_bgr_original = frame.rw_bgr.image.copy()
-            if self.frames_dir is not None and frame_filename:
-                cv2.imwrite(str(frame_filename), image_bgr_original)
-            if (
-                self.annotated_frames_dir is not None
-                and annotated_frame_filename
-                and detections
-            ):
-                image_bgr_annotated = image_bgr_original.copy()
-                image_bgr_annotated = self._visualize_detections_on_image(
-                    image_bgr_annotated,
-                    detections,
-                    None,
-                    None,
-                )
-                cv2.imwrite(str(annotated_frame_filename), image_bgr_annotated)
-        except Exception as e:
-            logger.warning(f"Failed to save video-mode frame: {e}")
-
-        if hasattr(self, "jsonl_file") and self.jsonl_file is not None:
-            try:
-                output_frame_id = frame_id_num if frame_id_num is not None else frame_counter
-                jsonl_meta = {
-                    "frame_id": output_frame_id,
-                    "width": img_width,
-                    "height": img_height,
-                    "filename": frame_filename_str,
-                }
-                event_record = {
-                    "filter_name": self.output_filter_name,
-                    "topic": "main",
-                    "data": {
-                        "id": output_frame_id,
-                        "detections": canonical_dict,
-                        "meta": jsonl_meta,
-                    },
-                }
-                self.jsonl_file.write(json.dumps(event_record) + "\n")
-                self.jsonl_file.flush()
-            except Exception as e:
-                logger.warning(f"Failed to save video-mode annotation to JSONL: {e}")
 
         if self.viz_topic:
-            if self.visualize and detections:
-                self._video_mode_viz_frame = self._visualize_detections(
-                    frame,
-                    detections,
-                    None,
-                    None,
-                )
-            return frame
-
-        if self.visualize and detections:
-            frame = self._visualize_detections(
-                frame,
-                detections,
-                None,
-                None,
-            )
+            self._video_mode_viz_frame = video_mode_viz_frame
 
         return frame
 
@@ -2439,141 +2475,25 @@ class FilterSAM3Detector(Filter):
                 if self.enable_temporal_intervals:
                     self._process_temporal_intervals(frame, detections)
 
-                # Get frame metadata for JSONL and filename
-                frame_meta = frame.data.get("meta", {})
-
-                # Get timestamp from frame (OpenFilter provides this)
-                # Try multiple sources: frame.timestamp, meta.ts, meta.timestamp, data.timestamp
-                frame_ts = (
-                    getattr(frame, "timestamp", None)
-                    or frame_meta.get("ts", None)
-                    or frame_meta.get("timestamp", None)
-                    or frame.data.get("timestamp", None)
+                frame, frame_viz = self._finalize_frame_outputs(
+                    frame,
+                    detections,
+                    serialized_detections,
+                    img_width=img_width,
+                    img_height=img_height,
+                    filter_frame_id=filter_frame_id,
+                    output_filter_name=self.output_filter_name,
+                    topic="main",
+                    has_ref_boxes=has_ref_boxes,
+                    positive_boxes=self.positive_boxes if has_ref_boxes else None,
+                    negative_boxes=self.negative_boxes if has_ref_boxes else None,
                 )
 
-                # Get frame ID - priority: _filter topic > meta['id'] > frame_counter
-                # The _filter topic (TI-130) is the idiomatic way to get frame IDs in openfilter
-                frame_id_num = (
-                    filter_frame_id
-                    if filter_frame_id is not None
-                    else frame_meta.get("id", None)
-                )
-
-                # Use frame counter for unique numbering (increments for each frame processed)
-                frame_counter = self.frame_counter
-                self.frame_counter += 1
-
-                # Generate unique filename using timestamp and frame counter
-                # Format similar to filter-frame-selector: frame_{id}_ts{timestamp}_count{counter}
-                if frame_ts is not None:
-                    # Format timestamp: replace dot with underscore to avoid dots in filename
-                    timestamp_str = f"{float(frame_ts):.3f}".replace(".", "_")
-                else:
-                    # Fallback: use current time
-                    current_time = time.time()
-                    timestamp_str = f"{current_time:.3f}".replace(".", "_")
-
-                # Handle frame_id_num - convert to int if possible, otherwise use counter
-                if isinstance(frame_id_num, (int, float)):
-                    frame_id_str = f"{int(frame_id_num):06d}"
-                else:
-                    # Use counter if no frame_id available
-                    frame_id_str = f"{frame_counter:06d}"
-
-                # Create filename: frame_{id}_ts{timestamp}_count{counter}.jpg
-                filename_base = (
-                    f"frame_{frame_id_str}_ts{timestamp_str}_count{frame_counter:06d}"
-                )
-                frame_filename_str = f"{filename_base}.jpg"
-
-                # Generate full paths for original and annotated frames
-                frame_filename = None
-                annotated_frame_filename = None
-
-                if self.frames_dir is not None:
-                    frame_filename = self.frames_dir / frame_filename_str
-
-                if self.annotated_frames_dir is not None:
-                    annotated_frame_filename = (
-                        self.annotated_frames_dir / frame_filename_str
-                    )
-
-                # Save frames if output directories are configured
-                try:
-                    import cv2
-
-                    # Get original image from frame
-                    image_bgr_original = frame.rw_bgr.image.copy()
-
-                    # Save original frame (always save if frames_output_dir is configured)
-                    if self.frames_dir is not None and frame_filename:
-                        cv2.imwrite(str(frame_filename), image_bgr_original)
-
-                    # Save annotated frame (if annotated_frames_dir is configured and there are detections or ref boxes)
-                    if (
-                        self.annotated_frames_dir is not None
-                        and annotated_frame_filename
-                        and (detections or has_ref_boxes)
-                    ):
-                        image_bgr_annotated = image_bgr_original.copy()
-                        image_bgr_annotated = self._visualize_detections_on_image(
-                            image_bgr_annotated,
-                            detections,
-                            self.positive_boxes if has_ref_boxes else None,
-                            self.negative_boxes if has_ref_boxes else None,
-                        )
-                        cv2.imwrite(str(annotated_frame_filename), image_bgr_annotated)
-
-                except Exception as e:
-                    logger.warning(f"Failed to save frame: {e}")
-
-                # Save to JSONL file if output_path is configured (save ALL frames, even without detections)
-                if hasattr(self, "jsonl_file") and self.jsonl_file is not None:
-                    try:
-                        output_frame_id = (
-                            frame_id_num if frame_id_num is not None else frame_counter
-                        )
-                        jsonl_meta = {
-                            "frame_id": output_frame_id,
-                            "width": img_width,
-                            "height": img_height,
-                            "filename": frame_filename_str,
-                        }
-
-                        # Event sink format matching frame.data structure
-                        event_record = {
-                            "filter_name": self.output_filter_name,
-                            "topic": "main",
-                            "data": {
-                                "id": output_frame_id,
-                                "detections": serialized_detections,
-                                "meta": jsonl_meta,
-                            },
-                        }
-                        self.jsonl_file.write(json.dumps(event_record) + "\n")
-                        self.jsonl_file.flush()  # Ensure immediate write
-                    except Exception as e:
-                        logger.warning(f"Failed to save annotation to JSONL: {e}")
-
-                # Optional visualization (for output frame): ref boxes (green/red) and detections (blue)
                 if self.viz_topic:
-                    output_frames[topic] = frame  # main = original + meta
-                    if self.visualize and (detections or has_ref_boxes):
-                        frame_viz = self._visualize_detections(
-                            frame,
-                            detections,
-                            self.positive_boxes if has_ref_boxes else None,
-                            self.negative_boxes if has_ref_boxes else None,
-                        )
+                    output_frames[topic] = frame
+                    if frame_viz is not None:
                         output_frames[self.viz_topic] = frame_viz
                 else:
-                    if self.visualize and (detections or has_ref_boxes):
-                        frame = self._visualize_detections(
-                            frame,
-                            detections,
-                            self.positive_boxes if has_ref_boxes else None,
-                            self.negative_boxes if has_ref_boxes else None,
-                        )
                     output_frames[topic] = frame
 
             except Exception as e:
@@ -3712,6 +3632,9 @@ class FilterSAM3Detector(Filter):
             self.video_model = Sam3VideoModel.from_pretrained(
                 self.model_id,
                 torch_dtype=model_dtype,
+                score_threshold_detection=self.confidence_threshold,
+                det_nms_thresh=self.nms_threshold if self.nms_enabled else 1.0,
+                
             ).to(self.device)
             self.video_processor = Sam3VideoProcessor.from_pretrained(self.model_id)
 
@@ -3743,43 +3666,7 @@ class FilterSAM3Detector(Filter):
             self.video_processor = None
             self.video_inference_session = None
 
-    def _find_bpe_path(self) -> Optional[str]:
-        """Find the BPE tokenizer file path."""
-        # Try vendorized sam3 (in project root/sam3/assets/)
-        vendorized_bpe = (
-            Path(__file__).parent.parent
-            / "sam3"
-            / "assets"
-            / "bpe_simple_vocab_16e6.txt.gz"
-        )
-        if vendorized_bpe.exists():
-            return str(vendorized_bpe)
-
-        # Try vendorized sam3/sam3/assets/ (alternative location)
-        vendorized_bpe2 = (
-            Path(__file__).parent.parent
-            / "sam3"
-            / "sam3"
-            / "assets"
-            / "bpe_simple_vocab_16e6.txt.gz"
-        )
-        if vendorized_bpe2.exists():
-            return str(vendorized_bpe2)
-
-        # Try to find in installed package
-        try:
-            import sam3
-
-            sam3_path = Path(sam3.__file__).parent
-            installed_bpe = sam3_path / "assets" / "bpe_simple_vocab_16e6.txt.gz"
-            if installed_bpe.exists():
-                return str(installed_bpe)
-        except Exception as e:
-            logger.debug(f"Could not find BPE in installed package: {e}")
-
-        logger.warning("BPE file not found, SAM3 will try to use default path")
-        return None
-
+    
     def _load_exemplar_images(self):
         """
         Load exemplar images from a directory and compute their visual embeddings.
