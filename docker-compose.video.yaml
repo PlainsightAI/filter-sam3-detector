@@ -67,7 +67,7 @@ services:
       FILTER_ID: Webvis
       FILTER_SOURCES: tcp://sam3_detector:5551
     ports:
-      - "${WEBVIS_PORT:-8002}:8000"
+      - "${WEBVIS_PORT:-8000}:8000"
     networks:
       - filter-network
 
