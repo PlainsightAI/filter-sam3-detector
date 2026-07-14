@@ -417,6 +417,59 @@ class TestFilterSAM3Detector(unittest.TestCase):
             )
             self.assertEqual(frame_meta[detector.output_label], [])
 
+    def test_video_mode_failure_forwards_frame_unchanged(self):
+        """Verify that video mode returns the original frame unchanged on preprocessing failure."""
+        from filter_sam3_detector.filter import FilterSAM3Detector
+        from openfilter.filter_runtime.filter import FilterConfig, Frame
+        from unittest.mock import MagicMock, patch
+        import numpy as np
+
+        config = FilterSAM3Detector.normalize_config(
+            FilterConfig({"enable_video_mode": True, "text_prompt": "car"})
+        )
+
+        detector = FilterSAM3Detector.__new__(FilterSAM3Detector)
+        detector.config = config
+        detector.video_model = MagicMock()
+        detector.video_processor = MagicMock()
+        detector.video_inference_session = MagicMock()
+        detector.prune_video_memory = False
+        detector.frame_counter = 0
+        detector._video_mode_viz_frame = None
+        detector.output_filter_name = "SAM3Detector"
+        detector.output_label = "sam3_detections"
+        detector.viz_topic = ""
+        detector.visualize = False
+        detector.jsonl_file = None
+        detector.enable_temporal_intervals = False
+        detector.text_prompt = "car"
+        detector.text_prompts = None
+        detector.prompt_sets = None
+        detector.positive_boxes = []
+        detector.negative_boxes = []
+        detector.ref_images_paths = None
+        detector.ref_images_negative_paths = None
+        detector.frames_dir = None
+        detector.annotated_frames_dir = None
+        detector.mixed_precision = False
+        detector.device = MagicMock()
+
+        bgr_data = np.zeros((480, 640, 3), dtype=np.uint8)
+        frame = MagicMock(spec=Frame)
+        frame.has_image = True
+        rw_bgr = MagicMock()
+        rw_bgr.image = bgr_data
+        frame.rw_bgr = rw_bgr
+        frame.data = {}
+
+        with patch(
+            "PIL.Image.fromarray", side_effect=RuntimeError("Simulated video preprocessing error")
+        ):
+            result = detector._process_video_mode_frame(frame, None)
+
+        self.assertIs(result, frame)
+        self.assertEqual(frame.data, {})
+
     def test_normalize_detections_validate_per_item(self):
         """Test that _normalize_detections validates detections per-item, dropping invalid ones but preserving valid ones."""
         from filter_sam3_detector.filter import FilterSAM3Detector

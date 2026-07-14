@@ -1870,8 +1870,8 @@ class FilterSAM3Detector(Filter):
         if self.video_model is None or self.video_processor is None:
             logger.warning("SAM3 video model not loaded, forwarding frame unchanged")
             return frame
-        
-        frame_meta = frame.data.setdefault("meta", {})
+
+        frame_meta = frame.data.get("meta", {})
         frame_id_hint = (
             filter_frame_id if filter_frame_id is not None else frame_meta.get("id")
         )
@@ -1983,6 +1983,7 @@ class FilterSAM3Detector(Filter):
                 frame_id_hint,
                 e,
             )
+            return frame
 
         try:
             inputs = self.video_processor(images=pil_image, return_tensors="pt")
@@ -2005,6 +2006,7 @@ class FilterSAM3Detector(Filter):
                 frame_id_hint,
                 e,
             )
+            return frame
         
         try:
             detections = self._video_outputs_to_detections(processed_outputs)
@@ -2018,6 +2020,9 @@ class FilterSAM3Detector(Filter):
                 frame_id_hint,
                 e,
             )
+            return frame
+
+        frame_meta = frame.data.setdefault("meta", {})
         frame.data[FilterSAM3DetectorOutput.__frame_data_key__] = canonical_dict
 
         frame_meta["width"] = img_width
