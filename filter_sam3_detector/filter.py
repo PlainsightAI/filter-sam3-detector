@@ -1621,6 +1621,7 @@ class FilterSAM3Detector(Filter):
         filter_frame_id: Optional[int],
         output_filter_name: str,
         topic: str,
+        frame_counter: Optional[int] = None,
         has_ref_boxes: bool = False,
         positive_boxes: Optional[list] = None,
         negative_boxes: Optional[list] = None,
@@ -1643,8 +1644,9 @@ class FilterSAM3Detector(Filter):
             if filter_frame_id is not None
             else frame_meta.get("id", None)
         )
-        frame_counter = self.frame_counter
-        self.frame_counter += 1
+        if frame_counter is None:
+            frame_counter = self.frame_counter
+            self.frame_counter += 1
 
         if frame_ts is not None:
             timestamp_str = f"{float(frame_ts):.3f}".replace(".", "_")
@@ -1885,7 +1887,6 @@ class FilterSAM3Detector(Filter):
         frame_id_hint = (
             filter_frame_id if filter_frame_id is not None else frame_meta.get("id")
         )
-        frame_idx = self.frame_counter
 
         # --- MEMORY PRUNING BLOCK (REPLACES OLD RESTART TRIGGER) ---
         prune_every_n_frames = 30
@@ -1977,7 +1978,7 @@ class FilterSAM3Detector(Filter):
                 # Pruning is best-effort only; keep processing this frame.
                 logger.exception(
                     "Video-mode memory pruning failed (frame_idx=%s frame_id=%s); continuing without pruning",
-                    frame_idx,
+                    self.frame_counter,
                     frame_id_hint,
                 )
 
@@ -1989,11 +1990,14 @@ class FilterSAM3Detector(Filter):
         except Exception as e:
             logger.exception(
                 "Video-mode frame preprocessing failed (frame_idx=%s frame_id=%s): %s",
-                frame_idx,
+                self.frame_counter,
                 frame_id_hint,
                 e,
             )
             return frame
+
+        frame_idx = self.frame_counter
+        self.frame_counter += 1
 
         try:
             inputs = self.video_processor(images=pil_image, return_tensors="pt")
@@ -2002,7 +2006,7 @@ class FilterSAM3Detector(Filter):
             model_outputs = self.video_model(
                 inference_session=self.video_inference_session,
                 frame=inputs.pixel_values[0],
-                frame_idx=self.frame_counter,
+                frame_idx=frame_idx,
             )
             processed_outputs = self.video_processor.postprocess_outputs(
                 self.video_inference_session,
@@ -2016,7 +2020,6 @@ class FilterSAM3Detector(Filter):
                 frame_id_hint,
                 e,
             )
-            self.frame_counter += 1
             return frame
         
         try:
@@ -2031,7 +2034,6 @@ class FilterSAM3Detector(Filter):
                 frame_id_hint,
                 e,
             )
-            self.frame_counter += 1
             return frame
 
         frame_meta = frame.data.setdefault("meta", {})
@@ -2059,6 +2061,7 @@ class FilterSAM3Detector(Filter):
             filter_frame_id=filter_frame_id,
             output_filter_name=self.output_filter_name,
             topic="main",
+            frame_counter=frame_idx,
         )
 
         if self.viz_topic:
