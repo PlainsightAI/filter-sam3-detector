@@ -2016,6 +2016,7 @@ class FilterSAM3Detector(Filter):
                 frame_id_hint,
                 e,
             )
+            self.frame_counter += 1
             return frame
         
         try:
@@ -2030,6 +2031,7 @@ class FilterSAM3Detector(Filter):
                 frame_id_hint,
                 e,
             )
+            self.frame_counter += 1
             return frame
 
         frame_meta = frame.data.setdefault("meta", {})
