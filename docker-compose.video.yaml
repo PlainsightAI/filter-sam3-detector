@@ -13,7 +13,9 @@ services:
       - filter-network
 
   sam3_detector:
-    # Override SAM3_IMAGE for a custom build; default pulls the public release.
+    # Override SAM3_IMAGE for a custom build; 
+    # You must first build the image by running 
+    # `docker build -f Dockerfile -t filter-sam3-detector:local .`
     build: 
       context: ./
       dockerfile: Dockerfile.dev
@@ -35,7 +37,6 @@ services:
 
       FILTER_CONFIDENCE_THRESHOLD: ${CONFIDENCE_THRESHOLD:-0.5}
       FILTER_NMS_THRESHOLD: ${NMS_THRESHOLD:-0.1}
-      FILTER_OUTPUT_LABEL: ${OUTPUT_LABEL:-exemplar_detections}
       FILTER_OUTPUT_BOXES: "true"
       FILTER_OUTPUT_SCORES: "true"
       # Optional: save detections to JSONL
@@ -52,7 +53,6 @@ services:
               count: 1
               capabilities: [gpu]
     volumes:
-      - ${EXEMPLARS_DIR:-./exemplars}:/exemplars:ro
       - ${OUTPUT_DIR:-./output}:/output
       - ${DATA_DIR:-./data}:/data:ro
     networks:
