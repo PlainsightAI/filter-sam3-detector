@@ -535,7 +535,7 @@ class TestFilterSAM3Detector(unittest.TestCase):
         inputs.to.return_value = inputs
         inputs.pixel_values = [MagicMock()]
         inputs.original_sizes = [(480, 640)]
-        detector.video_processor.images.return_value = inputs
+        detector.video_processor.return_value = inputs
         detector.video_processor.postprocess_outputs.side_effect = RuntimeError(
             "Simulated postprocess error"
         )

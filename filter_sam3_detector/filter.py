@@ -2102,7 +2102,7 @@ class FilterSAM3Detector(Filter):
                     
                 if topic != self.video_mode_topic:
                     raise ValueError(
-                        f"Video mode processing is enabled, but is only supported for a single topic."
+                        "Video mode processing is enabled, but is only supported for a single topic."
                     )
                 # Let genuine inference/runtime errors bubble up with context.
                 video_frame = self._process_video_mode_frame(frame, filter_frame_id)

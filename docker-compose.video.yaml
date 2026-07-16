@@ -13,7 +13,6 @@ services:
       - filter-network
 
   sam3_detector:
-    # Override SAM3_IMAGE for a custom build; 
     # You must first build the image by running 
     # `docker build -f Dockerfile -t filter-sam3-detector:local .`
     build: 

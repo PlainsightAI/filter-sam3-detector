@@ -6,13 +6,13 @@ SAM3 Detector filter release notes
 
 - Bump openfilter to 1.1.2
 - `detect_objects_video` example: `--prompt` now accepts multiple values (`--prompt "cup" "bowl"` or repeated `--prompt` flags), wiring them into the detector's `text_prompts`. Simplified the pipeline to write JSONL directly via the detector's built-in `output_path` (with annotated frames being written to `annotated_frames_output_dir` opt-in via `--visualize`), removing the `Recorder` and `ImageOut` sink filters.
-- Deprecated `FILTER_VIDEO_DETECTION_INTERVAL` and `FILTER_VIDEO_MIN_TRACKING_CONFIDENCE` are now explicitly warned on during config normalization and ignored; they no longer throttle video inference or change tracking confidence.
 
 
-## v0.1.22
+## v0.1.22 - 2026-07-16
 ### Added 
 - Transformer's Sam3VideoModel support enabled
 - Occasionally prunes session state to keep gpu memory under wraps. 
+- Deprecated `FILTER_VIDEO_DETECTION_INTERVAL` and `FILTER_VIDEO_MIN_TRACKING_CONFIDENCE` are now explicitly warned on during config normalization and ignored; they no longer throttle video inference or change tracking confidence.
 
 ### Removed
 - Streaming video processor and related tests removed
