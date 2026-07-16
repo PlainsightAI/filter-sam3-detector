@@ -531,9 +531,10 @@ class TestFilterSAM3Detector(unittest.TestCase):
         detector.output_masks = False
         detector._extract_filter_frame_id = MagicMock(return_value=None)
 
+        pixel_values = MagicMock(name="pixel_values_0")
         inputs = MagicMock()
         inputs.to.return_value = inputs
-        inputs.pixel_values = [MagicMock()]
+        inputs.pixel_values = [pixel_values]
         inputs.original_sizes = [(480, 640)]
         detector.video_processor.return_value = inputs
         detector.video_processor.postprocess_outputs.side_effect = RuntimeError(
@@ -552,8 +553,10 @@ class TestFilterSAM3Detector(unittest.TestCase):
 
         self.assertIs(result, frame)
         self.assertEqual(detector.frame_counter, 8)
+        inputs.to.assert_called_once_with(detector.device)
         detector.video_model.assert_called_once()
         self.assertEqual(detector.video_model.call_args.kwargs["frame_idx"], 7)
+        self.assertIs(detector.video_model.call_args.kwargs["frame"], pixel_values)
 
     def test_normalize_detections_validate_per_item(self):
         """Test that _normalize_detections validates detections per-item, dropping invalid ones but preserving valid ones."""
