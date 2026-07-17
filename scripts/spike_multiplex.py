@@ -58,10 +58,12 @@ def baseline_per_prompt(model, processor, image, prompts):
             geometric_prompt=geom,
         )
         # take the only batch slot
-        results.append({
-            "pred_logits": out["pred_logits"][0].detach().clone(),
-            "pred_boxes": out["pred_boxes"][0].detach().clone(),
-        })
+        results.append(
+            {
+                "pred_logits": out["pred_logits"][0].detach().clone(),
+                "pred_boxes": out["pred_boxes"][0].detach().clone(),
+            }
+        )
     return results
 
 
@@ -144,7 +146,9 @@ def compare(a, b):
         sa, ba = kept(a[i])
         sb, bb = kept(b[i])
         if len(sa) != len(sb):
-            print(f"  prompt[{i}]: count mismatch baseline={len(sa)} multiplex={len(sb)}")
+            print(
+                f"  prompt[{i}]: count mismatch baseline={len(sa)} multiplex={len(sb)}"
+            )
             ok = False
             continue
         if len(sa) == 0:
@@ -180,7 +184,12 @@ def main():
     print(f"Prompts: {PROMPTS}")
 
     print("Building SAM3 model from HF...")
-    bpe = Path(__file__).resolve().parent.parent / "sam3" / "assets" / "bpe_simple_vocab_16e6.txt.gz"
+    bpe = (
+        Path(__file__).resolve().parent.parent
+        / "sam3"
+        / "assets"
+        / "bpe_simple_vocab_16e6.txt.gz"
+    )
     model = build_sam3_image_model(
         bpe_path=str(bpe) if bpe.exists() else None,
         device=DEVICE,

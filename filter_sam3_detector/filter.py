@@ -7,6 +7,7 @@ import time
 from typing import Optional, ClassVar
 from pathlib import Path
 import pydantic
+import gc
 
 import torch
 import numpy as np
@@ -22,7 +23,12 @@ from pydantic import Field
 from typing import List, Any, Union
 from .coco_export import convert_jsonl_to_coco
 from .temporal_intervals import DetectionInterval, IntervalTracker
-from .streaming_video_processor import StreamingVideoProcessor
+
+try:
+    from transformers import Sam3VideoModel, Sam3VideoProcessor
+except Exception:
+    Sam3VideoModel = None
+    Sam3VideoProcessor = None
 
 
 class FilterSAM3DetectorConfigSchema(FilterConfigBase):
@@ -231,16 +237,10 @@ class FilterSAM3DetectorConfigSchema(FilterConfigBase):
         description="Use video mode with temporal tracking",
         json_schema_extra={"x-openfilter-ui": {"group": "Video Tracking"}},
     )
-    video_detection_interval: int = Field(
-        default=5, json_schema_extra={"x-openfilter-ui": {"group": "Video Tracking"}}
-    )
-    video_min_tracking_confidence: float = Field(
-        default=0.3,
-        ge=0.0,
-        le=1.0,
-        json_schema_extra={
-            "x-openfilter-ui": {"group": "Video Tracking", "widget": "slider"}
-        },
+    prune_video_memory: bool = Field(
+        default=True,
+        description="Prune video inference state to reduce memory usage",
+        json_schema_extra={"x-openfilter-ui": {"group": "Video Tracking"}},
     )
 
     # Reference Boxes and Layout
@@ -482,6 +482,22 @@ class FilterSAM3Detector(Filter):
         config = super().normalize_config(config)
         config = FilterSAM3DetectorConfig(config)
 
+        deprecated_video_keys = {
+            "video_detection_interval": "FILTER_VIDEO_DETECTION_INTERVAL",
+            "video_min_tracking_confidence": "FILTER_VIDEO_MIN_TRACKING_CONFIDENCE",
+        }
+        for deprecated_key, env_key in deprecated_video_keys.items():
+            if config.get(deprecated_key) is not None:
+                logger.warning(
+                    "%s is deprecated and ignored; video throttling/tracking confidence controls were removed without replacement.",
+                    deprecated_key,
+                )
+            if os.getenv(env_key) is not None:
+                logger.warning(
+                    "%s is deprecated and ignored; video throttling/tracking confidence controls were removed without replacement.",
+                    env_key,
+                )
+
         # NOTE: Existing comma-separated configs may need updating
         # NOTE: List inputs are treated as raw prompts (no class mapping)
 
@@ -528,8 +544,7 @@ class FilterSAM3Detector(Filter):
             "temporal_label_field": None,  # Detection field for class label (None = use text_prompt)
             # Video mode options (experimental - uses memory-based tracking)
             "enable_video_mode": False,  # Use video mode with temporal tracking
-            "video_detection_interval": 5,  # Frames between full detection runs in video mode
-            "video_min_tracking_confidence": 0.3,  # Re-detect if tracking confidence drops
+            "prune_video_memory": True,  # Prune video inference state to reduce memory usage
             # Reference boxes on the original image (SAM3-style): list of [x, y, w, h] in pixels per box
             "positive_boxes": None,
             "negative_boxes": None,
@@ -599,8 +614,7 @@ class FilterSAM3Detector(Filter):
             "grounding_cache_frames": int,
             # Video mode env mappings
             "enable_video_mode": bool,
-            "video_detection_interval": int,
-            "video_min_tracking_confidence": float,
+            "prune_video_memory": bool,
             # Cross-prompt overlap / confusion detection
             "confusion_detection_enabled": bool,
             "confusion_iou_threshold": float,
@@ -753,6 +767,11 @@ class FilterSAM3Detector(Filter):
         if not (0.0 <= confusion_iou_threshold <= 1.0):
             raise ValueError(
                 f"confusion_iou_threshold must be between 0 and 1, got {confusion_iou_threshold}"
+            )
+        prune_video_memory = config.get("prune_video_memory", True)
+        if not isinstance(prune_video_memory, bool):
+            raise ValueError(
+                f"prune_video_memory must be a boolean, got {prune_video_memory}"
             )
 
         class_delimiter = config.get("class_delimiter")
@@ -918,6 +937,7 @@ class FilterSAM3Detector(Filter):
             if self.ref_images_negative_paths
             else None
         )
+
         self.confidence_threshold = config.get("confidence_threshold", 0.5)
         self.mask_threshold = config.get("mask_threshold", 0.5)
         self.max_detections = config.get("max_detections", 100)
@@ -944,6 +964,10 @@ class FilterSAM3Detector(Filter):
         self.save_annotated_frames = config.get("save_annotated_frames", False)
         self.visualize = config.get("visualize", False)
         self.viz_topic = (config.get("viz_topic") or "").strip()
+        self.video_model = None
+        self.video_processor = None
+        self.video_inference_session = None
+        self._video_mode_viz_frame = None
 
         # Initialize JSONL output file if path is provided
         self.jsonl_file = None
@@ -1007,22 +1031,39 @@ class FilterSAM3Detector(Filter):
 
         # Video mode configuration
         self.enable_video_mode = config.get("enable_video_mode", False)
-        self.video_detection_interval = config.get("video_detection_interval", 5)
-        self.video_min_tracking_confidence = config.get(
-            "video_min_tracking_confidence", 0.3
-        )
+        self.prune_video_memory = config.get("prune_video_memory", True)
+        self.video_mode_topic = None  # current video mode only supports a single topic; future versions may support multiple topics
         self.video_processor = None
+        if self.enable_video_mode and (
+            self.exemplars_path
+            or has_ref_boxes
+            or self.ref_images_paths
+            or self.ref_images_negative_paths
+        ):
+            logger.warning(
+                "Enable video mode uses the SAM3 video model path and ignores exemplars/reference-box/reference-image prompts."
+            )
 
         # torch.compile the SAM3 vision backbone (FILTER-373). CUDA-only — compile
         # gains rely on CUDA kernels and the backbone runs on the GPU.
         compile_backbone_requested = config.get("compile_backbone", False)
-        self.compile_backbone = compile_backbone_requested and self.device.type == "cuda" and not self.enable_video_mode
+        self.compile_backbone = (
+            compile_backbone_requested
+            and self.device.type == "cuda"
+            and not self.enable_video_mode
+        )
         if compile_backbone_requested and self.device.type != "cuda":
-            logger.warning("compile_backbone requested but device is not CUDA; disabling")
+            logger.warning(
+                "compile_backbone requested but device is not CUDA; disabling"
+            )
         if compile_backbone_requested and self.enable_video_mode:
-            logger.warning("compile_backbone requested but video mode does not support torch.compile; disabling")
+            logger.warning(
+                "compile_backbone requested but video mode does not support torch.compile; disabling"
+            )
         if self.compile_backbone:
-            logger.info("torch.compile enabled for SAM3 image model (first inference warms up)")
+            logger.info(
+                "torch.compile enabled for SAM3 image model (first inference warms up)"
+            )
 
         logger.info(f"Using device: {self.device}")
         logger.info(f"NMS enabled: {self.nms_enabled}, threshold: {self.nms_threshold}")
@@ -1041,14 +1082,19 @@ class FilterSAM3Detector(Filter):
                     target_bs = getattr(self.cfg, "batch_size", 1) or 1
                     dummy_img = Image.new("RGB", (64, 64))
                     if target_bs > 1:
-                        batched_state = self.processor.set_image_batch([dummy_img] * target_bs)
+                        batched_state = self.processor.set_image_batch(
+                            [dummy_img] * target_bs
+                        )
                         state = self._split_backbone_states(batched_state)[0]
                     else:
                         state = self.processor.set_image(dummy_img)
                     state = self.processor.set_text_prompt_no_grounding("object", state)
                     self.processor.forward_grounding(state)
             except Exception as e:
-                logger.warning("torch.compile warmup failed (%s); rebuilding SAM3 without torch.compile", e)
+                logger.warning(
+                    "torch.compile warmup failed (%s); rebuilding SAM3 without torch.compile",
+                    e,
+                )
                 if self._autocast_persistent is not None:
                     self._autocast_persistent.__exit__(None, None, None)
                     self._autocast_persistent = None
@@ -1060,7 +1106,7 @@ class FilterSAM3Detector(Filter):
         # Load exemplar images if provided
         self.visual_prompt_embed = None
         self.visual_prompt_mask = None
-        if self.exemplars_path:
+        if self.exemplars_path and not self.enable_video_mode:
             self._load_exemplar_images()
 
         n_pos = len(self.positive_boxes) if self.positive_boxes else 0
@@ -1091,8 +1137,10 @@ class FilterSAM3Detector(Filter):
 
         # Pre-cache text embeddings whenever we have text_prompt, text_prompts, or prompt_sets
         # (required for single text_prompt mode to use cached embeddings; multi-output already relied on this)
-        if self.model is not None and (
-            self.text_prompt or self.text_prompts or self.prompt_sets
+        if (
+            not self.enable_video_mode
+            and self.model is not None
+            and (self.text_prompt or self.text_prompts or self.prompt_sets)
         ):
             self._cache_text_embeddings()
 
@@ -1226,7 +1274,11 @@ class FilterSAM3Detector(Filter):
             self.processor = None
 
         # Clear CUDA cache if applicable
-        if hasattr(self, "device") and "cuda" in str(self.device) and torch.cuda.is_available():
+        if (
+            hasattr(self, "device")
+            and "cuda" in str(self.device)
+            and torch.cuda.is_available()
+        ):
             torch.cuda.empty_cache()
 
         logger.info("FilterSAM3Detector shutdown complete")
@@ -1580,8 +1632,489 @@ class FilterSAM3Detector(Filter):
 
         return None
 
+    def _finalize_frame_outputs(
+        self,
+        frame: Frame,
+        detections: list,
+        serialized_detections: dict,
+        *,
+        img_width: int,
+        img_height: int,
+        filter_frame_id: Optional[int],
+        output_filter_name: str,
+        topic: str,
+        frame_counter: Optional[int] = None,
+        has_ref_boxes: bool = False,
+        positive_boxes: Optional[list] = None,
+        negative_boxes: Optional[list] = None,
+    ) -> tuple[Frame, Optional[Frame]]:
+        """Persist frame artifacts and return the primary and optional viz frame.
+
+        This centralizes the shared frame-id derivation, filename scheme, frame saving,
+        JSONL emission, and viz-topic handling used by both single-frame and video-mode
+        processing paths.
+        """
+        frame_meta = frame.data.get("meta", {})
+        frame_ts = (
+            getattr(frame, "timestamp", None)
+            or frame_meta.get("ts", None)
+            or frame_meta.get("timestamp", None)
+            or frame.data.get("timestamp", None)
+        )
+        frame_id_num = (
+            filter_frame_id
+            if filter_frame_id is not None
+            else frame_meta.get("id", None)
+        )
+        if frame_counter is None:
+            frame_counter = self.frame_counter
+            self.frame_counter += 1
+
+        if frame_ts is not None:
+            timestamp_str = f"{float(frame_ts):.3f}".replace(".", "_")
+        else:
+            timestamp_str = f"{time.time():.3f}".replace(".", "_")
+
+        if isinstance(frame_id_num, (int, float)):
+            frame_id_str = f"{int(frame_id_num):06d}"
+        else:
+            frame_id_str = f"{frame_counter:06d}"
+
+        frame_filename_str = (
+            f"frame_{frame_id_str}_ts{timestamp_str}_count{frame_counter:06d}.jpg"
+        )
+
+        frame_filename = None
+        annotated_frame_filename = None
+        if self.frames_dir is not None:
+            frame_filename = self.frames_dir / frame_filename_str
+        if self.annotated_frames_dir is not None:
+            annotated_frame_filename = self.annotated_frames_dir / frame_filename_str
+
+        try:
+            import cv2
+
+            image_bgr_original = frame.rw_bgr.image.copy()
+            if self.frames_dir is not None and frame_filename:
+                cv2.imwrite(str(frame_filename), image_bgr_original)
+            if (
+                self.annotated_frames_dir is not None
+                and annotated_frame_filename
+                and (detections or has_ref_boxes)
+            ):
+                image_bgr_annotated = image_bgr_original.copy()
+                image_bgr_annotated = self._visualize_detections_on_image(
+                    image_bgr_annotated,
+                    detections,
+                    positive_boxes if has_ref_boxes else None,
+                    negative_boxes if has_ref_boxes else None,
+                )
+                cv2.imwrite(str(annotated_frame_filename), image_bgr_annotated)
+        except Exception as e:
+            logger.warning(f"Failed to save frame: {e}")
+
+        if hasattr(self, "jsonl_file") and self.jsonl_file is not None:
+            try:
+                output_frame_id = (
+                    frame_id_num if frame_id_num is not None else frame_counter
+                )
+                jsonl_meta = {
+                    "frame_id": output_frame_id,
+                    "width": img_width,
+                    "height": img_height,
+                    "filename": frame_filename_str,
+                }
+                event_record = {
+                    "filter_name": output_filter_name,
+                    "topic": topic,
+                    "data": {
+                        "id": output_frame_id,
+                        "detections": serialized_detections,
+                        "meta": jsonl_meta,
+                    },
+                }
+                self.jsonl_file.write(json.dumps(event_record) + "\n")
+                self.jsonl_file.flush()
+            except Exception as e:
+                logger.warning(f"Failed to save annotation to JSONL: {e}")
+
+        if self.viz_topic:
+            if self.visualize and (detections or has_ref_boxes):
+                return (
+                    frame,
+                    self._visualize_detections(
+                        frame,
+                        detections,
+                        positive_boxes if has_ref_boxes else None,
+                        negative_boxes if has_ref_boxes else None,
+                    ),
+                )
+            return frame, None
+
+        if self.visualize and (detections or has_ref_boxes):
+            frame = self._visualize_detections(
+                frame,
+                detections,
+                positive_boxes if has_ref_boxes else None,
+                negative_boxes if has_ref_boxes else None,
+            )
+
+        return frame, None
+
+    def _collect_video_prompts(self) -> list[str]:
+        """Collect unique text prompts for SAM3 video mode."""
+        prompts: list[str] = []
+
+        if self.prompt_sets:
+            for prompt_set in self.prompt_sets:
+                for prompt in prompt_set.get("prompts", []):
+                    if isinstance(prompt, str) and prompt and prompt not in prompts:
+                        prompts.append(prompt)
+
+        if self.text_prompt and self.text_prompt not in prompts:
+            prompts.append(self.text_prompt)
+
+        if self.text_prompts:
+            for prompt in self.text_prompts:
+                if isinstance(prompt, str) and prompt and prompt not in prompts:
+                    prompts.append(prompt)
+
+        return prompts
+
+    def _video_outputs_to_detections(
+        self, processed_outputs: dict
+    ) -> list[dict[str, Any]]:
+        """Convert SAM3 video postprocessed outputs into the filter's detection dicts."""
+        detections: list[dict[str, Any]] = []
+
+        def default_if_none(value, default):
+            return value if value is not None else default
+
+        object_ids = default_if_none(processed_outputs.get("object_ids"), [])
+        scores = default_if_none(processed_outputs.get("scores"), [])
+        boxes = default_if_none(processed_outputs.get("boxes"), [])
+        masks = default_if_none(processed_outputs.get("masks"), [])
+        prompt_to_obj_ids = default_if_none(
+            processed_outputs.get("prompt_to_obj_ids"), {}
+        )
+
+        obj_id_to_prompt: dict[int, str] = {}
+        for prompt_text, obj_ids in prompt_to_obj_ids.items():
+            for obj_id in obj_ids or []:
+                try:
+                    obj_id_to_prompt[int(obj_id)] = str(prompt_text)
+                except (TypeError, ValueError):
+                    continue
+
+        prompt_label_map = self.config.get("prompt_label_map", {}) or {}
+
+        for index, obj_id in enumerate(object_ids):
+            try:
+                obj_id_int = int(obj_id.item() if torch.is_tensor(obj_id) else obj_id)
+            except (TypeError, ValueError):
+                continue
+
+            if index >= len(boxes):
+                continue
+
+            box = boxes[index]
+            if torch.is_tensor(box):
+                box = box.detach().cpu().tolist()
+            else:
+                box = list(box)
+            if len(box) != 4:
+                continue
+
+            try:
+                x1, y1, x2, y2 = [float(coord) for coord in box]
+            except (TypeError, ValueError):
+                continue
+
+            score_value = 0.0
+            if index < len(scores):
+                score = scores[index]
+                try:
+                    score_value = float(
+                        score.item() if torch.is_tensor(score) else score
+                    )
+                except (TypeError, ValueError):
+                    score_value = 0.0
+
+            prompt_text = obj_id_to_prompt.get(obj_id_int, "object")
+            class_name = prompt_label_map.get(prompt_text, prompt_text)
+
+            detection: dict[str, Any] = {
+                "id": obj_id_int,
+                "box": [x1, y1, x2, y2],
+                "bbox": {"x1": x1, "y1": y1, "x2": x2, "y2": y2},
+                "score": score_value,
+                "confidence": score_value,
+                "class": class_name,
+                "class_name": class_name,
+                "category_name": class_name,
+                "label": class_name,
+                "prompt": prompt_text,
+                "rois": [[int(x1), int(y1), int(x2), int(y2)]],
+            }
+
+            if self.output_masks and index < len(masks):
+                mask = masks[index]
+                if hasattr(mask, "detach"):
+                    mask = mask.detach().cpu().numpy()
+                else:
+                    mask = np.asarray(mask)
+                while mask.ndim > 2 and 1 in mask.shape:
+                    mask = np.squeeze(mask)
+                if mask.ndim == 3:
+                    mask = mask[0]
+                if mask.ndim == 2:
+                    binary_mask = mask > 0
+                    detection["mask_np"] = binary_mask.astype(np.uint8)
+                    segmentation = self._mask_to_coco_polygons(
+                        binary_mask.astype(np.uint8)
+                    )
+                    if segmentation:
+                        detection["segmentation"] = segmentation
+                        area = int(np.sum(binary_mask))
+                        detection["area"] = area
+                        polygons_list = []
+                        for seg_poly in segmentation:
+                            points = [
+                                (float(seg_poly[j]), float(seg_poly[j + 1]))
+                                for j in range(0, len(seg_poly), 2)
+                            ]
+                            if len(points) >= 3:
+                                polygons_list.append({"points": points})
+                        if polygons_list:
+                            detection["mask"] = {
+                                "polygons": polygons_list,
+                                "area": area,
+                            }
+                        detection["category_id"] = 1
+                        detection["iscrowd"] = 0
+
+            detections.append(detection)
+
+        if len(detections) > self.max_detections:
+            detections.sort(key=lambda d: float(d.get("score", 0.0)), reverse=True)
+            logger.info(
+                "Video-mode detections truncated from %d to %d using max_detections=%d",
+                len(detections),
+                self.max_detections,
+                self.max_detections,
+            )
+            detections = detections[: self.max_detections]
+
+        return detections
+
+    def _process_video_mode_frame(
+        self, frame: Frame, filter_frame_id: Optional[int]
+    ) -> Frame:
+        """Process one frame using SAM3 video model inference."""
+        self._video_mode_viz_frame = None
+        if self.video_model is None or self.video_processor is None:
+            logger.warning("SAM3 video model not loaded, forwarding frame unchanged")
+            return frame
+
+        frame_meta = frame.data.get("meta", {})
+        frame_id_hint = (
+            filter_frame_id if filter_frame_id is not None else frame_meta.get("id")
+        )
+
+        # --- MEMORY PRUNING BLOCK (REPLACES OLD RESTART TRIGGER) ---
+        prune_every_n_frames = 30
+        video_memory_prune_to = 15
+        max_conditioning_frames = (
+            10  # keep only the first and last 9 conditioning frames, delete the rest
+        )
+        if (
+            self.prune_video_memory
+            and self.frame_counter != 0
+            and self.frame_counter % prune_every_n_frames == 0
+        ):
+            try:
+                logger.info(
+                    "===== Pruning old session memory at frame %s (Preserving IDs) =====",
+                    self.frame_counter,
+                )
+
+                # Keep a small buffer window of recent frames so the model has local temporal context
+                cutoff_frame = self.frame_counter - video_memory_prune_to
+
+                if torch.cuda.is_available():
+                    allocated_gb = torch.cuda.memory_allocated(self.device) / 1024**3
+                    reserved_gb = torch.cuda.memory_reserved(self.device) / 1024**3
+                    logger.debug(
+                        "Memory usage before: allocated=%.2f GB, reserved=%.2f GB",
+                        allocated_gb,
+                        reserved_gb,
+                    )
+
+                # ------------------------------------------------------------------
+                # GPU MEMORY
+                # ------------------------------------------------------------------
+                if hasattr(self.video_inference_session, "output_dict_per_obj"):
+                    for (
+                        obj_idx,
+                        obj_store,
+                    ) in self.video_inference_session.output_dict_per_obj.items():
+                        # 1. STRICTLY target non-conditioning frames
+                        if "non_cond_frame_outputs" in obj_store:
+                            non_cond_dict = obj_store["non_cond_frame_outputs"]
+                            for f_idx in list(non_cond_dict.keys()):
+                                if isinstance(f_idx, int) and f_idx < cutoff_frame:
+                                    del non_cond_dict[f_idx]
+
+                        # 2. CONDITIONING frames: keep only the first and last 9 frames since conditioning frames are important.
+                        if "cond_frame_outputs" in obj_store:
+                            cond_dict = obj_store["cond_frame_outputs"]
+                            if len(cond_dict) > max_conditioning_frames:
+                                sorted_keys = sorted(cond_dict.keys())
+
+                                # Identify the exact keys to keep
+                                keys_to_keep = set(
+                                    sorted_keys[:1]
+                                    + sorted_keys[-max_conditioning_frames + 1 :]
+                                )
+
+                                # Find the keys to delete by finding the difference between sets
+                                keys_to_delete = set(cond_dict.keys()) - keys_to_keep
+                                for f_idx in keys_to_delete:
+                                    if isinstance(f_idx, int):
+                                        del cond_dict[f_idx]
+                else:
+                    logger.warning(
+                        "video_inference_session has no attribute 'output_dict_per_obj'; "
+                        "Please check your transformers version; skipping GPU memory pruning."
+                    )
+
+                # ------------------------------------------------------------------
+                # CPU MEMORY
+                # ------------------------------------------------------------------
+                if hasattr(self.video_inference_session, "processed_frames"):
+                    for f_idx in list(
+                        self.video_inference_session.processed_frames.keys()
+                    ):
+                        if f_idx < cutoff_frame:
+                            del self.video_inference_session.processed_frames[f_idx]
+                else:
+                    logger.warning(
+                        "video_inference_session has no attribute 'processed_frames'; "
+                        "Please check your transformers version; skipping CPU memory pruning."
+                    )
+
+                # Force garbage collection to release unreferenced tensors.
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                    allocated_gb = torch.cuda.memory_allocated(self.device) / 1024**3
+                    reserved_gb = torch.cuda.memory_reserved(self.device) / 1024**3
+                    logger.debug(
+                        "Memory usage after pruning: allocated=%.2f GB, reserved=%.2f GB",
+                        allocated_gb,
+                        reserved_gb,
+                    )
+            except Exception:
+                # Pruning is best-effort only; keep processing this frame.
+                logger.exception(
+                    "Video-mode memory pruning failed (frame_idx=%s frame_id=%s); continuing without pruning",
+                    self.frame_counter,
+                    frame_id_hint,
+                )
+
+        try:
+            image_bgr = frame.rw_bgr.image
+            image_rgb = image_bgr[:, :, ::-1]
+            pil_image = Image.fromarray(image_rgb)
+            img_height, img_width = image_bgr.shape[:2]
+        except Exception as e:
+            logger.exception(
+                "Video-mode frame preprocessing failed (frame_idx=%s frame_id=%s): %s",
+                self.frame_counter,
+                frame_id_hint,
+                e,
+            )
+            return frame
+
+        frame_idx = self.frame_counter
+        self.frame_counter += 1
+
+        try:
+            inputs = self.video_processor(images=pil_image, return_tensors="pt")
+            inputs = inputs.to(self.device)
+
+            model_outputs = self.video_model(
+                inference_session=self.video_inference_session,
+                frame=inputs.pixel_values[0],
+                frame_idx=frame_idx,
+            )
+            processed_outputs = self.video_processor.postprocess_outputs(
+                self.video_inference_session,
+                model_outputs,
+                original_sizes=inputs.original_sizes,
+            )
+        except Exception as e:
+            logger.exception(
+                "Video-mode inference failed (frame_idx=%s frame_id=%s): %s",
+                frame_idx,
+                frame_id_hint,
+                e,
+            )
+            return frame
+
+        try:
+            detections = self._video_outputs_to_detections(processed_outputs)
+            canonical_dict, protege_list, classification_dict = (
+                self._normalize_detections(detections)
+            )
+        except Exception as e:
+            logger.exception(
+                "Video-mode postprocessing/normalization failed (frame_idx=%s frame_id=%s): %s",
+                frame_idx,
+                frame_id_hint,
+                e,
+            )
+            return frame
+
+        frame_meta = frame.data.setdefault("meta", {})
+        frame.data[FilterSAM3DetectorOutput.__frame_data_key__] = canonical_dict
+
+        frame_meta["width"] = img_width
+        frame_meta["height"] = img_height
+        frame_meta["detections"] = protege_list
+        frame_meta[self.output_label] = detections
+        frame_meta["classification"] = classification_dict
+
+        scores = [d.get("score", 0.0) for d in detections]
+        if scores:
+            frame_meta["detection_confidence"] = float(max(scores))
+
+        if self.enable_temporal_intervals:
+            self._process_temporal_intervals(frame, detections)
+
+        frame, video_mode_viz_frame = self._finalize_frame_outputs(
+            frame,
+            detections,
+            canonical_dict,
+            img_width=img_width,
+            img_height=img_height,
+            filter_frame_id=filter_frame_id,
+            output_filter_name=self.output_filter_name,
+            topic="main",
+            frame_counter=frame_idx,
+        )
+
+        if self.viz_topic:
+            self._video_mode_viz_frame = video_mode_viz_frame
+
+        return frame
+
     @torch.no_grad()
-    def process(self, frames: dict[str, Frame], backbone_states: Optional[dict[str, dict]] = None) -> dict[str, Frame]:
+    def process(
+        self,
+        frames: dict[str, Frame],
+        backbone_states: Optional[dict[str, dict]] = None,
+    ) -> dict[str, Frame]:
         """
         Process input frames and detect objects.
 
@@ -1607,6 +2140,24 @@ class FilterSAM3Detector(Filter):
                 output_frames[topic] = frame
                 continue
 
+            if self.enable_video_mode:
+                if self.video_mode_topic is None:
+                    self.video_mode_topic = topic
+
+                if topic != self.video_mode_topic:
+                    raise ValueError(
+                        "Video mode processing is enabled, but is only supported for a single topic."
+                    )
+                # Let genuine inference/runtime errors bubble up with context.
+                video_frame = self._process_video_mode_frame(frame, filter_frame_id)
+                output_frames[topic] = video_frame
+                if (
+                    self.viz_topic
+                    and getattr(self, "_video_mode_viz_frame", None) is not None
+                ):
+                    output_frames[self.viz_topic] = self._video_mode_viz_frame
+                continue
+
             # Check if model is loaded
             if self.model is None or self.processor is None:
                 logger.warning("SAM3 model not loaded, forwarding frame unchanged")
@@ -1616,7 +2167,9 @@ class FilterSAM3Detector(Filter):
             # Multi-output mode: process each prompt_set and output to different topics
             if self.prompt_sets:
                 try:
-                    multi_output = self._process_multi_output(frame, filter_frame_id, backbone_states.get(topic))
+                    multi_output = self._process_multi_output(
+                        frame, filter_frame_id, backbone_states.get(topic)
+                    )
                     output_frames.update(multi_output)
                 except Exception as e:
                     logger.error(f"Error in multi-output processing: {e}")
@@ -2004,141 +2557,25 @@ class FilterSAM3Detector(Filter):
                 if self.enable_temporal_intervals:
                     self._process_temporal_intervals(frame, detections)
 
-                # Get frame metadata for JSONL and filename
-                frame_meta = frame.data.get("meta", {})
-
-                # Get timestamp from frame (OpenFilter provides this)
-                # Try multiple sources: frame.timestamp, meta.ts, meta.timestamp, data.timestamp
-                frame_ts = (
-                    getattr(frame, "timestamp", None)
-                    or frame_meta.get("ts", None)
-                    or frame_meta.get("timestamp", None)
-                    or frame.data.get("timestamp", None)
+                frame, frame_viz = self._finalize_frame_outputs(
+                    frame,
+                    detections,
+                    serialized_detections,
+                    img_width=img_width,
+                    img_height=img_height,
+                    filter_frame_id=filter_frame_id,
+                    output_filter_name=self.output_filter_name,
+                    topic="main",
+                    has_ref_boxes=has_ref_boxes,
+                    positive_boxes=self.positive_boxes if has_ref_boxes else None,
+                    negative_boxes=self.negative_boxes if has_ref_boxes else None,
                 )
 
-                # Get frame ID - priority: _filter topic > meta['id'] > frame_counter
-                # The _filter topic (TI-130) is the idiomatic way to get frame IDs in openfilter
-                frame_id_num = (
-                    filter_frame_id
-                    if filter_frame_id is not None
-                    else frame_meta.get("id", None)
-                )
-
-                # Use frame counter for unique numbering (increments for each frame processed)
-                frame_counter = self.frame_counter
-                self.frame_counter += 1
-
-                # Generate unique filename using timestamp and frame counter
-                # Format similar to filter-frame-selector: frame_{id}_ts{timestamp}_count{counter}
-                if frame_ts is not None:
-                    # Format timestamp: replace dot with underscore to avoid dots in filename
-                    timestamp_str = f"{float(frame_ts):.3f}".replace(".", "_")
-                else:
-                    # Fallback: use current time
-                    current_time = time.time()
-                    timestamp_str = f"{current_time:.3f}".replace(".", "_")
-
-                # Handle frame_id_num - convert to int if possible, otherwise use counter
-                if isinstance(frame_id_num, (int, float)):
-                    frame_id_str = f"{int(frame_id_num):06d}"
-                else:
-                    # Use counter if no frame_id available
-                    frame_id_str = f"{frame_counter:06d}"
-
-                # Create filename: frame_{id}_ts{timestamp}_count{counter}.jpg
-                filename_base = (
-                    f"frame_{frame_id_str}_ts{timestamp_str}_count{frame_counter:06d}"
-                )
-                frame_filename_str = f"{filename_base}.jpg"
-
-                # Generate full paths for original and annotated frames
-                frame_filename = None
-                annotated_frame_filename = None
-
-                if self.frames_dir is not None:
-                    frame_filename = self.frames_dir / frame_filename_str
-
-                if self.annotated_frames_dir is not None:
-                    annotated_frame_filename = (
-                        self.annotated_frames_dir / frame_filename_str
-                    )
-
-                # Save frames if output directories are configured
-                try:
-                    import cv2
-
-                    # Get original image from frame
-                    image_bgr_original = frame.rw_bgr.image.copy()
-
-                    # Save original frame (always save if frames_output_dir is configured)
-                    if self.frames_dir is not None and frame_filename:
-                        cv2.imwrite(str(frame_filename), image_bgr_original)
-
-                    # Save annotated frame (if annotated_frames_dir is configured and there are detections or ref boxes)
-                    if (
-                        self.annotated_frames_dir is not None
-                        and annotated_frame_filename
-                        and (detections or has_ref_boxes)
-                    ):
-                        image_bgr_annotated = image_bgr_original.copy()
-                        image_bgr_annotated = self._visualize_detections_on_image(
-                            image_bgr_annotated,
-                            detections,
-                            self.positive_boxes if has_ref_boxes else None,
-                            self.negative_boxes if has_ref_boxes else None,
-                        )
-                        cv2.imwrite(str(annotated_frame_filename), image_bgr_annotated)
-
-                except Exception as e:
-                    logger.warning(f"Failed to save frame: {e}")
-
-                # Save to JSONL file if output_path is configured (save ALL frames, even without detections)
-                if hasattr(self, "jsonl_file") and self.jsonl_file is not None:
-                    try:
-                        output_frame_id = (
-                            frame_id_num if frame_id_num is not None else frame_counter
-                        )
-                        jsonl_meta = {
-                            "frame_id": output_frame_id,
-                            "width": img_width,
-                            "height": img_height,
-                            "filename": frame_filename_str,
-                        }
-
-                        # Event sink format matching frame.data structure
-                        event_record = {
-                            "filter_name": self.output_filter_name,
-                            "topic": "main",
-                            "data": {
-                                "id": output_frame_id,
-                                "detections": serialized_detections,
-                                "meta": jsonl_meta,
-                            },
-                        }
-                        self.jsonl_file.write(json.dumps(event_record) + "\n")
-                        self.jsonl_file.flush()  # Ensure immediate write
-                    except Exception as e:
-                        logger.warning(f"Failed to save annotation to JSONL: {e}")
-
-                # Optional visualization (for output frame): ref boxes (green/red) and detections (blue)
                 if self.viz_topic:
-                    output_frames[topic] = frame  # main = original + meta
-                    if self.visualize and (detections or has_ref_boxes):
-                        frame_viz = self._visualize_detections(
-                            frame,
-                            detections,
-                            self.positive_boxes if has_ref_boxes else None,
-                            self.negative_boxes if has_ref_boxes else None,
-                        )
+                    output_frames[topic] = frame
+                    if frame_viz is not None:
                         output_frames[self.viz_topic] = frame_viz
                 else:
-                    if self.visualize and (detections or has_ref_boxes):
-                        frame = self._visualize_detections(
-                            frame,
-                            detections,
-                            self.positive_boxes if has_ref_boxes else None,
-                            self.negative_boxes if has_ref_boxes else None,
-                        )
                     output_frames[topic] = frame
 
             except Exception as e:
@@ -2172,7 +2609,10 @@ class FilterSAM3Detector(Filter):
         return output_frames
 
     def _process_multi_output(
-        self, frame: Frame, filter_frame_id: Optional[int], backbone_state: Optional[dict] = None
+        self,
+        frame: Frame,
+        filter_frame_id: Optional[int],
+        backbone_state: Optional[dict] = None,
     ) -> dict[str, Frame]:
         """
         Process frame with multiple prompt sets, outputting to different topics.
@@ -2268,7 +2708,9 @@ class FilterSAM3Detector(Filter):
                 # pass instead of len(ps_prompts) separate forward_grounding calls. The text
                 # encoder is still avoided per-frame (cached embeddings are concatenated along
                 # the text axis); only the grounding decoder is collapsed N->1.
-                prompt_states = self._forward_grounding_multi(state, ps_prompts, min(self.confidence_threshold, ps_threshold))
+                prompt_states = self._forward_grounding_multi(
+                    state, ps_prompts, min(self.confidence_threshold, ps_threshold)
+                )
 
                 for prompt, prompt_state in zip(ps_prompts, prompt_states):
                     # Determine output label: use alias if defined, otherwise use prompt
@@ -2851,33 +3293,47 @@ class FilterSAM3Detector(Filter):
         cached = [self.cached_text_embeddings.get(p) for p in prompts]
         if any(
             c is None
-            or c.get('language_features') is None
-            or c.get('language_mask') is None
+            or c.get("language_features") is None
+            or c.get("language_mask") is None
             for c in cached
         ):
             logger.warning(
                 "Missing cached text embedding for one or more multiplexed prompts; "
                 "re-encoding all prompts in one forward_text call"
             )
-            text_outputs = self.model.backbone.forward_text(prompts, device=str(self.device))
+            text_outputs = self.model.backbone.forward_text(
+                prompts, device=str(self.device)
+            )
             for i, prompt in enumerate(prompts):
                 self.cached_text_embeddings[prompt] = {
-                    'language_features': text_outputs.get('language_features').narrow(1, i, 1).clone() if text_outputs.get('language_features') is not None else None,
-                    'language_mask': text_outputs.get('language_mask').narrow(0, i, 1).clone() if text_outputs.get('language_mask') is not None else None,
-                    'language_embeds': text_outputs.get('language_embeds').narrow(1, i, 1).clone() if text_outputs.get('language_embeds') is not None else None,
+                    "language_features": text_outputs.get("language_features")
+                    .narrow(1, i, 1)
+                    .clone()
+                    if text_outputs.get("language_features") is not None
+                    else None,
+                    "language_mask": text_outputs.get("language_mask")
+                    .narrow(0, i, 1)
+                    .clone()
+                    if text_outputs.get("language_mask") is not None
+                    else None,
+                    "language_embeds": text_outputs.get("language_embeds")
+                    .narrow(1, i, 1)
+                    .clone()
+                    if text_outputs.get("language_embeds") is not None
+                    else None,
                 }
             return {
-                'language_features': text_outputs.get('language_features'),
-                'language_mask': text_outputs.get('language_mask'),
-                'language_embeds': text_outputs.get('language_embeds'),
+                "language_features": text_outputs.get("language_features"),
+                "language_mask": text_outputs.get("language_mask"),
+                "language_embeds": text_outputs.get("language_embeds"),
             }
 
-        feats = torch.cat([c['language_features'] for c in cached], dim=1)
-        mask = torch.cat([c['language_mask'] for c in cached], dim=0)
-        out = {'language_features': feats, 'language_mask': mask}
-        if all(c.get('language_embeds') is not None for c in cached):
-            out['language_embeds'] = torch.cat(
-                [c['language_embeds'] for c in cached], dim=1
+        feats = torch.cat([c["language_features"] for c in cached], dim=1)
+        mask = torch.cat([c["language_mask"] for c in cached], dim=0)
+        out = {"language_features": feats, "language_mask": mask}
+        if all(c.get("language_embeds") is not None for c in cached):
+            out["language_embeds"] = torch.cat(
+                [c["language_embeds"] for c in cached], dim=1
             )
         return out
 
@@ -2895,11 +3351,16 @@ class FilterSAM3Detector(Filter):
 
         from sam3.model import box_ops
         from sam3.model.data_misc import FindStage
+
         output_masks = getattr(self, "output_masks", False)
         if output_masks:
             from sam3.model.data_misc import interpolate
 
-        keep_threshold = self.confidence_threshold if confidence_threshold is None else confidence_threshold
+        keep_threshold = (
+            self.confidence_threshold
+            if confidence_threshold is None
+            else confidence_threshold
+        )
 
         try:
             n = len(prompts)
@@ -2936,7 +3397,9 @@ class FilterSAM3Detector(Filter):
                 probs = (out_logits[i].sigmoid() * presence[i].unsqueeze(0)).squeeze(-1)
                 keep = probs > keep_threshold
                 slot_probs = probs[keep]
-                boxes = box_ops.box_cxcywh_to_xyxy(out_bbox[i][keep]) * scale_fct[None, :]
+                boxes = (
+                    box_ops.box_cxcywh_to_xyxy(out_bbox[i][keep]) * scale_fct[None, :]
+                )
 
                 prompt_state = {
                     "original_height": img_h,
@@ -2962,17 +3425,25 @@ class FilterSAM3Detector(Filter):
                 per_prompt_states.append(prompt_state)
             return per_prompt_states
         except (torch.cuda.OutOfMemoryError, RuntimeError) as e:
-            if not (isinstance(e, torch.cuda.OutOfMemoryError) or "out of memory" in str(e)):
+            if not (
+                isinstance(e, torch.cuda.OutOfMemoryError) or "out of memory" in str(e)
+            ):
                 raise
             if not allow_oom_fallback:
                 raise
-            logger.warning(f"Multiplexed grounding OOM: {e}. Clearing cache and falling back to per-prompt grounding.")
+            logger.warning(
+                f"Multiplexed grounding OOM: {e}. Clearing cache and falling back to per-prompt grounding."
+            )
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
             out = []
             for prompt in prompts:
                 try:
-                    out.extend(self._forward_grounding_multi(state, [prompt], keep_threshold, allow_oom_fallback=False))
+                    out.extend(
+                        self._forward_grounding_multi(
+                            state, [prompt], keep_threshold, allow_oom_fallback=False
+                        )
+                    )
                 except Exception as seq_err:
                     logger.warning(
                         f"Isolated failure during sequential fallback for prompt '{prompt}': {seq_err}. "
@@ -2987,8 +3458,12 @@ class FilterSAM3Detector(Filter):
                         "scores": torch.zeros((0,), device=self.device),
                     }
                     if getattr(self, "output_masks", False):
-                        empty_state["masks_logits"] = torch.zeros((0, 1, img_h, img_w), device=self.device)
-                        empty_state["masks"] = torch.zeros((0, 1, img_h, img_w), device=self.device, dtype=torch.bool)
+                        empty_state["masks_logits"] = torch.zeros(
+                            (0, 1, img_h, img_w), device=self.device
+                        )
+                        empty_state["masks"] = torch.zeros(
+                            (0, 1, img_h, img_w), device=self.device, dtype=torch.bool
+                        )
                     out.append(empty_state)
             return out
 
@@ -3036,7 +3511,9 @@ class FilterSAM3Detector(Filter):
                         }
                     }
                     try:
-                        results[i] = self.process(batch[i], backbone_states=backbone_states)
+                        results[i] = self.process(
+                            batch[i], backbone_states=backbone_states
+                        )
                     except Exception as frame_err:
                         logger.error(f"Batched frame {i} failed: {frame_err}")
                         results[i] = batch[i]
@@ -3046,8 +3523,12 @@ class FilterSAM3Detector(Filter):
             return results
 
         except (torch.cuda.OutOfMemoryError, RuntimeError) as e:
-            if not (isinstance(e, torch.cuda.OutOfMemoryError) or "out of memory" in str(e)):
-                logger.warning(f"set_image_batch failed: {e}. Falling back to per-frame.")
+            if not (
+                isinstance(e, torch.cuda.OutOfMemoryError) or "out of memory" in str(e)
+            ):
+                logger.warning(
+                    f"set_image_batch failed: {e}. Falling back to per-frame."
+                )
                 return [self.process(frames) for frames in batch]
             logger.warning(
                 f"set_image_batch OOM: {e}. Clearing cache and falling back to per-frame."
@@ -3075,7 +3556,9 @@ class FilterSAM3Detector(Filter):
         has_visual = self.visual_prompt_embed is not None
         return has_prompts or has_visual or bool(self.prompt_sets)
 
-    def _extract_pil_image_entry(self, frames: dict[str, Frame]) -> Optional[tuple[str, Image.Image]]:
+    def _extract_pil_image_entry(
+        self, frames: dict[str, Frame]
+    ) -> Optional[tuple[str, Image.Image]]:
         # Returns the first non-auxiliary image topic. Standard pipelines have
         # one image topic; if multiple exist, dict iteration order determines
         # which is used for backbone inference.
@@ -3253,63 +3736,51 @@ class FilterSAM3Detector(Filter):
 
     def _load_video_model(self):
         """
-        Load the SAM3 video model for streaming video processing.
+        Load the SAM3 video model and processor directly.
 
-        Video mode uses memory-based tracking for faster inference:
-        - First frame: Full detection
-        - Subsequent frames: Memory-based propagation (10x faster)
-        - Periodic re-detection to correct drift
-
-        This is ideal for video streams at 5-6 fps (matches SAM3's training).
+        This follows the SAM3 video usage pattern used in the test file:
+        create an empty inference session, add text prompts once, then feed
+        each incoming frame through ``model(..., frame=inputs.pixel_values[0])``.
         """
-        if not HAS_SAM3:
+        if not HAS_SAM3 or Sam3VideoModel is None or Sam3VideoProcessor is None:
             logger.error(
-                "SAM3 not available. Install from: https://github.com/facebookresearch/sam3"
+                "SAM3 video classes not available. Install/upgrade transformers with SAM3 support."
             )
             return
 
         try:
             logger.info(f"Loading SAM3 VIDEO model on device: {self.device}")
-            logger.info(f"  detection_interval={self.video_detection_interval}")
-            logger.info(
-                f"  min_tracking_confidence={self.video_min_tracking_confidence}"
+
+            model_dtype = (
+                torch.bfloat16
+                if self.device.type == "cuda" and self.mixed_precision
+                else torch.float32
             )
 
-            # Find BPE path
-            bpe_path = self._find_bpe_path()
+            self.video_model = Sam3VideoModel.from_pretrained(
+                self.model_id,
+                torch_dtype=model_dtype,
+                score_threshold_detection=self.confidence_threshold,
+                det_nms_thresh=self.nms_threshold if self.nms_enabled else 1.0,
+            ).to(self.device)
+            self.video_processor = Sam3VideoProcessor.from_pretrained(self.model_id)
 
-            # Create streaming video processor
-            self.video_processor = StreamingVideoProcessor(
-                device=str(self.device),
-                confidence_threshold=self.confidence_threshold,
-                detection_interval=self.video_detection_interval,
-                min_tracking_confidence=self.video_min_tracking_confidence,
-                bpe_path=bpe_path,
+            self.video_inference_session = self.video_processor.init_video_session(
+                inference_device=self.device,
+                processing_device="cpu",
+                video_storage_device="cpu",
+                dtype=model_dtype,
             )
 
-            if not self.video_processor.load_model():
-                logger.error("Failed to load video model")
-                self.video_processor = None
-                return
+            video_prompts = self._collect_video_prompts()
+            if video_prompts:
+                self.video_inference_session = self.video_processor.add_text_prompt(
+                    inference_session=self.video_inference_session,
+                    text=video_prompts,
+                )
 
-            # Pre-cache text embeddings for all configured prompts
-            all_prompts = set()
-            if self.prompt_sets:
-                for ps in self.prompt_sets:
-                    for prompt in ps.get("prompts", []):
-                        all_prompts.add(prompt)
-            if self.text_prompt:
-                all_prompts.add(self.text_prompt)
-            if self.text_prompts:
-                for prompt in self.text_prompts:
-                    all_prompts.add(prompt)
-
-            if all_prompts:
-                self.video_processor.cache_text_embeddings(list(all_prompts))
-
-            # Also set model and processor for compatibility with existing code paths
-            self.model = self.video_processor.model
-            self.processor = self.video_processor.processor
+            self.model = self.video_model
+            self.processor = self.video_processor
 
             logger.info(f"SAM3 video model loaded successfully on {self.device}")
 
@@ -3318,44 +3789,9 @@ class FilterSAM3Detector(Filter):
             import traceback
 
             logger.error(traceback.format_exc())
+            self.video_model = None
             self.video_processor = None
-
-    def _find_bpe_path(self) -> Optional[str]:
-        """Find the BPE tokenizer file path."""
-        # Try vendorized sam3 (in project root/sam3/assets/)
-        vendorized_bpe = (
-            Path(__file__).parent.parent
-            / "sam3"
-            / "assets"
-            / "bpe_simple_vocab_16e6.txt.gz"
-        )
-        if vendorized_bpe.exists():
-            return str(vendorized_bpe)
-
-        # Try vendorized sam3/sam3/assets/ (alternative location)
-        vendorized_bpe2 = (
-            Path(__file__).parent.parent
-            / "sam3"
-            / "sam3"
-            / "assets"
-            / "bpe_simple_vocab_16e6.txt.gz"
-        )
-        if vendorized_bpe2.exists():
-            return str(vendorized_bpe2)
-
-        # Try to find in installed package
-        try:
-            import sam3
-
-            sam3_path = Path(sam3.__file__).parent
-            installed_bpe = sam3_path / "assets" / "bpe_simple_vocab_16e6.txt.gz"
-            if installed_bpe.exists():
-                return str(installed_bpe)
-        except Exception as e:
-            logger.debug(f"Could not find BPE in installed package: {e}")
-
-        logger.warning("BPE file not found, SAM3 will try to use default path")
-        return None
+            self.video_inference_session = None
 
     def _load_exemplar_images(self):
         """

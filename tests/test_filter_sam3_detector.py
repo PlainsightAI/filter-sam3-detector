@@ -319,6 +319,37 @@ class TestFilterSAM3Detector(unittest.TestCase):
         self.assertEqual(normalized_twice.get("text_prompt"), "electric post")
         self.assertEqual(normalized_twice.get("confidence_threshold"), 0.85)
 
+    def test_deprecated_video_env_vars_warn(self):
+        """Test that deprecated video throttling env vars emit warnings instead of failing silently."""
+        from filter_sam3_detector.filter import FilterSAM3Detector
+        from openfilter.filter_runtime.filter import FilterConfig
+
+        original_env = {
+            "FILTER_VIDEO_DETECTION_INTERVAL": os.environ.get(
+                "FILTER_VIDEO_DETECTION_INTERVAL"
+            ),
+            "FILTER_VIDEO_MIN_TRACKING_CONFIDENCE": os.environ.get(
+                "FILTER_VIDEO_MIN_TRACKING_CONFIDENCE"
+            ),
+        }
+        try:
+            os.environ["FILTER_VIDEO_DETECTION_INTERVAL"] = "10"
+            os.environ["FILTER_VIDEO_MIN_TRACKING_CONFIDENCE"] = "0.7"
+            with self.assertLogs(
+                "filter_sam3_detector.filter", level="WARNING"
+            ) as logs:
+                FilterSAM3Detector.normalize_config(FilterConfig({}))
+
+            warning_text = "\n".join(logs.output)
+            self.assertIn("FILTER_VIDEO_DETECTION_INTERVAL", warning_text)
+            self.assertIn("FILTER_VIDEO_MIN_TRACKING_CONFIDENCE", warning_text)
+        finally:
+            for key, value in original_env.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
     def test_single_output_handles_exception_gracefully(self):
         """Verify that single-output process handles exceptions gracefully by yielding a degraded frame."""
         from filter_sam3_detector.filter import FilterSAM3Detector
@@ -344,6 +375,7 @@ class TestFilterSAM3Detector(unittest.TestCase):
         detector.ref_images_paths = None
         detector.ref_images_negative_paths = None
         detector.enable_temporal_intervals = False
+        detector.enable_video_mode = False
         detector.output_filter_name = "SAM3Detector"
         detector.output_label = "sam3_detections"
         detector.viz_topic = ""
@@ -386,6 +418,148 @@ class TestFilterSAM3Detector(unittest.TestCase):
                 {"classes": [], "confidences": [], "architecture": "sam3"},
             )
             self.assertEqual(frame_meta[detector.output_label], [])
+
+    def test_video_mode_failure_forwards_frame_unchanged(self):
+        """Verify that video mode returns the original frame unchanged on preprocessing failure."""
+        from filter_sam3_detector.filter import FilterSAM3Detector
+        from openfilter.filter_runtime.filter import FilterConfig, Frame
+        from unittest.mock import MagicMock, patch
+        import numpy as np
+
+        config = FilterSAM3Detector.normalize_config(
+            FilterConfig({"enable_video_mode": True, "text_prompt": "car"})
+        )
+
+        detector = FilterSAM3Detector.__new__(FilterSAM3Detector)
+        detector.config = config
+        detector.video_model = MagicMock()
+        detector.video_processor = MagicMock()
+        detector.video_inference_session = MagicMock()
+        detector.prune_video_memory = False
+        detector.frame_counter = 0
+        detector._video_mode_viz_frame = None
+        detector.output_filter_name = "SAM3Detector"
+        detector.output_label = "sam3_detections"
+        detector.viz_topic = ""
+        detector.visualize = False
+        detector.jsonl_file = None
+        detector.enable_temporal_intervals = False
+        detector.text_prompt = "car"
+        detector.text_prompts = None
+        detector.prompt_sets = None
+        detector.positive_boxes = []
+        detector.negative_boxes = []
+        detector.ref_images_paths = None
+        detector.ref_images_negative_paths = None
+        detector.frames_dir = None
+        detector.annotated_frames_dir = None
+        detector.mixed_precision = False
+        detector.device = MagicMock()
+
+        bgr_data = np.zeros((480, 640, 3), dtype=np.uint8)
+        frame = MagicMock(spec=Frame)
+        frame.has_image = True
+        rw_bgr = MagicMock()
+        rw_bgr.image = bgr_data
+        frame.rw_bgr = rw_bgr
+        frame.data = {}
+
+        with patch(
+            "PIL.Image.fromarray",
+            side_effect=RuntimeError("Simulated video preprocessing error"),
+        ):
+            result = detector._process_video_mode_frame(frame, None)
+
+        self.assertIs(result, frame)
+        self.assertEqual(frame.data, {})
+
+    def test_video_mode_applies_max_detections(self):
+        """Verify that video-mode detections are truncated to max_detections by score."""
+        from filter_sam3_detector.filter import FilterSAM3Detector
+
+        detector = FilterSAM3Detector.__new__(FilterSAM3Detector)
+        detector.config = {}
+        detector.output_masks = False
+        detector.max_detections = 2
+
+        processed_outputs = {
+            "object_ids": [1, 2, 3],
+            "scores": [0.25, 0.9, 0.5],
+            "boxes": [
+                [0.0, 0.0, 10.0, 10.0],
+                [10.0, 10.0, 20.0, 20.0],
+                [20.0, 20.0, 30.0, 30.0],
+            ],
+            "prompt_to_obj_ids": {"car": [1, 2, 3]},
+        }
+
+        detections = detector._video_outputs_to_detections(processed_outputs)
+
+        self.assertEqual(len(detections), 2)
+        self.assertGreaterEqual(detections[0]["score"], detections[1]["score"])
+        self.assertEqual([det["id"] for det in detections], [2, 3])
+
+    def test_video_mode_postprocess_failure_advances_counter(self):
+        """Verify that postprocess failures still advance the video frame counter."""
+        from filter_sam3_detector.filter import FilterSAM3Detector
+        from openfilter.filter_runtime.filter import Frame
+        from unittest.mock import MagicMock
+        import numpy as np
+
+        detector = FilterSAM3Detector.__new__(FilterSAM3Detector)
+        detector.video_model = MagicMock()
+        detector.video_processor = MagicMock()
+        detector.video_inference_session = MagicMock()
+        detector.prune_video_memory = False
+        detector.frame_counter = 7
+        detector._video_mode_viz_frame = None
+        detector.output_filter_name = "SAM3Detector"
+        detector.output_label = "sam3_detections"
+        detector.viz_topic = ""
+        detector.visualize = False
+        detector.jsonl_file = None
+        detector.enable_temporal_intervals = False
+        detector.text_prompt = "car"
+        detector.text_prompts = None
+        detector.prompt_sets = None
+        detector.positive_boxes = []
+        detector.negative_boxes = []
+        detector.ref_images_paths = None
+        detector.ref_images_negative_paths = None
+        detector.frames_dir = None
+        detector.annotated_frames_dir = None
+        detector.mixed_precision = False
+        detector.device = MagicMock()
+        detector.max_detections = 100
+        detector.output_masks = False
+        detector._extract_filter_frame_id = MagicMock(return_value=None)
+
+        pixel_values = MagicMock(name="pixel_values_0")
+        inputs = MagicMock()
+        inputs.to.return_value = inputs
+        inputs.pixel_values = [pixel_values]
+        inputs.original_sizes = [(480, 640)]
+        detector.video_processor.return_value = inputs
+        detector.video_processor.postprocess_outputs.side_effect = RuntimeError(
+            "Simulated postprocess error"
+        )
+
+        bgr_data = np.zeros((480, 640, 3), dtype=np.uint8)
+        frame = MagicMock(spec=Frame)
+        frame.has_image = True
+        rw_bgr = MagicMock()
+        rw_bgr.image = bgr_data
+        frame.rw_bgr = rw_bgr
+        frame.data = {}
+
+        result = detector._process_video_mode_frame(frame, None)
+
+        self.assertIs(result, frame)
+        self.assertEqual(detector.frame_counter, 8)
+        inputs.to.assert_called_once_with(detector.device)
+        detector.video_model.assert_called_once()
+        self.assertEqual(detector.video_model.call_args.kwargs["frame_idx"], 7)
+        self.assertIs(detector.video_model.call_args.kwargs["frame"], pixel_values)
 
     def test_normalize_detections_validate_per_item(self):
         """Test that _normalize_detections validates detections per-item, dropping invalid ones but preserving valid ones."""

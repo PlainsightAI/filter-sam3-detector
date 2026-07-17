@@ -659,9 +659,9 @@ class Sam3Image(torch.nn.Module):
             inference_state["original_heights"],
             inference_state["original_widths"],
         )
-        assert (
-            batch_size == len(orig_heights) == len(orig_widths)
-        ), f"Batch size mismatch in predict_inst_batch. Got {batch_size}, {len(orig_heights)}, {len(orig_widths)}"
+        assert batch_size == len(orig_heights) == len(orig_widths), (
+            f"Batch size mismatch in predict_inst_batch. Got {batch_size}, {len(orig_heights)}, {len(orig_widths)}"
+        )
         feats = [
             feat.permute(1, 2, 0).view(batch_size, -1, *feat_size)
             for feat, feat_size in zip(

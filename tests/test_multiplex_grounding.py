@@ -91,7 +91,6 @@ class TestMultiplexCallCount(unittest.TestCase):
         self.assertEqual(self._run(3), 1)
 
 
-
 class TestMultiplexUnit(unittest.TestCase):
     """Pure CPU unit tests verifying multiplexed grounding, slicing, OOM fallback, and thresholding."""
 
@@ -118,14 +117,14 @@ class TestMultiplexUnit(unittest.TestCase):
                 "name": "set_1",
                 "prompts": ["a", "b"],
                 "topic": "topic_1",
-                "confidence_threshold": 0.4
+                "confidence_threshold": 0.4,
             },
             {
                 "name": "set_2",
                 "prompts": ["c"],
                 "topic": "topic_2",
-                "confidence_threshold": None
-            }
+                "confidence_threshold": None,
+            },
         ]
 
         d.cached_text_embeddings = {
@@ -145,11 +144,25 @@ class TestMultiplexUnit(unittest.TestCase):
                 "language_embeds": torch.zeros(4, 1, 8),
             },
         }
-        d._normalize_detections = FilterSAM3Detector._normalize_detections.__get__(d, FilterSAM3Detector)
-        d._forward_grounding_multi = FilterSAM3Detector._forward_grounding_multi.__get__(d, FilterSAM3Detector)
-        d._build_multiplexed_language_features = FilterSAM3Detector._build_multiplexed_language_features.__get__(d, FilterSAM3Detector)
-        d._extract_detections_from_state = FilterSAM3Detector._extract_detections_from_state.__get__(d, FilterSAM3Detector)
-        d._process_multi_output = FilterSAM3Detector._process_multi_output.__get__(d, FilterSAM3Detector)
+        d._normalize_detections = FilterSAM3Detector._normalize_detections.__get__(
+            d, FilterSAM3Detector
+        )
+        d._forward_grounding_multi = (
+            FilterSAM3Detector._forward_grounding_multi.__get__(d, FilterSAM3Detector)
+        )
+        d._build_multiplexed_language_features = (
+            FilterSAM3Detector._build_multiplexed_language_features.__get__(
+                d, FilterSAM3Detector
+            )
+        )
+        d._extract_detections_from_state = (
+            FilterSAM3Detector._extract_detections_from_state.__get__(
+                d, FilterSAM3Detector
+            )
+        )
+        d._process_multi_output = FilterSAM3Detector._process_multi_output.__get__(
+            d, FilterSAM3Detector
+        )
         return d
 
     def _make_frame(self):
@@ -168,8 +181,10 @@ class TestMultiplexUnit(unittest.TestCase):
             n = len(find_input.text_ids)
             pred_boxes = torch.zeros(n, 1, 4)
             for i in range(n):
-                pred_boxes[i, 0] = torch.tensor([0.1 * i, 0.1 * i, 0.1 * (i+1), 0.1 * (i+1)])
-            
+                pred_boxes[i, 0] = torch.tensor(
+                    [0.1 * i, 0.1 * i, 0.1 * (i + 1), 0.1 * (i + 1)]
+                )
+
             pred_logits = torch.full((n, 1, 1), 10.0)
             presence_logit_dec = torch.full((n, 1), 10.0)
 
@@ -181,11 +196,13 @@ class TestMultiplexUnit(unittest.TestCase):
 
         d.model.forward_grounding = MagicMock(side_effect=grounding)
         d.model._get_dummy_prompt = MagicMock(return_value=None)
-        d.processor.set_image = MagicMock(return_value={
-            "original_height": 480,
-            "original_width": 640,
-            "backbone_out": {"vision_features": torch.zeros(1, 8)},
-        })
+        d.processor.set_image = MagicMock(
+            return_value={
+                "original_height": 480,
+                "original_width": 640,
+                "backbone_out": {"vision_features": torch.zeros(1, 8)},
+            }
+        )
 
         out_frames = d._process_multi_output(frame, filter_frame_id=42)
 
@@ -217,7 +234,7 @@ class TestMultiplexUnit(unittest.TestCase):
             calls.append(n)
             if n > 1:
                 raise RuntimeError("out of memory")
-            
+
             # check prompt b
             if backbone_out["language_features"].sum() > 0:
                 raise ValueError("hard failure for prompt b")
@@ -233,21 +250,25 @@ class TestMultiplexUnit(unittest.TestCase):
 
         d.model.forward_grounding = MagicMock(side_effect=grounding)
         d.model._get_dummy_prompt = MagicMock(return_value=None)
-        d.processor.set_image = MagicMock(return_value={
-            "original_height": 480,
-            "original_width": 640,
-            "backbone_out": {"vision_features": torch.zeros(1, 8)},
-        })
+        d.processor.set_image = MagicMock(
+            return_value={
+                "original_height": 480,
+                "original_width": 640,
+                "backbone_out": {"vision_features": torch.zeros(1, 8)},
+            }
+        )
 
         out_frames = d._process_multi_output(frame, filter_frame_id=42)
 
         self.assertIn("topic_1", out_frames)
         frame_1 = out_frames["topic_1"]
         dets_1 = frame_1.data["detections"]["items"]
-        
+
         self.assertEqual(len(dets_1), 1)
         self.assertEqual(dets_1[0]["label"], "a")
         self.assertEqual(calls, [2, 1, 1, 1])
+
+
 # --------------------------------------------------------------------------- #
 # Layer 2: equivalence (real model, GPU)
 # --------------------------------------------------------------------------- #
@@ -281,7 +302,9 @@ class TestMultiplexEquivalence(unittest.TestCase):
             eval_mode=True,
             load_from_HF=True,
         )
-        cls.processor = Sam3Processor(cls.model, device=cls.device, confidence_threshold=0.5)
+        cls.processor = Sam3Processor(
+            cls.model, device=cls.device, confidence_threshold=0.5
+        )
         cls.image = Image.open(IMG_PATH).convert("RGB")
 
     def _make_detector(self):

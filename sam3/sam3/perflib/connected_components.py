@@ -34,9 +34,9 @@ def connected_components_cpu(input_tensor: torch.Tensor):
     if input_tensor.dim() == 4 and input_tensor.shape[1] == 1:
         input_tensor = input_tensor.squeeze(1)
     else:
-        assert (
-            input_tensor.dim() == 3
-        ), "Input tensor must be (B, H, W) or (B, 1, H, W)."
+        assert input_tensor.dim() == 3, (
+            "Input tensor must be (B, H, W) or (B, 1, H, W)."
+        )
 
     batch_size = input_tensor.shape[0]
     labels_list = []
@@ -65,9 +65,9 @@ def connected_components(input_tensor: torch.Tensor):
     if input_tensor.dim() == 3:
         input_tensor = input_tensor.unsqueeze(1)
 
-    assert (
-        input_tensor.dim() == 4 and input_tensor.shape[1] == 1
-    ), "Input tensor must be (B, H, W) or (B, 1, H, W)."
+    assert input_tensor.dim() == 4 and input_tensor.shape[1] == 1, (
+        "Input tensor must be (B, H, W) or (B, 1, H, W)."
+    )
 
     if input_tensor.is_cuda:
         if HAS_CC_TORCH:

@@ -30,7 +30,9 @@ dependencies = [
   "torchvision>=0.15.0",
   "numpy>=1.24.0",
   "pillow>=10.0.0",
-  "transformers>=4.40.0",
+  "transformers>=5.0.0, <6.0.0",
+  "kernels >= 0.15.2, < 0.16.0",
+  "av~=16.1.0",
   "opencv-python>=4.8.0",
   "python-dotenv>=1.0.0",
   "tomli>=2.0.0; python_version < '3.11'",  # Required for Python < 3.11 (OpenFilter uses tomllib in 3.11+)
@@ -40,6 +42,7 @@ dependencies = [
   "decord; sys_platform != 'darwin' or platform_machine != 'arm64'",
   "eva-decord; sys_platform == 'darwin' and platform_machine == 'arm64'",
   "pycocotools",
+  "psutil~=7.2.2"
 ]
 
 [project.optional-dependencies]
@@ -50,10 +53,12 @@ dev = [
   "wheel~=0.44.0",
   "pytest~=8.3.4",
   "pytest-cov~=6.0.0",
+  "ruff>=0.15.22"
 ]
 
 [project.scripts]
 filter-sam3-detector = "filter_sam3_detector.filter:FilterSAM3Detector.run"
+
 
 [tool.uv]
 override-dependencies = ["numpy>=1.26.4,<3"]
