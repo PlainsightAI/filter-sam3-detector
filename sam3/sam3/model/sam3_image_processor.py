@@ -81,9 +81,9 @@ class Sam3Processor:
         if not isinstance(images, list):
             raise ValueError("Images must be a list of PIL images or tensors")
         assert len(images) > 0, "Images list must not be empty"
-        assert isinstance(
-            images[0], PIL.Image.Image
-        ), "Images must be a list of PIL images"
+        assert isinstance(images[0], PIL.Image.Image), (
+            "Images must be a list of PIL images"
+        )
 
         state["original_heights"] = [image.height for image in images]
         state["original_widths"] = [image.width for image in images]
@@ -139,7 +139,9 @@ class Sam3Processor:
             Updated state with language features
         """
         if "backbone_out" not in state:
-            raise ValueError("You must call set_image before set_text_prompt_no_grounding")
+            raise ValueError(
+                "You must call set_image before set_text_prompt_no_grounding"
+            )
 
         text_outputs = self.model.backbone.forward_text([prompt], device=self.device)
         # will erase the previous text prompt if any

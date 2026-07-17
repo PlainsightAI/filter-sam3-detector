@@ -272,7 +272,6 @@ class TestProcessBatch(unittest.TestCase):
                 vision[i : i + 1],
             )
 
-
     def test_per_frame_exception_falls_back_to_input_frame(self):
         d = self._make_detector()
         batched_state = {

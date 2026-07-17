@@ -17,7 +17,6 @@ from PIL import Image
 from filter_sam3_detector.filter import FilterSAM3Detector
 from sam3.model_builder import build_sam3_image_model
 from sam3.model.sam3_image_processor import Sam3Processor
-from sam3.model.data_misc import FindStage
 
 DEVICE = "cuda"
 REPO = Path(__file__).resolve().parent.parent
@@ -33,7 +32,9 @@ def build():
     bpe = REPO / "sam3" / "assets" / "bpe_simple_vocab_16e6.txt.gz"
     model = build_sam3_image_model(
         bpe_path=str(bpe) if bpe.exists() else None,
-        device=DEVICE, eval_mode=True, load_from_HF=True,
+        device=DEVICE,
+        eval_mode=True,
+        load_from_HF=True,
     )
     processor = Sam3Processor(model, device=DEVICE, confidence_threshold=0.3)
     return model, processor
@@ -91,7 +92,9 @@ def main():
         base = timeit(baseline_once, d, state, prompts)
         mux = timeit(multiplex_once, d, state, prompts)
         mem = torch.cuda.max_memory_allocated() / 1e9
-        print(f"{n:>3} {base:>12.2f} {mux:>13.2f} {base/mux:>7.2f}x   peakVRAM={mem:.2f}GB")
+        print(
+            f"{n:>3} {base:>12.2f} {mux:>13.2f} {base / mux:>7.2f}x   peakVRAM={mem:.2f}GB"
+        )
         torch.cuda.reset_peak_memory_stats()
 
 

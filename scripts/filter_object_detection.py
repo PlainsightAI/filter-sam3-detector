@@ -23,6 +23,7 @@ from pathlib import Path
 
 try:
     from dotenv import load_dotenv
+
     load_dotenv()
 except ImportError:
     pass
@@ -33,11 +34,11 @@ from openfilter.filter_runtime.filters.video_in import VideoIn
 from openfilter.filter_runtime.filters.webvis import Webvis
 
 
-if __name__ == '__main__':
-    video_path = os.getenv('VIDEO_PATH', '')
-    output_dir = os.getenv('FILTER_OUTPUT_DIR', './output')
-    device = os.getenv('FILTER_DEVICE', 'cuda')
-    visualize = os.getenv('FILTER_VISUALIZE', 'false').lower() == 'true'
+if __name__ == "__main__":
+    video_path = os.getenv("VIDEO_PATH", "")
+    output_dir = os.getenv("FILTER_OUTPUT_DIR", "./output")
+    device = os.getenv("FILTER_DEVICE", "cuda")
+    visualize = os.getenv("FILTER_VISUALIZE", "false").lower() == "true"
 
     if not video_path:
         print("Error: VIDEO_PATH is required. Set it in .env")
@@ -85,5 +86,7 @@ if __name__ == '__main__':
         ),
     ]
 
-    print(f"\nStarting pipeline... Results in {output_path} (detections.jsonl, frames/)")
+    print(
+        f"\nStarting pipeline... Results in {output_path} (detections.jsonl, frames/)"
+    )
     Filter.run_multi(filters)

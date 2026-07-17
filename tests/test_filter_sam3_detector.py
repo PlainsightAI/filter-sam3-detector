@@ -335,7 +335,9 @@ class TestFilterSAM3Detector(unittest.TestCase):
         try:
             os.environ["FILTER_VIDEO_DETECTION_INTERVAL"] = "10"
             os.environ["FILTER_VIDEO_MIN_TRACKING_CONFIDENCE"] = "0.7"
-            with self.assertLogs("filter_sam3_detector.filter", level="WARNING") as logs:
+            with self.assertLogs(
+                "filter_sam3_detector.filter", level="WARNING"
+            ) as logs:
                 FilterSAM3Detector.normalize_config(FilterConfig({}))
 
             warning_text = "\n".join(logs.output)
@@ -463,7 +465,8 @@ class TestFilterSAM3Detector(unittest.TestCase):
         frame.data = {}
 
         with patch(
-            "PIL.Image.fromarray", side_effect=RuntimeError("Simulated video preprocessing error")
+            "PIL.Image.fromarray",
+            side_effect=RuntimeError("Simulated video preprocessing error"),
         ):
             result = detector._process_video_mode_frame(frame, None)
 

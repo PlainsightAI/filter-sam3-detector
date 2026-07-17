@@ -29,7 +29,9 @@ ITERS = 20
 def make_image(w, h):
     # Deterministic gradient image so runs are reproducible
     base = np.indices((h, w)).sum(0)
-    rgb = np.stack([base % 256, (base * 2) % 256, (base * 3) % 256], axis=-1).astype("uint8")
+    rgb = np.stack([base % 256, (base * 2) % 256, (base * 3) % 256], axis=-1).astype(
+        "uint8"
+    )
     return Image.fromarray(rgb, "RGB")
 
 
@@ -46,10 +48,18 @@ def time_backbone(processor, image):
 
 
 def build(compile_backbone):
-    bpe = Path(__file__).resolve().parent.parent / "sam3" / "assets" / "bpe_simple_vocab_16e6.txt.gz"
+    bpe = (
+        Path(__file__).resolve().parent.parent
+        / "sam3"
+        / "assets"
+        / "bpe_simple_vocab_16e6.txt.gz"
+    )
     model = build_sam3_image_model(
         bpe_path=str(bpe) if bpe.exists() else None,
-        device=DEVICE, eval_mode=True, load_from_HF=True, compile=compile_backbone
+        device=DEVICE,
+        eval_mode=True,
+        load_from_HF=True,
+        compile=compile_backbone,
     )
     return Sam3Processor(model, device=DEVICE, confidence_threshold=0.5)
 

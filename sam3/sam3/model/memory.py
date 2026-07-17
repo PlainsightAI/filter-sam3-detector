@@ -60,9 +60,9 @@ class SimpleMaskDownSampler(nn.Module):
         self.encoder.append(nn.Conv2d(mask_out_chans, embed_dim, kernel_size=1))
         self.interpol_size = interpol_size
         if self.interpol_size is not None:
-            assert isinstance(
-                self.interpol_size, (list, tuple)
-            ), f"Unsupported type {type(self.interpol_size)}. Should be a list or tuple."
+            assert isinstance(self.interpol_size, (list, tuple)), (
+                f"Unsupported type {type(self.interpol_size)}. Should be a list or tuple."
+            )
             self.interpol_size = list(interpol_size)
             assert len(self.interpol_size) == 2
 

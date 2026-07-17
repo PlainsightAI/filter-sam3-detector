@@ -53,10 +53,12 @@ dev = [
   "wheel~=0.44.0",
   "pytest~=8.3.4",
   "pytest-cov~=6.0.0",
+  "ruff>=0.15.22"
 ]
 
 [project.scripts]
 filter-sam3-detector = "filter_sam3_detector.filter:FilterSAM3Detector.run"
+
 
 [tool.uv]
 override-dependencies = ["numpy>=1.26.4,<3"]

@@ -81,7 +81,9 @@ def main():
 
     # Ensure at least one of --prompt or --exemplars is provided
     if not args.prompt and not args.exemplars:
-        parser.error("At least one of the arguments --prompt or --exemplars is required")
+        parser.error(
+            "At least one of the arguments --prompt or --exemplars is required"
+        )
 
     # Early input validation
     for video_path in args.video:
