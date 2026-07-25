@@ -12,6 +12,9 @@ SAM3 Detector filter release notes
 ### Changed
 - `README.md`: document this filter as part of the PlainSight **Hyperlabel** family of filters.
 
+### Fixed
+- `pyproject.toml`: pin `opentelemetry-resourcedetector-gcp==1.11.0a0` via `override-dependencies`. `openfilter` requires `>=1.11.0a0,<1.12.dev0`, a range only pre-releases satisfy; uv accepted them while the package had no stable release, but `1.13.0` shipped on 2026-07-22 and resolution started failing in the Docker build (`dry-run-publish`) with "No solution found when resolving dependencies". Pinning the pre-release keeps the fix scoped to this one package instead of enabling pre-releases globally.
+
 ## v0.1.22 - 2026-07-16
 ### Added 
 - Transformer's Sam3VideoModel support enabled

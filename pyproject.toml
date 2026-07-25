@@ -61,7 +61,11 @@ filter-sam3-detector = "filter_sam3_detector.filter:FilterSAM3Detector.run"
 
 
 [tool.uv]
-override-dependencies = ["numpy>=1.26.4,<3"]
+# opentelemetry-resourcedetector-gcp: openfilter requires >=1.11.0a0,<1.12.dev0, a range
+# that only pre-releases satisfy. uv allowed them while the package had no stable release;
+# once 1.13.0 shipped (2026-07-22) that rule stopped applying and resolution broke. Pin the
+# pre-release explicitly instead of enabling pre-releases for every package.
+override-dependencies = ["numpy>=1.26.4,<3", "opentelemetry-resourcedetector-gcp==1.11.0a0"]
 
 [tool.uv.sources]
 sam3 = { path = "sam3" }
