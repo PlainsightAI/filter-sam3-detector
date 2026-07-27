@@ -4,7 +4,7 @@
 
 OpenFilter implementation for SAM3 (Segment Anything Model 3) object detection with open-set capabilities.
 
-Part of the Plainsight **Hyperlabel** family of filters.
+This filter is a part of Plainsight's **HyperLabel™**, which enables accelerated/automated annotation, model retraining and deployment promotion.
 
 ## Features
 

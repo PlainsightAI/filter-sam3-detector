@@ -2,6 +2,8 @@
 
 Complete documentation for the SAM3 detector filter.
 
+This filter is a part of Plainsight's **HyperLabel™**, which enables accelerated/automated annotation, model retraining and deployment promotion.
+
 ## Contents
 
 ### Core Documentation
