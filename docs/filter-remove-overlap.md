@@ -15,7 +15,7 @@ Use with the same video and confidence as in **QUICKSTART** Example 2:
 ```bash
 VIDEO_PATH=./data/car.mp4
 FILTER_TEXT_PROMPT=
-FILTER_TEXT_PROMPTS=car,truck
+FILTER_TEXT_PROMPTS=car###truck
 FILTER_CONFIDENCE_THRESHOLD=0.3
 
 # Default: no cross-class overlap removal

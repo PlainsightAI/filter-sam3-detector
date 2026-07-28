@@ -211,8 +211,8 @@ python scripts/filter_object_detection_exemplar.py
 Run the complete detection pipeline with Docker Compose. The prebuilt image is published to Docker Hub at `plainsightai/openfilter-sam3-detector` and is publicly pullable — no auth required.
 
 ```bash
-# 1. Copy your video to the data directory
-cp your_video.mp4 data/sample-video.mp4
+# 1. Point VIDEO_PATH at your video (compose defaults to the bundled ./data/car.mp4)
+export VIDEO_PATH=$(pwd)/your_video.mp4
 
 # 2. Pull the prebuilt image (compose will also pull on first run if
 #    missing). Model weights are baked in, so no HF_TOKEN at runtime.
@@ -331,7 +331,9 @@ Convert noisy per-frame detections into stable presence/absence intervals using 
 # Run the integrated pipeline (temporal intervals built into SAM3 detector).
 # Set SAM3_DETECTOR_VERSION to pin to a specific release if you need
 # reproducibility; defaults to `latest`.
-cp your_video.mp4 data/sample-video.mp4
+# Point VIDEO_PATH at your file (compose defaults to the bundled ./data/car.mp4)
+export VIDEO_PATH=$(pwd)/your_video.mp4
+
 docker pull plainsightai/openfilter-sam3-detector:latest
 FILTER_TEXT_PROMPT="person" docker compose up
 
