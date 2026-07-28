@@ -8,7 +8,21 @@ You will run the pipeline with `docker-compose.yaml` for all examples (`FILTER_T
 
 - Docker and Docker Compose plugin
 - NVIDIA GPU runtime configured (for default CUDA flow)
-- A local input video path (no download step required)
+
+## Input video
+
+The repo ships `data/car.mp4`, and compose uses it by default, so there is nothing to download to get a first run.
+
+To try another clip, point `VIDEO_PATH` at any file. These are public and need no credentials:
+
+```bash
+curl -O https://storage.googleapis.com/plainsight-ml-assets-production/videos/car_truck_person.mp4
+curl -O https://storage.googleapis.com/plainsight-ml-assets-production/videos/train.mp4
+
+VIDEO_PATH=$(pwd)/car_truck_person.mp4 docker compose -f docker-compose.yaml up -d
+```
+
+Match the prompt to the clip: `car` for the bundled `data/car.mp4`, `car,truck,person` for `car_truck_person.mp4`, `train` for `train.mp4`.
 
 The prebuilt image lives on Docker Hub at `plainsightai/openfilter-sam3-detector` and is publicly pullable — no auth required.
 

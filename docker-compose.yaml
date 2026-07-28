@@ -1,5 +1,6 @@
 # Get Started pipeline: VideoIn -> SAM3Detector -> Webvis
 # Start:
+#   docker compose -f docker-compose.yaml up -d                      # uses ./data/car.mp4
 #   VIDEO_PATH=/absolute/path/to/video.mp4 docker compose -f docker-compose.yaml up -d
 # Stop:
 #   docker compose -f docker-compose.yaml down
@@ -23,7 +24,7 @@ services:
       FILTER_SOURCES: file:///video.mp4!sync
       FILTER_OUTPUTS: tcp://*:5550
     volumes:
-      - ${VIDEO_PATH:-./data/sample-video.mp4}:/video.mp4:ro
+      - ${VIDEO_PATH:-./data/car.mp4}:/video.mp4:ro
     networks:
       - filter-network
 

@@ -7,6 +7,15 @@ SAM3 Detector filter release notes
 - Bump openfilter to 1.1.2
 - `detect_objects_video` example: `--prompt` now accepts multiple values (`--prompt "cup" "bowl"` or repeated `--prompt` flags), wiring them into the detector's `text_prompts`. Simplified the pipeline to write JSONL directly via the detector's built-in `output_path` (with annotated frames being written to `annotated_frames_output_dir` opt-in via `--visualize`), removing the `Recorder` and `ImageOut` sink filters.
 
+## v0.1.25 - 2026-07-27
+
+### Fixed
+- `docker-compose.yaml`: the default video mount pointed at `./data/sample-video.mp4`, which does not exist in the repo. It now points at the bundled `./data/car.mp4`, so `docker compose up` works without setting `VIDEO_PATH` first.
+- `.env.example`: default `FILTER_TEXT_PROMPT` was `post`, which matches the bundled PNG rather than the default video. Now `car`.
+
+### Added
+- `QUICKSTART.md`: an input-video section naming the bundled clip and two public sample videos, with the prompt to use for each.
+
 ## v0.1.24 - 2026-07-26
 
 ### Changed
