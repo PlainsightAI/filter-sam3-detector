@@ -7,6 +7,11 @@ SAM3 Detector filter release notes
 - Bump openfilter to 1.1.2
 - `detect_objects_video` example: `--prompt` now accepts multiple values (`--prompt "cup" "bowl"` or repeated `--prompt` flags), wiring them into the detector's `text_prompts`. Simplified the pipeline to write JSONL directly via the detector's built-in `output_path` (with annotated frames being written to `annotated_frames_output_dir` opt-in via `--visualize`), removing the `Recorder` and `ImageOut` sink filters.
 
+## v0.1.25 - 2026-07-28
+
+### Changed
+- Add Blackwell (RTX PRO 6000 / sm_120) support: move the Docker base to `torch 2.10.0+cu128` so torch/torchvision ship sm_120 kernels. The previous `2.12.1+cu126` base (set in #50) crashed on Blackwell with `cudaErrorNoKernelImageForDevice` on the first GPU op and returned empty detections. What forced the move is cu128, not a specific version (`pytorch/pytorch` has no `2.12.1-cuda12.8` tag). 2.10.0-cu128 is chosen over 2.11.0 because it keeps `sm_70`: its compiled arch set is sm_70/75/80/86/90/100/120, so it adds Blackwell (sm_120) without dropping Volta/V100 (sm_70), which `2.11.0-cu128` drops. Stays on Ubuntu 24.04 / Python 3.12. Validated on real hardware: SAM3 detects on RTX PRO 6000 (Blackwell) and A10 (no regression).
+
 ## v0.1.24 - 2026-07-26
 
 ### Changed

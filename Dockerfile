@@ -1,5 +1,9 @@
 # syntax=docker/dockerfile:1.4
-FROM pytorch/pytorch:2.12.1-cuda12.6-cudnn9-runtime
+# The base MUST stay a cu128 tag: Blackwell (sm_120) needs cu128 kernels, and this
+# line is the only guard on that (pyproject has torch>=2.0.0 with no upper bound and
+# no workflow asserts the base). #50 silently moved this to a cu126 tag (2.12.1) and
+# that is what broke Blackwell. Keep it cu128; treat any bump as a deliberate, tested change.
+FROM pytorch/pytorch:2.10.0-cuda12.8-cudnn9-runtime
 
 # Install uv for fast, correct dependency resolution
 COPY --from=ghcr.io/astral-sh/uv:0.9.26 /uv /uvx /bin/
