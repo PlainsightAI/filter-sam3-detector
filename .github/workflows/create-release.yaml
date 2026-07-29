@@ -9,9 +9,9 @@ on:
 
 jobs:
   release:
-    uses: PlainsightAI/gh-actions-public/.github/workflows/filter-release.yaml@main
+    uses: PlainsightAI/gh-actions-public/.github/workflows/filter-release.yaml@lmyers/plat-1198-registry-normalization
     with:
-      docker_image: docker.io/plainsightai/openfilter-sam3-detector
+      docker_image: plainsightai/openfilter-sam3-detector
       schema_module: filter_sam3_detector.filter
       schema_class: FilterSAM3DetectorConfigSchema
       python_versions: '["3.11", "3.12"]'
