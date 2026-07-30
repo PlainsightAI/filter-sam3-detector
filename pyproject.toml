@@ -25,14 +25,14 @@ classifiers = [
 dynamic = ["version"]
 
 dependencies = [
-  "openfilter[all]>=1.1.2,<2.0.0",
+  "openfilter[all]>=1.2.0,<2.0.0",
   "torch>=2.0.0",
   "torchvision>=0.15.0",
   "numpy>=1.24.0",
   "pillow>=10.0.0",
   "transformers>=5.0.0, <6.0.0",
   "kernels >= 0.15.2, < 0.16.0",
-  "av~=16.1.0",
+  "av~=17.1.0",
   "opencv-python>=4.8.0",
   "python-dotenv>=1.0.0",
   "tomli>=2.0.0; python_version < '3.11'",  # Required for Python < 3.11 (OpenFilter uses tomllib in 3.11+)
