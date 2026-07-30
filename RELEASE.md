@@ -7,6 +7,7 @@ SAM3 Detector filter release notes
 - Bump openfilter to 1.1.2
 - `detect_objects_video` example: `--prompt` now accepts multiple values (`--prompt "cup" "bowl"` or repeated `--prompt` flags), wiring them into the detector's `text_prompts`. Simplified the pipeline to write JSONL directly via the detector's built-in `output_path` (with annotated frames being written to `annotated_frames_output_dir` opt-in via `--visualize`), removing the `Recorder` and `ImageOut` sink filters.
 - Bump the openfilter dependency to 1.2.0
+- Bump av pin to ~=17.1.0 to match openfilter 1.2.0 (av 16→17)
 
 ## v0.1.25 - 2026-07-28
 
