@@ -209,18 +209,33 @@ def load_video_frames_from_video_file(
     img_std=(0.229, 0.224, 0.225),
     compute_device=torch.device("cuda"),
 ):
-    """Load the video frames from a video file."""
-    import decord
+    """Load the video frames from a video file (PyAV / ffmpeg backend).
+
+    Uses PyAV instead of decord: decord is abandoned (last release 0.6.0) and
+    its wheels bundle a stale ffmpeg 4.x (CVE-2026-40962 class), whereas PyAV is
+    already a dependency (``av~=17.1.0``, ffmpeg 8.x). Accepts either a filesystem
+    path (str) or raw bytes, matching the previous decord behaviour.
+    """
+    import io
+
+    import av
 
     img_mean = torch.tensor(img_mean, dtype=torch.float32)[:, None, None]
     img_std = torch.tensor(img_std, dtype=torch.float32)[:, None, None]
-    # Get the original video height and width
-    decord.bridge.set_bridge("torch")
-    video_height, video_width, _ = decord.VideoReader(video_path).next().shape
-    # Iterate over all frames in the video
+
+    source = io.BytesIO(video_path) if isinstance(video_path, (bytes, bytearray)) else video_path
+    video_height = video_width = None
     images = []
-    for frame in decord.VideoReader(video_path, width=image_size, height=image_size):
-        images.append(frame.permute(2, 0, 1))
+    with av.open(source) as container:
+        stream = container.streams.video[0]
+        for frame in container.decode(stream):
+            if video_height is None:
+                video_height, video_width = frame.height, frame.width
+            # Resize to image_size x image_size and convert to RGB in the ffmpeg
+            # pipeline, then to a CHW uint8 tensor (mirrors decord's width/height
+            # resize + permute(2, 0, 1)).
+            rgb = frame.reformat(width=image_size, height=image_size, format="rgb24").to_ndarray()
+            images.append(torch.from_numpy(rgb).permute(2, 0, 1))
 
     images = torch.stack(images, dim=0).float() / 255.0
     if not offload_video_to_cpu:

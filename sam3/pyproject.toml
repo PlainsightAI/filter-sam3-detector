@@ -59,7 +59,6 @@ notebooks = [
     "ipycanvas",
     "ipympl",
     "pycocotools",
-    "decord",
     "opencv-python",
     "einops",
     "scikit-image",
