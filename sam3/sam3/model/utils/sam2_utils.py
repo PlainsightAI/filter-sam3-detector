@@ -214,7 +214,9 @@ def load_video_frames_from_video_file(
     Uses PyAV instead of decord: decord is abandoned (last release 0.6.0) and
     its wheels bundle a stale ffmpeg 4.x (CVE-2026-40962 class), whereas PyAV is
     already a dependency (``av~=17.1.0``, ffmpeg 8.x). Accepts either a filesystem
-    path (str) or raw bytes, matching the previous decord behaviour.
+    path (str) or raw bytes; the bytes path is now genuinely supported (via
+    ``io.BytesIO``), whereas ``decord.VideoReader`` raised ``TypeError`` on bytes,
+    so the previous ``is_bytes`` branch in the caller was effectively broken.
     """
     import io
 
