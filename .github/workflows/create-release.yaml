@@ -10,6 +10,10 @@ on:
 jobs:
   release:
     uses: PlainsightAI/gh-actions-public/.github/workflows/filter-release.yaml@main
+    permissions:
+      contents: write
+      pull-requests: read
+      id-token: write        # enables keyless SBOM attestation (cosign) in the public reusable
     with:
       docker_image: docker.io/plainsightai/openfilter-sam3-detector
       schema_module: filter_sam3_detector.filter

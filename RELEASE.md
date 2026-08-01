@@ -2,12 +2,14 @@
 SAM3 Detector filter release notes
 
 ## [Unreleased]
-### Changed
 
-- Bump openfilter to 1.1.2
+## v0.1.26 - 2026-07-30
+
+### Changed
+- Grant `id-token: write` in `create-release.yaml` so the public release workflow will be able to produce a keyless (cosign) SBOM attestation once the shared SBOM steps land (PlainsightAI/gh-actions-public#32). Inert until then — this release publishes without an attestation.
+- Update openfilter to 1.2.0 and the `av` pin to `~=17.1.0` (av 16→17) to match it.
+- Replace the abandoned `decord` video reader with PyAV (`av`, already a dependency) in the vendored SAM3 `load_video_frames_from_video_file`. `decord` 0.6.0 and the `eva-decord` fork bundle a stale ffmpeg 4.x (CVE-2026-40962 class); PyAV uses ffmpeg 8.x. Removes `decord`/`eva-decord` from the dependency lists. Unblocks dropping the shared CVE-2026-40962 ignore (PlainsightAI/gh-actions-public#30).
 - `detect_objects_video` example: `--prompt` now accepts multiple values (`--prompt "cup" "bowl"` or repeated `--prompt` flags), wiring them into the detector's `text_prompts`. Simplified the pipeline to write JSONL directly via the detector's built-in `output_path` (with annotated frames being written to `annotated_frames_output_dir` opt-in via `--visualize`), removing the `Recorder` and `ImageOut` sink filters.
-- Bump the openfilter dependency to 1.2.0
-- Bump av pin to ~=17.1.0 to match openfilter 1.2.0 (av 16→17)
 
 ## v0.1.25 - 2026-07-28
 
