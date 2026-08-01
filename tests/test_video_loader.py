@@ -43,6 +43,7 @@ def test_shape_dtype_and_native_dimensions():
     cap = cv2.VideoCapture(str(CAR_MP4))
     exp_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     exp_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    exp_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     cap.release()
 
     load = _load_video_frames_from_video_file()
@@ -52,7 +53,11 @@ def test_shape_dtype_and_native_dimensions():
 
     assert images.dtype == torch.float32
     assert images.ndim == 4 and images.shape[1:] == (3, 64, 64)  # (T, C, H, W), square-resized
-    assert images.shape[0] > 0
+    # Pin the exact decoded frame count against cv2's reference. A backend swap
+    # can silently drop/duplicate frames (car.mp4 is 512 frames, ~68% B-frames —
+    # exactly where reorder mishandling shows up as an off-by-a-handful count),
+    # and nothing else in this file would catch that.
+    assert exp_frames > 0 and images.shape[0] == exp_frames
     # Native dims reported height-then-width, not transposed.
     assert (height, width) == (exp_h, exp_w)
 
