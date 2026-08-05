@@ -8,6 +8,7 @@ SAM3 Detector filter release notes
 ### Changed
 - Update the openfilter dependency to `>=1.2.1`
 - Point the `docker-compose.yaml` utility images at `openfilter-{video-in,webvis}:1.2.1` and pin the filter's own image default to the release version.
+- Bump `actions/checkout` to `v7` in the `apply-rulesets` workflow (latest major, Node24 runtime).
 
 ## v0.1.26 - 2026-07-30
 
