@@ -15,7 +15,7 @@
 
 services:
   video_in:
-    image: containers.openfilter.io/plainsightai/openfilter-video-in:0.1.27
+    image: containers.openfilter.io/plainsightai/openfilter-video-in:1.2.1
     platform: linux/amd64
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
@@ -28,7 +28,7 @@ services:
       - filter-network
 
   sam3_detector:
-    image: plainsightai/openfilter-sam3-detector:${SAM3_DETECTOR_VERSION:-latest}
+    image: plainsightai/openfilter-sam3-detector:${SAM3_DETECTOR_VERSION:-0.1.27}
     platform: linux/amd64
     env_file: .env
     environment:
@@ -67,7 +67,7 @@ services:
       - filter-network
 
   webvis:
-    image: containers.openfilter.io/plainsightai/openfilter-webvis:0.1.27
+    image: containers.openfilter.io/plainsightai/openfilter-webvis:1.2.1
     platform: linux/amd64
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
