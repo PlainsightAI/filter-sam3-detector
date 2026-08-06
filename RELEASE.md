@@ -3,7 +3,7 @@ SAM3 Detector filter release notes
 
 ## [Unreleased]
 
-## v0.1.28 - 2026-08-06
+## v0.1.28 - 2026-08-05
 
 ### Fixed
 - `Dockerfile`: coerce an empty `hf_token` secret to `None` before downloading HF assets. When the `HF_TOKEN` secret is absent (Dependabot/fork PRs), the `--mount=type=secret` still creates an empty file, so `token` became `""` and was passed to `snapshot_download` for the public `kernels-community/cv-utils` kernel. `huggingface_hub` then emitted an invalid `Bearer ` (empty) auth header, failing the build with `httpx.LocalProtocolError: Illegal header value b'Bearer '` and breaking `release / dry-run-publish`. Now anonymous downloads work when no token is present.
