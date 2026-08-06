@@ -35,9 +35,12 @@ RUN --mount=type=secret,id=hf_token python <<'PY'
 import os
 from huggingface_hub import snapshot_download
 
-# Read Hugging Face token if present
+# Read Hugging Face token if present.
+# Note: when the hf_token secret is absent (e.g. Dependabot/fork PRs), the mount
+# still creates an empty file. Coerce "" to None so anonymous downloads work and
+# huggingface_hub does not emit an invalid "Bearer " (empty) auth header.
 secret_path = "/run/secrets/hf_token"
-token = open(secret_path).read().strip() if os.path.exists(secret_path) else None
+token = (open(secret_path).read().strip() or None) if os.path.exists(secret_path) else None
 print(f"Token present: {bool(token)}")
 
 # 1. Download the custom cv-utils GPU kernel (Version 1 is stored on revision 'v1')
