@@ -28,7 +28,7 @@ services:
       - filter-network
 
   sam3_detector:
-    image: plainsightai/openfilter-sam3-detector:${SAM3_DETECTOR_VERSION:-0.1.27}
+    image: plainsightai/openfilter-sam3-detector:${SAM3_DETECTOR_VERSION:-0.1.29}
     platform: linux/amd64
     env_file: .env
     environment:
