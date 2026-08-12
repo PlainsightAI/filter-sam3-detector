@@ -7,7 +7,7 @@ SAM3 Detector filter release notes
 
 ### Changed
 
-- Build on `openfilter-base` instead of `pytorch/pytorch:*-cuda12.8-*-runtime`: the CUDA base was never apt-upgraded (OS-package CVEs). torch/torchvision are already declared and their default PyPI wheels bundle CUDA 12.8 (cu128) — verified via wheel metadata — so Blackwell (sm_120) support now rides on the torch wheel, not the base image.
+- Build on `openfilter-base` instead of `pytorch/pytorch:*-cuda12.8-*-runtime`: the CUDA base was never apt-upgraded (OS-package CVEs). torch/torchvision are pinned to `>=2.9,<2.10` / `>=0.24,<0.25`, whose wheels bundle CUDA 12.8 (cu128) — what Blackwell (sm_120) needs — so Blackwell support rides on the torch wheel, not the base image. The pin is deliberate: an unpinned torch now resolves to 2.13.x (CUDA 13/cu13, no cu12 runtime); torch 2.9.1+cu128 is validated on Blackwell (RTX 5060) via the lab GPU smoke.
 - Update the openfilter dependency to 1.2.2
 
 ## v0.1.28 - 2026-08-05

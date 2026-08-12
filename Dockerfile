@@ -1,11 +1,12 @@
 # syntax=docker/dockerfile:1.4
 # Runtime on openfilter-base (python:3.11-slim + weekly apt-upgrade) instead of
 # pytorch/pytorch:*-cuda*-runtime, which was never apt-upgraded and carried OS-package CVEs.
-# torch is a declared dep and its default PyPI linux wheel bundles CUDA 12.8 (cu128) — verified:
-# torch 2.10's wheel Requires nvidia-cuda-runtime-cu12==12.8.90 — which is what Blackwell
-# (sm_120) needs. Blackwell now rides on the torch wheel's cu128, not the base image. A future
-# torch that changed its default CUDA would silently drop Blackwell (as the cu126 base bump in
-# #50 did), so treat any torch bump as a deliberate, tested change.
+# torch is pinned to >=2.9,<2.10 in pyproject.toml; that wheel bundles CUDA 12.8 (cu128) —
+# verified: torch 2.9.1 Requires nvidia-cuda-runtime-cu12==12.8.90, which is what Blackwell
+# (sm_120) needs. The pin is deliberate: an unpinned torch now resolves to 2.13.x, whose wheel
+# bundles CUDA 13 (cu13) and drops the cu12 runtime — a silent CUDA-stack change. torch 2.9.1
+# +cu128 is validated on Blackwell (RTX 5060, sm_120) via the lab GPU smoke, so treat any torch
+# bump as a deliberate, re-tested change.
 FROM plainsightai/openfilter-base:py3.11
 
 # Install uv for fast, correct dependency resolution
