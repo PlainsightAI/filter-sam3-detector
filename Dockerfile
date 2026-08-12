@@ -1,16 +1,19 @@
 # syntax=docker/dockerfile:1.4
-# The base MUST stay a cu128 tag: Blackwell (sm_120) needs cu128 kernels, and this
-# line is the only guard on that (pyproject has torch>=2.0.0 with no upper bound and
-# no workflow asserts the base). #50 silently moved this to a cu126 tag (2.12.1) and
-# that is what broke Blackwell. Keep it cu128; treat any bump as a deliberate, tested change.
-FROM pytorch/pytorch:2.10.0-cuda12.8-cudnn9-runtime
+# Runtime on openfilter-base (python:3.11-slim + weekly apt-upgrade) instead of
+# pytorch/pytorch:*-cuda*-runtime, which was never apt-upgraded and carried OS-package CVEs.
+# torch is pinned to >=2.9,<2.10 in pyproject.toml; that wheel bundles CUDA 12.8 (cu128) —
+# verified: torch 2.9.1 Requires nvidia-cuda-runtime-cu12==12.8.90, which is what Blackwell
+# (sm_120) needs. The pin is deliberate: an unpinned torch now resolves to 2.13.x, whose wheel
+# bundles CUDA 13 (cu13) and drops the cu12 runtime — a silent CUDA-stack change. torch 2.9.1
+# +cu128 is validated on Blackwell (RTX 5060, sm_120) via the lab GPU smoke, so treat any torch
+# bump as a deliberate, re-tested change.
+FROM plainsightai/openfilter-base:py3.11
 
 # Install uv for fast, correct dependency resolution
 COPY --from=ghcr.io/astral-sh/uv:0.9.26 /uv /uvx /bin/
 
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    UV_LINK_MODE=copy \
+# PYTHONDONTWRITEBYTECODE / PYTHONUNBUFFERED are provided by openfilter-base.
+ENV UV_LINK_MODE=copy \
     UV_COMPILE_BYTECODE=1 \
     UV_PYTHON_DOWNLOADS=never \
     UV_BREAK_SYSTEM_PACKAGES=1
