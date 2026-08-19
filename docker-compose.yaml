@@ -49,7 +49,10 @@ services:
       # An empty default sent the filter down the no-prompt branch: it warns and
       # emits nothing, which reads as a broken pipeline rather than a missing
       # setting.
-      FILTER_TEXT_PROMPT: ${FILTER_TEXT_PROMPT:-car}
+      # `-` and not `:-`: substitute only when UNSET. QUICKSTART Examples 2, 3
+      # and 4 set FILTER_TEXT_PROMPT= empty on purpose, to run on prompts, boxes
+      # or reference images instead, and `:-` would override every one of them.
+      FILTER_TEXT_PROMPT: ${FILTER_TEXT_PROMPT-car}
       # Plural form, split on `###`. Present here so it can be set inline on the
       # command line like every other variable in this file; without it the value
       # only ever arrived through .env and was silently dropped from the shell.
@@ -69,7 +72,7 @@ services:
       FILTER_SAVE_ANNOTATED_FRAMES: ${FILTER_SAVE_ANNOTATED_FRAMES:-true}
       FILTER_ANNOTATED_FRAMES_OUTPUT_DIR: ${FILTER_ANNOTATED_FRAMES_OUTPUT_DIR:-/output/annotated_frames}
       FILTER_VISUALIZE: ${FILTER_VISUALIZE:-true}
-      FILTER_ENABLE_TEMPORAL_INTERVALS: "false"
+      FILTER_ENABLE_TEMPORAL_INTERVALS: ${FILTER_ENABLE_TEMPORAL_INTERVALS:-false}
     deploy:
       resources:
         reservations:

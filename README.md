@@ -328,16 +328,15 @@ Convert noisy per-frame detections into stable presence/absence intervals using 
 ### Quick Start (Docker - Recommended)
 
 ```bash
-# Run the integrated pipeline (temporal intervals built into SAM3 detector).
-# Set SAM3_DETECTOR_VERSION to pin to a specific release if you need
-# reproducibility; defaults to `latest`.
+# Run the integrated pipeline with temporal intervals turned on. They are off by
+# default: FILTER_ENABLE_TEMPORAL_INTERVALS is what switches them.
+# SAM3_DETECTOR_VERSION pins the image; compose defaults it to 0.1.29, not `latest`.
 # Point VIDEO_PATH at your file (compose defaults to the bundled ./data/car.mp4)
 export VIDEO_PATH=$(pwd)/your_video.mp4
 
-docker pull plainsightai/openfilter-sam3-detector:latest
-FILTER_TEXT_PROMPT="person" docker compose up
+FILTER_ENABLE_TEMPORAL_INTERVALS=true FILTER_TEXT_PROMPT="person" docker compose up
 
-# Intervals stream to output/intervals.json as detection progresses
+# Output lands under ./results, which is the volume compose mounts
 ```
 
 ### Quick Start (Python Script)
