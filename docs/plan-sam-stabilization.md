@@ -2,7 +2,7 @@
 
 ## Context
 
-When **multiple** text prompts are used — via **`FILTER_TEXT_PROMPTS`** (comma-separated, e.g. `car,truck`) or the equivalent multi-prompt config — SAM3 runs inference **independently per prompt**. That yields **more than one class** in the same frame and the **same physical region** can get **two (or more) detections** with **different labels** (e.g. `car` and `truck` on one pickup). A single prompt (**`FILTER_TEXT_PROMPT`** only, or a single entry in `text_prompts`) does **not** create this cross-class duplication pattern.
+When **multiple** text prompts are used — via **`FILTER_TEXT_PROMPTS`** (split on **`###`**, e.g. `car###truck`) or the equivalent multi-prompt config — SAM3 runs inference **independently per prompt**. That yields **more than one class** in the same frame and the **same physical region** can get **two (or more) detections** with **different labels** (e.g. `car` and `truck` on one pickup). A single prompt (**`FILTER_TEXT_PROMPT`** only, or a single entry in `text_prompts`) does **not** create this cross-class duplication pattern.
 
 **Default behaviour — no removal:** **`FILTER_REMOVE_OVERLAP`** defaults to **`false`** (unset counts as off). In that case there is **no** cross-class overlap **removal**: outputs keep every box the model produced; the shutdown pass may still **count** overlaps for visibility. **Removal** runs only when the operator sets **`FILTER_REMOVE_OVERLAP=true`** **and** the run has **more than one prompt / class** (see **Scope**).
 
@@ -31,7 +31,7 @@ When the flag is unset or not truthy (same boolean rules as **`FILTER_NMS_ENABLE
 - **Centre lane:** one vehicle has both a **car** box (**~0.88** confidence) and a **truck** box (**~0.66**). With **`FILTER_REMOVE_OVERLAP=true`**, the shutdown pass should keep **one** detection — **higher `confidence`** wins (here **car**).
 - **Far right:** tight clusters of similar scores suggest **same-class** duplicates; those are normally handled by existing **per-prompt NMS**; this plan focuses on **cross-prompt** overlap.
 
-**Configuration (OpenFilter):** operators use **only** **`FILTER_REMOVE_OVERLAP`** in `.env` / environment. It maps to internal **`remove_overlap`** via `FILTER_{KEY.upper()}` in `normalize_config()` (same pattern as **`FILTER_NMS_ENABLED`** → `nms_enabled`). See **Step 2**. Operator walkthrough ( **`FILTER_TEXT_PROMPTS=car,truck`**, **`FILTER_CONFIDENCE_THRESHOLD=0.3`**, **`data/car.mp4`** ): **`docs/filter-remove-overlap.md`** (also linked from **`QUICKSTART.md`**).
+**Configuration (OpenFilter):** operators use **only** **`FILTER_REMOVE_OVERLAP`** in `.env` / environment. It maps to internal **`remove_overlap`** via `FILTER_{KEY.upper()}` in `normalize_config()` (same pattern as **`FILTER_NMS_ENABLED`** → `nms_enabled`). See **Step 2**. Operator walkthrough ( **`FILTER_TEXT_PROMPTS=car###truck`**, **`FILTER_CONFIDENCE_THRESHOLD=0.3`**, **`data/car.mp4`** ): **`docs/filter-remove-overlap.md`** (also linked from **`QUICKSTART.md`**).
 
 This plan adds:
 
@@ -51,7 +51,7 @@ When **`FILTER_REMOVE_OVERLAP`** is off (**default**), there is **no** cross-cla
 | `filter_sam3_detector/filter.py` | **Modify** — config, setup, `shutdown()` (overlap finalize + optional JSONL rewrite), multi-output paths |
 | `filter_sam3_detector/__init__.py` | **Modify** — export `ConfusionDetector` |
 | `scripts/analyze_confusions.py` | **Create** — post-processing report script |
-| `docs/filter-remove-overlap.md` | **Create** — short operator example (same spirit as **`QUICKSTART.md`**): **`FILTER_TEXT_PROMPTS=car,truck`**, **`FILTER_CONFIDENCE_THRESHOLD=0.3`**, **`data/car.mp4`**, **`FILTER_REMOVE_OVERLAP=true`** vs default; expected JSONL / shutdown log |
+| `docs/filter-remove-overlap.md` | **Create** — short operator example (same spirit as **`QUICKSTART.md`**): **`FILTER_TEXT_PROMPTS=car###truck`**, **`FILTER_CONFIDENCE_THRESHOLD=0.3`**, **`data/car.mp4`**, **`FILTER_REMOVE_OVERLAP=true`** vs default; expected JSONL / shutdown log |
 | **`QUICKSTART.md`** | **Modify** — link to **`docs/filter-remove-overlap.md`** from the multi-prompt example; one paragraph on **`FILTER_REMOVE_OVERLAP`** |
 | **`VERSION`** | **Bump** — single line, **`v` + semver** (e.g. `v0.1.8`); must match the new heading in **`RELEASE.md`** (see `pyproject.toml` → `version = { file = "VERSION" }`) |
 | **`RELEASE.md`** | **Update** — add a `## vX.Y.Z - YYYY-MM-DD` section with **Added** / **Changed** / **Fixed** entries for this feature (`FILTER_REMOVE_OVERLAP`, shutdown overlap pass, optional `analyze_confusions.py`, etc.) |
@@ -315,10 +315,10 @@ car  vs  truck
 
 ### Representative use case: `car` vs `truck` on road footage
 
-1. Run the filter on **`data/car.mp4`** with **`FILTER_TEXT_PROMPTS=car,truck`** and **`FILTER_CONFIDENCE_THRESHOLD=0.3`** (see `.env`). Expect both classes to fire on similar regions; shutdown should report non-zero **before** overlap counts when confusion detection is active.
+1. Run the filter on **`data/car.mp4`** with **`FILTER_TEXT_PROMPTS=car###truck`** and **`FILTER_CONFIDENCE_THRESHOLD=0.3`** (see `.env`). Expect both classes to fire on similar regions; shutdown should report non-zero **before** overlap counts when confusion detection is active.
 2. With **`FILTER_REMOVE_OVERLAP`** unset or `false`, confirm shutdown logs **before** count and **after** equals **before** (no removal).
 3. With **`FILTER_REMOVE_OVERLAP=true`**, confirm shutdown logs **before** and **after** with **`after` ≤ `before`** when overlaps were resolved.
-4. On **`output/detections.jsonl`** (or a fresh run with `car,truck`), open frame **`data.id` 0**: for the duplicate bbox (642, 436, 155×104), after rewrite **only the `truck`** row should remain (higher **`confidence`**: ~0.844 vs ~0.830 on **`car`**).
+4. On **`output/detections.jsonl`** (or a fresh run with `car###truck`), open frame **`data.id` 0**: for the duplicate bbox (642, 436, 155×104), after rewrite **only the `truck`** row should remain (higher **`confidence`**: ~0.844 vs ~0.830 on **`car`**).
 
 ### General checks
 

@@ -1,10 +1,10 @@
 # `FILTER_REMOVE_OVERLAP` — short example
 
-This page matches the behaviour described in **[plan-sam-stabilization.md](plan-sam-stabilization.md)**. Use it when you run **`FILTER_TEXT_PROMPTS`** with **more than one class** (e.g. `car,truck`) and the **same region** gets **two labels**; optionally remove the weaker box at **shutdown** using IoU (default **95%**) and **highest `confidence`**.
+This page matches the behaviour described in **[plan-sam-stabilization.md](plan-sam-stabilization.md)**. Use it when you run **`FILTER_TEXT_PROMPTS`** with **more than one class** (e.g. `car###truck`) and the **same region** gets **two labels**; optionally remove the weaker box at **shutdown** using IoU (default **95%**) and **highest `confidence`**.
 
 ## When it applies
 
-- **Multi-prompt only:** set **`FILTER_TEXT_PROMPTS`** (comma-separated). Single **`FILTER_TEXT_PROMPT`** does not create cross-class duplicates for this path.
+- **Multi-prompt only:** set **`FILTER_TEXT_PROMPTS`**, split on **`###`** (`prompt_delimiter`, default `###`). A comma-separated string parses as **one** prompt, not several. Single **`FILTER_TEXT_PROMPT`** does not create cross-class duplicates for this path.
 - **Default:** **`FILTER_REMOVE_OVERLAP`** is **`false`** or unset → **no** cross-class removal; JSONL and overlays keep every box.
 - **Opt-in:** set **`FILTER_REMOVE_OVERLAP=true`** → at shutdown the pass writes **`detections_cleaned.jsonl`** next to `detections.jsonl`, keeping one box per **cross-class** IoU cluster (winner = higher **`confidence`**). The original **`detections.jsonl`** is unchanged.
 
@@ -57,4 +57,4 @@ docker compose -f docker-compose.yaml down
 
 ## See also
 
-- **[QUICKSTART.md](../QUICKSTART.md)** — multi-prompt Example 2 (`car,truck` + `data/car.mp4`).
+- **[QUICKSTART.md](../QUICKSTART.md)** — multi-prompt Example 2 (`car###truck` + `data/car.mp4`).
