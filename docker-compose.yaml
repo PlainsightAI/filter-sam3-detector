@@ -16,7 +16,7 @@
 
 services:
   video_in:
-    image: containers.openfilter.io/plainsightai/openfilter-video-in:0.1.27
+    image: containers.openfilter.io/plainsightai/openfilter-video-in:1.2.1
     platform: linux/amd64
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
@@ -29,7 +29,7 @@ services:
       - filter-network
 
   sam3_detector:
-    image: plainsightai/openfilter-sam3-detector:${SAM3_DETECTOR_VERSION:-latest}
+    image: plainsightai/openfilter-sam3-detector:${SAM3_DETECTOR_VERSION:-0.1.29}
     platform: linux/amd64
     # Optional on purpose: .env is not tracked, so requiring it made a bare
     # `docker compose up` fail in a clean checkout, which is the exact flow the
@@ -44,7 +44,16 @@ services:
       FILTER_ID: filter_sam3_detector
       FILTER_SOURCES: tcp://video_in:5550
       FILTER_OUTPUTS: tcp://*:5552
-      FILTER_TEXT_PROMPT: ${FILTER_TEXT_PROMPT:-}
+      # Defaults to `car`, matching the bundled ./data/car.mp4, so a bare
+      # `docker compose up -d` in a clean checkout actually produces detections.
+      # An empty default sent the filter down the no-prompt branch: it warns and
+      # emits nothing, which reads as a broken pipeline rather than a missing
+      # setting.
+      FILTER_TEXT_PROMPT: ${FILTER_TEXT_PROMPT:-car}
+      # Plural form, split on `###`. Present here so it can be set inline on the
+      # command line like every other variable in this file; without it the value
+      # only ever arrived through .env and was silently dropped from the shell.
+      FILTER_TEXT_PROMPTS: ${FILTER_TEXT_PROMPTS:-}
       FILTER_REF_IMAGES: ${FILTER_REF_IMAGES:-}
       FILTER_REF_IMAGES_NEGATIVE: ${FILTER_REF_IMAGES_NEGATIVE:-}
       FILTER_POSITIVE_BOXES: ${FILTER_POSITIVE_BOXES:-}
@@ -75,7 +84,7 @@ services:
       - filter-network
 
   webvis:
-    image: containers.openfilter.io/plainsightai/openfilter-webvis:0.1.27
+    image: containers.openfilter.io/plainsightai/openfilter-webvis:1.2.1
     platform: linux/amd64
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}

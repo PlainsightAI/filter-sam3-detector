@@ -3,21 +3,52 @@ SAM3 Detector filter release notes
 
 ## [Unreleased]
 
-## v0.1.25 - 2026-07-27
-
 ### Changed
-- Bump openfilter to 1.1.2
-- `detect_objects_video` example: `--prompt` now accepts multiple values (`--prompt "cup" "bowl"` or repeated `--prompt` flags), wiring them into the detector's `text_prompts`. Simplified the pipeline to write JSONL directly via the detector's built-in `output_path` (with annotated frames being written to `annotated_frames_output_dir` opt-in via `--visualize`), removing the `Recorder` and `ImageOut` sink filters.
+
+- Bump the openfilter dependency to 1.3.0
 
 ### Fixed
 - `docker-compose.yaml`: the default video mount pointed at `./data/sample-video.mp4`, which does not exist in the repo. It now points at the bundled `./data/car.mp4`, so `docker compose up` works without setting `VIDEO_PATH` first. `docker-compose.test.yaml` hard-mounted the same missing file and now uses the bundled clip too.
 - `README.md`: the documented flow was `cp your_video.mp4 data/sample-video.mp4` followed by `docker compose up`, which only worked because of that stale default. It now sets `VIDEO_PATH`, so a custom video is actually used instead of being silently ignored.
 - `.env.example`: default `FILTER_TEXT_PROMPT` was `post`, which matches the bundled PNG rather than the default video. Now `car`. `QUICKSTART.md` carried the same mismatch in Example 1 and in the Python-script example.
 - Multi-prompt examples used comma-separated values (`car,truck`), which parse as a single prompt: `prompt_delimiter` defaults to `###`. Corrected across `QUICKSTART.md`, `.env.example`, `docs/filter-remove-overlap.md` and `docs/plan-sam-stabilization.md`.
+- `docker-compose.yaml` defaulted `FILTER_TEXT_PROMPT` to the empty string, so a bare `docker compose up -d` in a clean checkout took the filter's no-prompt branch: it warned and emitted nothing, which reads as a broken pipeline rather than a missing setting. It now defaults to `car`, matching the bundled `./data/car.mp4`. `FILTER_TEXT_PROMPTS` was also absent from the `environment:` block, so setting it inline on the command line, the style the quickstart demonstrates, dropped it silently; it is declared now.
 - `docker-compose.yaml` required an untracked `.env`, so the bare `docker compose up` documented in `README.md` and `QUICKSTART.md` failed in a clean checkout before the reader reached the `cp .env.example .env` step. The env file is optional now (`required: false`); every value it can carry already has a default.
 
 ### Added
 - `QUICKSTART.md`: an input-video section naming the bundled clip and two public sample videos, with a table mapping each clip to the prompt variable and value that actually yields its classes.
+
+## v0.1.29 - 2026-08-11
+
+### Changed
+
+- Build on `openfilter-base` instead of `pytorch/pytorch:*-cuda12.8-*-runtime`: the CUDA base was never apt-upgraded (OS-package CVEs). torch/torchvision are pinned to `>=2.9,<2.10` / `>=0.24,<0.25`, whose wheels bundle CUDA 12.8 (cu128) — what Blackwell (sm_120) needs — so Blackwell support rides on the torch wheel, not the base image. The pin is deliberate: an unpinned torch now resolves to 2.13.x (CUDA 13/cu13, no cu12 runtime); torch 2.9.1+cu128 is validated on Blackwell (RTX 5060) via the lab GPU smoke.
+- Update the openfilter dependency to 1.2.2
+
+## v0.1.28 - 2026-08-05
+
+### Fixed
+- `Dockerfile`: coerce an empty `hf_token` secret to `None` before downloading HF assets. When the `HF_TOKEN` secret is absent (Dependabot/fork PRs), the `--mount=type=secret` still creates an empty file, so `token` became `""` and was passed to `snapshot_download` for the public `kernels-community/cv-utils` kernel. `huggingface_hub` then emitted an invalid `Bearer ` (empty) auth header, failing the build with `httpx.LocalProtocolError: Illegal header value b'Bearer '` and breaking `release / dry-run-publish`. Now anonymous downloads work when no token is present.
+
+## v0.1.27 - 2026-08-04
+
+### Changed
+- Update the openfilter dependency to `>=1.2.1`
+- Point the `docker-compose.yaml` utility images at `openfilter-{video-in,webvis}:1.2.1` and pin the filter's own image default to the release version.
+- Bump `actions/checkout` to `v7` in the `apply-rulesets` workflow (latest major, Node24 runtime).
+
+## v0.1.26 - 2026-07-30
+
+### Changed
+- Grant `id-token: write` in `create-release.yaml` so the public release workflow will be able to produce a keyless (cosign) SBOM attestation once the shared SBOM steps land (PlainsightAI/gh-actions-public#32). Inert until then — this release publishes without an attestation.
+- Update openfilter to 1.2.0 and the `av` pin to `~=17.1.0` (av 16→17) to match it.
+- Replace the abandoned `decord` video reader with PyAV (`av`, already a dependency) in the vendored SAM3 `load_video_frames_from_video_file`. `decord` 0.6.0 and the `eva-decord` fork bundle a stale ffmpeg 4.x (CVE-2026-40962 class); PyAV uses ffmpeg 8.x. Removes `decord`/`eva-decord` from the dependency lists. Unblocks dropping the shared CVE-2026-40962 ignore (PlainsightAI/gh-actions-public#30).
+- `detect_objects_video` example: `--prompt` now accepts multiple values (`--prompt "cup" "bowl"` or repeated `--prompt` flags), wiring them into the detector's `text_prompts`. Simplified the pipeline to write JSONL directly via the detector's built-in `output_path` (with annotated frames being written to `annotated_frames_output_dir` opt-in via `--visualize`), removing the `Recorder` and `ImageOut` sink filters.
+
+## v0.1.25 - 2026-07-28
+
+### Changed
+- Add Blackwell (RTX PRO 6000 / sm_120) support: move the Docker base to `torch 2.10.0+cu128` so torch/torchvision ship sm_120 kernels. The previous `2.12.1+cu126` base (set in #50) crashed on Blackwell with `cudaErrorNoKernelImageForDevice` on the first GPU op and returned empty detections. What forced the move is cu128, not a specific version (`pytorch/pytorch` has no `2.12.1-cuda12.8` tag). 2.10.0-cu128 is chosen over 2.11.0 because it keeps `sm_70`: its compiled arch set is sm_70/75/80/86/90/100/120, so it adds Blackwell (sm_120) without dropping Volta/V100 (sm_70), which `2.11.0-cu128` drops. Stays on Ubuntu 24.04 / Python 3.12. Validated on real hardware: SAM3 detects on RTX PRO 6000 (Blackwell) and A10 (no regression).
 
 ## v0.1.24 - 2026-07-26
 

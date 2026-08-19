@@ -1,12 +1,19 @@
 # syntax=docker/dockerfile:1.4
-FROM pytorch/pytorch:2.12.1-cuda12.6-cudnn9-runtime
+# Runtime on openfilter-base (python:3.11-slim + weekly apt-upgrade) instead of
+# pytorch/pytorch:*-cuda*-runtime, which was never apt-upgraded and carried OS-package CVEs.
+# torch is pinned to >=2.9,<2.10 in pyproject.toml; that wheel bundles CUDA 12.8 (cu128) —
+# verified: torch 2.9.1 Requires nvidia-cuda-runtime-cu12==12.8.90, which is what Blackwell
+# (sm_120) needs. The pin is deliberate: an unpinned torch now resolves to 2.13.x, whose wheel
+# bundles CUDA 13 (cu13) and drops the cu12 runtime — a silent CUDA-stack change. torch 2.9.1
+# +cu128 is validated on Blackwell (RTX 5060, sm_120) via the lab GPU smoke, so treat any torch
+# bump as a deliberate, re-tested change.
+FROM plainsightai/openfilter-base:py3.11
 
 # Install uv for fast, correct dependency resolution
 COPY --from=ghcr.io/astral-sh/uv:0.9.26 /uv /uvx /bin/
 
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    UV_LINK_MODE=copy \
+# PYTHONDONTWRITEBYTECODE / PYTHONUNBUFFERED are provided by openfilter-base.
+ENV UV_LINK_MODE=copy \
     UV_COMPILE_BYTECODE=1 \
     UV_PYTHON_DOWNLOADS=never \
     UV_BREAK_SYSTEM_PACKAGES=1
@@ -31,9 +38,12 @@ RUN --mount=type=secret,id=hf_token python <<'PY'
 import os
 from huggingface_hub import snapshot_download
 
-# Read Hugging Face token if present
+# Read Hugging Face token if present.
+# Note: when the hf_token secret is absent (e.g. Dependabot/fork PRs), the mount
+# still creates an empty file. Coerce "" to None so anonymous downloads work and
+# huggingface_hub does not emit an invalid "Bearer " (empty) auth header.
 secret_path = "/run/secrets/hf_token"
-token = open(secret_path).read().strip() if os.path.exists(secret_path) else None
+token = (open(secret_path).read().strip() or None) if os.path.exists(secret_path) else None
 print(f"Token present: {bool(token)}")
 
 # 1. Download the custom cv-utils GPU kernel (Version 1 is stored on revision 'v1')

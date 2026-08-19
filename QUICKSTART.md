@@ -6,7 +6,10 @@ You will run the pipeline with `docker-compose.yaml` for all examples (`FILTER_T
 
 ## Prerequisites
 
-- Docker and Docker Compose plugin
+- Docker and Docker Compose plugin, **2.24 or newer**. `docker-compose.yaml` declares
+  `env_file` with the `path` / `required` mapping, which older Compose cannot parse, so
+  on 2.23 and below every command in this guide fails rather than just the optional-`.env`
+  behaviour. Check with `docker compose version`.
 - NVIDIA GPU runtime configured (for default CUDA flow)
 
 The prebuilt image lives on Docker Hub at `plainsightai/openfilter-sam3-detector` and is publicly pullable — no auth required.
