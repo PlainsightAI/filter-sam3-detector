@@ -24,7 +24,7 @@ To try another clip, point `VIDEO_PATH` at any file. These are public and need n
 curl -O https://storage.googleapis.com/plainsight-ml-assets-production/videos/car_truck_person.mp4
 curl -O https://storage.googleapis.com/plainsight-ml-assets-production/videos/train.mp4
 
-VIDEO_PATH=$(pwd)/car_truck_person.mp4 docker compose -f docker-compose.yaml up -d
+FILTER_TEXT_PROMPTS=car###truck###person VIDEO_PATH=$(pwd)/car_truck_person.mp4 docker compose -f docker-compose.yaml up -d
 ```
 
 Match the prompt to the clip:

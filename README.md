@@ -224,10 +224,9 @@ docker pull plainsightai/openfilter-sam3-detector:0.1.29
 FILTER_TEXT_PROMPT="person" docker compose up
 
 # 4. View results at http://localhost:8002 (webvis)
-# Detection output lands under ./results. Temporal intervals are off unless you
-# set FILTER_ENABLE_TEMPORAL_INTERVALS=true, and even with it on no intervals
-# file is written today: IntervalTracker opens one only when streaming_mode is
-# also set, and finalize() writes no non-streaming dump.
+# Detection output lands under ./results. Temporal intervals are off: turning them
+# on takes FILTER_ENABLE_TEMPORAL_INTERVALS=true, and persisting them takes two
+# more keys in .env. See "Persisting intervals" below.
 ```
 
 <details>
@@ -254,7 +253,10 @@ video_in → sam3_detector (with integrated temporal intervals) → webvis
 ```
 
 **Requirements:**
-- Docker with NVIDIA Container Toolkit
+- Docker with NVIDIA Container Toolkit, and the Compose plugin at **2.24 or newer**:
+  `docker-compose.yaml` uses the `env_file` `path` / `required` mapping, which older
+  Compose cannot parse, so every command here fails outright rather than degrading.
+  Check with `docker compose version`.
 - CUDA-compatible GPU (sm_50+ including RTX 50-series/Blackwell)
 - HuggingFace account with access to gated models
 
@@ -276,6 +278,17 @@ reachable through `.env`, which compose still loads (it is optional, not
 inert): set `FILTER_TEMPORAL_OUTPUT_JSON_PATH` and `FILTER_TEMPORAL_STREAMING_MODE`
 alongside `FILTER_ENABLE_TEMPORAL_INTERVALS`. Neither is declared in the
 `environment:` block, so the shell alone will not carry them.
+
+**Persisting intervals.** The path has to land inside the mounted volume, which is
+`/output` in the container (`docker-compose.yaml:84` maps `${FILTER_OUTPUT_DIR:-./results}`
+onto it). A relative path, or anything outside `/output`, is created inside the
+container by `IntervalTracker` and disappears with it, with no error to say so:
+
+```bash
+FILTER_ENABLE_TEMPORAL_INTERVALS=true
+FILTER_TEMPORAL_STREAMING_MODE=true
+FILTER_TEMPORAL_OUTPUT_JSON_PATH=/output/intervals.json
+```
 ```json
 {
   "intervals": [
