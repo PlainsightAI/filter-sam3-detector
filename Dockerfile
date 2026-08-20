@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.4
-# Runtime on openfilter-base (python:3.11-slim + weekly apt-upgrade) instead of
+# Runtime on openfilter-base (python:3.14-slim + weekly apt-upgrade) instead of
 # pytorch/pytorch:*-cuda*-runtime, which was never apt-upgraded and carried OS-package CVEs.
 # torch is pinned to >=2.9,<2.10 in pyproject.toml; that wheel bundles CUDA 12.8 (cu128) —
 # verified: torch 2.9.1 Requires nvidia-cuda-runtime-cu12==12.8.90, which is what Blackwell
@@ -7,7 +7,7 @@
 # bundles CUDA 13 (cu13) and drops the cu12 runtime — a silent CUDA-stack change. torch 2.9.1
 # +cu128 is validated on Blackwell (RTX 5060, sm_120) via the lab GPU smoke, so treat any torch
 # bump as a deliberate, re-tested change.
-FROM plainsightai/openfilter-base:py3.11
+FROM plainsightai/openfilter-base:py3.14
 
 # Install uv for fast, correct dependency resolution
 COPY --from=ghcr.io/astral-sh/uv:0.9.26 /uv /uvx /bin/
