@@ -214,11 +214,11 @@ Run the complete detection pipeline with Docker Compose. The prebuilt image is p
 # 1. Point VIDEO_PATH at your video (compose defaults to the bundled ./data/car.mp4)
 export VIDEO_PATH=$(pwd)/your_video.mp4
 
-# 2. Pull the prebuilt image (compose will also pull on first run if
-#    missing). Model weights are baked in, so no HF_TOKEN at runtime.
-#    Set SAM3_DETECTOR_VERSION to pin to a specific release for
-#    reproducibility — defaults to `latest`.
-docker pull plainsightai/openfilter-sam3-detector:latest
+# 2. Compose pulls on first run, so this step is optional. Model weights are
+#    baked in, so no HF_TOKEN at runtime. SAM3_DETECTOR_VERSION pins the image
+#    and compose defaults it to 0.1.29, so pull that rather than `latest`, which
+#    the run below does not use.
+docker pull plainsightai/openfilter-sam3-detector:0.1.29
 
 # 3. Run the pipeline
 FILTER_TEXT_PROMPT="person" docker compose up
