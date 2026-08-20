@@ -388,7 +388,8 @@ pipeline = [
         "temporal_streaming_mode": True,  # Emit incrementally
         "temporal_half_life": 5.0,
         "temporal_presence_threshold": 0.4,
-        "temporal_output_json_path": "intervals.json",
+        # Must be inside the mounted volume, /output in the container.
+        "temporal_output_json_path": "/output/intervals.json",
     }),
 ]
 ```
@@ -432,9 +433,9 @@ five keys.
 | Option | Default | Description |
 |--------|---------|-------------|
 | `enable_temporal_intervals` | false | Enable integrated temporal tracking |
-| `temporal_streaming_mode` | false | Emit intervals incrementally (vs. at end) |
-| `temporal_half_life` | 5.0 | Frames for 50% EMA decay |
-| `temporal_presence_threshold` | 0.4 | EMA score to trigger presence |
+| `temporal_streaming_mode` | false | Write intervals to disk as each one closes. There is no write at the end: with this off, intervals stay in frame metadata and nothing reaches disk |
+| `temporal_half_life` | unset (`None`) | Frames for 50% EMA decay |
+| `temporal_presence_threshold` | `0.5` | EMA score to trigger presence |
 | `temporal_output_json_path` | None | Path to write intervals JSON |
 | `temporal_emit_on_change` | true | Only emit when state changes |
 
