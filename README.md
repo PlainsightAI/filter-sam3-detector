@@ -223,8 +223,10 @@ docker pull plainsightai/openfilter-sam3-detector:0.1.29
 # 3. Run the pipeline
 FILTER_TEXT_PROMPT="person" docker compose up
 
-# 4. View results at http://localhost:8001 (webvis)
-# Temporal intervals are streamed to output/intervals.json
+# 4. View results at http://localhost:8002 (webvis)
+# Detection output lands under ./results. Temporal intervals are off unless you
+# set FILTER_ENABLE_TEMPORAL_INTERVALS=true, and see the note further down: even
+# with it on, nothing writes an intervals file today.
 ```
 
 <details>
