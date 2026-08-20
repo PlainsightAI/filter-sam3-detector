@@ -13,4 +13,4 @@ jobs:
   scan:
     uses: PlainsightAI/gh-actions-public/.github/workflows/security-scan.yaml@main
     with:
-      python_versions: '["3.11", "3.12"]'
+      python_versions: '["3.10", "3.11", "3.12", "3.13", "3.14"]'
