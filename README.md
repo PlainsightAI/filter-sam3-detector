@@ -225,8 +225,9 @@ FILTER_TEXT_PROMPT="person" docker compose up
 
 # 4. View results at http://localhost:8002 (webvis)
 # Detection output lands under ./results. Temporal intervals are off unless you
-# set FILTER_ENABLE_TEMPORAL_INTERVALS=true, and see the note further down: even
-# with it on, nothing writes an intervals file today.
+# set FILTER_ENABLE_TEMPORAL_INTERVALS=true, and even with it on no intervals
+# file is written today: IntervalTracker opens one only when streaming_mode is
+# also set, and finalize() writes no non-streaming dump.
 ```
 
 <details>
@@ -249,7 +250,7 @@ docker build --secret id=hf_token,env=HF_TOKEN \
 ```
 video_in → sam3_detector (with integrated temporal intervals) → webvis
                ↓
-         output/intervals.json (streamed)
+         intervals in frame metadata (not persisted, see below)
 ```
 
 **Requirements:**
@@ -267,7 +268,11 @@ video_in → sam3_detector (with integrated temporal intervals) → webvis
 
 > Note: SAM3 weights are baked into the image at build time, and the container runs with `HF_HUB_OFFLINE=1` / `TRANSFORMERS_OFFLINE=1`. No network or `HF_TOKEN` is needed at runtime — the image is safe to run with `--network=none`.
 
-**Output Format (intervals.json):**
+**Interval shape.** This is what the tracker builds in memory. Nothing writes it
+to disk on this route: `temporal_intervals.py:322` opens an output file only when
+`streaming_mode` is set as well as `temporal_output_json_path`, and `finalize()`
+closes the streaming handle without a non-streaming dump. Neither is reachable
+from compose today.
 ```json
 {
   "intervals": [
