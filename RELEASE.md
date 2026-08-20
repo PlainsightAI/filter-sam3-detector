@@ -3,10 +3,6 @@ SAM3 Detector filter release notes
 
 ## [Unreleased]
 
-### Changed
-
-- Bump the openfilter dependency to 1.3.0
-
 ### Fixed
 - `docker-compose.yaml`: the default video mount pointed at `./data/sample-video.mp4`, which does not exist in the repo. It now points at the bundled `./data/car.mp4`, so `docker compose up` works without setting `VIDEO_PATH` first. `docker-compose.test.yaml` hard-mounted the same missing file and now uses the bundled clip too.
 - `README.md`: the documented flow was `cp your_video.mp4 data/sample-video.mp4` followed by `docker compose up`, which only worked because of that stale default. It now sets `VIDEO_PATH`, so a custom video is actually used instead of being silently ignored.
@@ -19,6 +15,13 @@ SAM3 Detector filter release notes
 
 ### Added
 - `QUICKSTART.md`: an input-video section naming the bundled clip and two public sample videos, with a table mapping each clip to the prompt variable and value that actually yields its classes.
+
+## v0.1.30 - 2026-08-18
+
+### Changed
+
+- Update the openfilter dependency to 1.3.0
+- Add Python 3.13 and 3.14 support: raise the `requires-python` ceiling to `<3.15`; the CI test matrix now runs 3.10–3.14.
 
 ## v0.1.29 - 2026-08-11
 

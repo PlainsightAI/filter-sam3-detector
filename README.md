@@ -211,17 +211,17 @@ python scripts/filter_object_detection_exemplar.py
 Run the complete detection pipeline with Docker Compose. The prebuilt image is published to Docker Hub at `plainsightai/openfilter-sam3-detector` and is publicly pullable — no auth required.
 
 ```bash
-# 1. Point VIDEO_PATH at your video (compose defaults to the bundled ./data/car.mp4)
-export VIDEO_PATH=$(pwd)/your_video.mp4
+# Runs as written on a clean checkout. Compose mounts the bundled ./data/car.mp4
+# and pulls the image on first run; model weights are baked in, so there is no
+# HF_TOKEN at runtime. The image tag comes from SAM3_DETECTOR_VERSION, which
+# docker-compose.yaml pins, so `latest` is never what runs.
+docker compose up
 
-# 2. Compose pulls on first run, so this step is optional. Model weights are
-#    baked in, so no HF_TOKEN at runtime. SAM3_DETECTOR_VERSION pins the image
-#    and compose defaults it to 0.1.29, so pull that rather than `latest`, which
-#    the run below does not use.
-docker pull plainsightai/openfilter-sam3-detector:0.1.29
-
-# 3. Run the pipeline
-FILTER_TEXT_PROMPT="person" docker compose up
+# For your own video, point VIDEO_PATH at it and prompt for what is in it.
+# The path must exist: Docker creates an empty directory at a missing bind
+# mount source, and video_in then fails on a directory.
+#   export VIDEO_PATH=$(pwd)/my_video.mp4
+#   FILTER_TEXT_PROMPT="person" docker compose up
 
 # 4. View results at http://localhost:8002 (webvis)
 # Detection output lands under ./results. Temporal intervals are off: turning them
@@ -351,13 +351,15 @@ Convert noisy per-frame detections into stable presence/absence intervals using 
 ### Quick Start (Docker - Recommended)
 
 ```bash
-# Run the integrated pipeline with temporal intervals turned on. They are off by
-# default: FILTER_ENABLE_TEMPORAL_INTERVALS is what switches them.
-# SAM3_DETECTOR_VERSION pins the image; compose defaults it to 0.1.29, not `latest`.
-# Point VIDEO_PATH at your file (compose defaults to the bundled ./data/car.mp4)
-export VIDEO_PATH=$(pwd)/your_video.mp4
+# Runs as written on the bundled ./data/car.mp4. Temporal intervals are off by
+# default; FILTER_ENABLE_TEMPORAL_INTERVALS is what switches them on. The image
+# tag comes from SAM3_DETECTOR_VERSION, which docker-compose.yaml pins.
+FILTER_ENABLE_TEMPORAL_INTERVALS=true docker compose up
 
-FILTER_ENABLE_TEMPORAL_INTERVALS=true FILTER_TEXT_PROMPT="person" docker compose up
+# For your own video, set VIDEO_PATH to an existing file and prompt for what is
+# in it:
+#   export VIDEO_PATH=$(pwd)/my_video.mp4
+#   FILTER_ENABLE_TEMPORAL_INTERVALS=true FILTER_TEXT_PROMPT="person" docker compose up
 
 # Output lands under ./results, which is the volume compose mounts
 ```
@@ -388,8 +390,13 @@ pipeline = [
         "temporal_streaming_mode": True,  # Emit incrementally
         "temporal_half_life": 5.0,
         "temporal_presence_threshold": 0.4,
-        # Must be inside the mounted volume, /output in the container.
-        "temporal_output_json_path": "/output/intervals.json",
+        # A host path, because this block is an in-process pipeline rather
+        # than a container: /output exists only inside the image. The tracker
+        # is built during setup() and opens this file straight away, so a path
+        # the process cannot write fails the run at startup rather than at the
+        # first interval. Use /output/intervals.json only in the compose route,
+        # where docker-compose.yaml maps ${FILTER_OUTPUT_DIR:-./results} onto it.
+        "temporal_output_json_path": "./results/intervals.json",
     }),
 ]
 ```
