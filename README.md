@@ -289,13 +289,13 @@ FILTER_ENABLE_TEMPORAL_INTERVALS=true
 FILTER_TEMPORAL_STREAMING_MODE=true
 FILTER_TEMPORAL_OUTPUT_JSON_PATH=/output/intervals.json
 ```
-```json
-{
-  "intervals": [
-    {"start_frame": 23, "end_frame": 69, "label": "person", "present": true, "confidence": 0.95}
-  ],
-  "total_frames": 463
-}
+The file is **ndjson**: one interval per line, flushed as each interval closes
+(`temporal_intervals.py:415-422`). There is no wrapper object and no
+`total_frames`; `to_dict` (`:51-59`) emits exactly these five keys.
+
+```
+{"start_frame": 23, "end_frame": 69, "label": "person", "present": true, "confidence": 0.95}
+{"start_frame": 88, "end_frame": 140, "label": "person", "present": true, "confidence": 0.91}
 ```
 
 ### Method 3: Using as a Standalone Filter
