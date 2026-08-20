@@ -262,17 +262,20 @@ video_in → sam3_detector (with integrated temporal intervals) → webvis
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `HF_TOKEN` | - | HuggingFace token for model access (build-time) |
-| `FILTER_TEXT_PROMPT` | "person" | What to detect |
-| `FILTER_HALF_LIFE` | 5.0 | EMA decay rate (frames) |
-| `FILTER_PRESENCE_THRESHOLD` | 0.4 | Detection threshold |
+| `FILTER_TEXT_PROMPT` | `car` from compose; the filter's own default is unset | What to detect |
+| `FILTER_TEMPORAL_HALF_LIFE` | unset (`None`) | EMA decay rate (frames) |
+| `FILTER_TEMPORAL_PRESENCE_THRESHOLD` | `0.5` | EMA threshold for presence detection |
 
 > Note: SAM3 weights are baked into the image at build time, and the container runs with `HF_HUB_OFFLINE=1` / `TRANSFORMERS_OFFLINE=1`. No network or `HF_TOKEN` is needed at runtime — the image is safe to run with `--network=none`.
 
 **Interval shape.** This is what the tracker builds in memory. Nothing writes it
 to disk on this route: `temporal_intervals.py:322` opens an output file only when
-`streaming_mode` is set as well as `temporal_output_json_path`, and `finalize()`
-closes the streaming handle without a non-streaming dump. Neither is reachable
-from compose today.
+`temporal_streaming_mode` is set as well as `temporal_output_json_path`, and
+`finalize()` closes the streaming handle without a non-streaming dump. Both are
+reachable through `.env`, which compose still loads (it is optional, not
+inert): set `FILTER_TEMPORAL_OUTPUT_JSON_PATH` and `FILTER_TEMPORAL_STREAMING_MODE`
+alongside `FILTER_ENABLE_TEMPORAL_INTERVALS`. Neither is declared in the
+`environment:` block, so the shell alone will not carry them.
 ```json
 {
   "intervals": [
