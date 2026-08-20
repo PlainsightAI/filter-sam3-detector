@@ -418,14 +418,13 @@ pipeline = [
 
 ### Output Format
 
-```json
-{
-  "intervals": [
-    {"start_frame": 20, "end_frame": 150, "label": "person", "present": true, "confidence": 0.92},
-    {"start_frame": 151, "end_frame": 180, "label": "person", "present": false, "confidence": 0.15}
-  ],
-  "total_frames": 200
-}
+ndjson, one interval per line as each closes. No wrapper object and no
+`total_frames`: `to_dict` (`temporal_intervals.py:51-59`) emits exactly these
+five keys.
+
+```
+{"start_frame": 20, "end_frame": 150, "label": "person", "present": true, "confidence": 0.92}
+{"start_frame": 151, "end_frame": 180, "label": "person", "present": false, "confidence": 0.15}
 ```
 
 ### Configuration Options
