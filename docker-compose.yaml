@@ -1,5 +1,6 @@
 # Get Started pipeline: VideoIn -> SAM3Detector -> Webvis
 # Start:
+#   docker compose -f docker-compose.yaml up -d                      # uses ./data/car.mp4
 #   VIDEO_PATH=/absolute/path/to/video.mp4 docker compose -f docker-compose.yaml up -d
 # Stop:
 #   docker compose -f docker-compose.yaml down
@@ -23,20 +24,39 @@ services:
       FILTER_SOURCES: file:///video.mp4!sync
       FILTER_OUTPUTS: tcp://*:5550
     volumes:
-      - ${VIDEO_PATH:-./data/sample-video.mp4}:/video.mp4:ro
+      - ${VIDEO_PATH:-./data/car.mp4}:/video.mp4:ro
     networks:
       - filter-network
 
   sam3_detector:
     image: plainsightai/openfilter-sam3-detector:${SAM3_DETECTOR_VERSION:-0.1.29}
     platform: linux/amd64
-    env_file: .env
+    # Optional on purpose: .env is not tracked, so requiring it made a bare
+    # `docker compose up` fail in a clean checkout, which is the exact flow the
+    # README and QUICKSTART document. Every value it can carry already has a
+    # default below or in the image, so the file is a convenience, not a
+    # prerequisite. Needs Compose 2.24+.
+    env_file:
+      - path: .env
+        required: false
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       FILTER_ID: filter_sam3_detector
       FILTER_SOURCES: tcp://video_in:5550
       FILTER_OUTPUTS: tcp://*:5552
-      FILTER_TEXT_PROMPT: ${FILTER_TEXT_PROMPT:-}
+      # Defaults to `car`, matching the bundled ./data/car.mp4, so a bare
+      # `docker compose up -d` in a clean checkout actually produces detections.
+      # An empty default sent the filter down the no-prompt branch: it warns and
+      # emits nothing, which reads as a broken pipeline rather than a missing
+      # setting.
+      # `-` and not `:-`: substitute only when UNSET. QUICKSTART Examples 2, 3
+      # and 4 set FILTER_TEXT_PROMPT= empty on purpose, to run on prompts, boxes
+      # or reference images instead, and `:-` would override every one of them.
+      FILTER_TEXT_PROMPT: ${FILTER_TEXT_PROMPT-car}
+      # Plural form, split on `###`. Present here so it can be set inline on the
+      # command line like every other variable in this file; without it the value
+      # only ever arrived through .env and was silently dropped from the shell.
+      FILTER_TEXT_PROMPTS: ${FILTER_TEXT_PROMPTS:-}
       FILTER_REF_IMAGES: ${FILTER_REF_IMAGES:-}
       FILTER_REF_IMAGES_NEGATIVE: ${FILTER_REF_IMAGES_NEGATIVE:-}
       FILTER_POSITIVE_BOXES: ${FILTER_POSITIVE_BOXES:-}
@@ -52,7 +72,7 @@ services:
       FILTER_SAVE_ANNOTATED_FRAMES: ${FILTER_SAVE_ANNOTATED_FRAMES:-true}
       FILTER_ANNOTATED_FRAMES_OUTPUT_DIR: ${FILTER_ANNOTATED_FRAMES_OUTPUT_DIR:-/output/annotated_frames}
       FILTER_VISUALIZE: ${FILTER_VISUALIZE:-true}
-      FILTER_ENABLE_TEMPORAL_INTERVALS: "false"
+      FILTER_ENABLE_TEMPORAL_INTERVALS: ${FILTER_ENABLE_TEMPORAL_INTERVALS:-false}
     deploy:
       resources:
         reservations:

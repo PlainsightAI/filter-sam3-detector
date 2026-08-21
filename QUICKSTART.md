@@ -6,11 +6,36 @@ You will run the pipeline with `docker-compose.yaml` for all examples (`FILTER_T
 
 ## Prerequisites
 
-- Docker and Docker Compose plugin
+- Docker and Docker Compose plugin, **2.24 or newer**. `docker-compose.yaml` declares
+  `env_file` with the `path` / `required` mapping, which older Compose cannot parse, so
+  on 2.23 and below every command in this guide fails rather than just the optional-`.env`
+  behaviour. Check with `docker compose version`.
 - NVIDIA GPU runtime configured (for default CUDA flow)
-- A local input video path (no download step required)
 
 The prebuilt image lives on Docker Hub at `plainsightai/openfilter-sam3-detector` and is publicly pullable — no auth required.
+
+## Input video
+
+The repo ships `data/car.mp4`, and compose uses it by default, so there is nothing to download to get a first run.
+
+To try another clip, point `VIDEO_PATH` at any file. These are public and need no credentials:
+
+```bash
+curl -O https://storage.googleapis.com/plainsight-ml-assets-production/videos/car_truck_person.mp4
+curl -O https://storage.googleapis.com/plainsight-ml-assets-production/videos/train.mp4
+
+FILTER_TEXT_PROMPTS=car###truck###person VIDEO_PATH=$(pwd)/car_truck_person.mp4 docker compose -f docker-compose.yaml up -d
+```
+
+Match the prompt to the clip:
+
+| Clip | Prompt |
+| --- | --- |
+| bundled `data/car.mp4` | `FILTER_TEXT_PROMPT=car` |
+| `train.mp4` | `FILTER_TEXT_PROMPT=train` |
+| `car_truck_person.mp4` | `FILTER_TEXT_PROMPTS=car###truck###person` |
+
+`FILTER_TEXT_PROMPT` is a single phrase, so it yields one class. Several classes need `FILTER_TEXT_PROMPTS`, split on `###` (`prompt_delimiter`, default `###`) — a comma-separated string parses as one prompt, not three.
 
 ## Prepare `.env` from template
 
@@ -81,7 +106,7 @@ Set in `.env`:
 
 ```bash
 VIDEO_PATH=./data/car.mp4
-FILTER_TEXT_PROMPT=post
+FILTER_TEXT_PROMPT=car
 FILTER_TEXT_PROMPTS=
 FILTER_POSITIVE_BOXES=
 FILTER_REF_IMAGES=
@@ -117,7 +142,7 @@ Set in `.env`:
 ```bash
 VIDEO_PATH=./data/car.mp4
 FILTER_TEXT_PROMPT=
-FILTER_TEXT_PROMPTS=car,truck
+FILTER_TEXT_PROMPTS=car###truck
 FILTER_POSITIVE_BOXES=
 FILTER_REF_IMAGES=
 ```
@@ -145,7 +170,7 @@ Outputs (host, default):
 
 ### Optional: cross-class overlap removal (`FILTER_REMOVE_OVERLAP`)
 
-With **`FILTER_TEXT_PROMPTS=car,truck`**, the same vehicle can get **both** a **car** and a **truck** box on **one** region. By default **`FILTER_REMOVE_OVERLAP`** is **`false`**: nothing removes those pairs. Set **`FILTER_REMOVE_OVERLAP=true`** to opt into a **shutdown** pass that keeps the **higher-`confidence`** class per overlapping pair (IoU gate; see plan). Typical test settings: **`VIDEO_PATH=./data/car.mp4`**, **`FILTER_CONFIDENCE_THRESHOLD=0.3`**, plus the `FILTER_TEXT_PROMPTS` line above.
+With **`FILTER_TEXT_PROMPTS=car###truck`**, the same vehicle can get **both** a **car** and a **truck** box on **one** region. By default **`FILTER_REMOVE_OVERLAP`** is **`false`**: nothing removes those pairs. Set **`FILTER_REMOVE_OVERLAP=true`** to opt into a **shutdown** pass that keeps the **higher-`confidence`** class per overlapping pair (IoU gate; see plan). Typical test settings: **`VIDEO_PATH=./data/car.mp4`**, **`FILTER_CONFIDENCE_THRESHOLD=0.3`**, plus the `FILTER_TEXT_PROMPTS` line above.
 
 Step-by-step expectations and a copy-paste **`.env`** block: **[docs/filter-remove-overlap.md](docs/filter-remove-overlap.md)**.
 
@@ -234,7 +259,7 @@ Set env vars and run:
 
 ```bash
 VIDEO_PATH=/absolute/path/to/video.mp4 \
-FILTER_TEXT_PROMPT=post \
+FILTER_TEXT_PROMPT=car \
 FILTER_DEVICE=cuda \
 FILTER_OUTPUT_DIR=./output \
 python scripts/filter_object_detection.py

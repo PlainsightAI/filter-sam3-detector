@@ -3,6 +3,24 @@ SAM3 Detector filter release notes
 
 ## [Unreleased]
 
+### Fixed
+- `docker-compose.yaml`: the default video mount pointed at `./data/sample-video.mp4`, which does not exist in the repo. It now points at the bundled `./data/car.mp4`, so `docker compose up` works without setting `VIDEO_PATH` first. `docker-compose.test.yaml` hard-mounted the same missing file and now uses the bundled clip too.
+- `README.md`: the documented flow was `cp your_video.mp4 data/sample-video.mp4` followed by `docker compose up`, which only worked because of that stale default. It now leads with the bundled clip, so the block runs as written, and shows `VIDEO_PATH` as the custom-video override, so a custom video is actually used instead of being silently ignored.
+- `.env.example`: default `FILTER_TEXT_PROMPT` was `post`, which matches the bundled PNG rather than the default video. Now `car`. `QUICKSTART.md` carried the same mismatch in Example 1 and in the Python-script example.
+- Multi-prompt examples used comma-separated values (`car,truck`), which parse as a single prompt: `prompt_delimiter` defaults to `###`. Corrected across `QUICKSTART.md`, `.env.example`, `docs/filter-remove-overlap.md` and `docs/plan-sam-stabilization.md`.
+- `docker-compose.yaml` used `${FILTER_TEXT_PROMPT:-car}`, which substitutes when the variable is unset **or empty**, so it overrode the deliberately-empty prompt that QUICKSTART Examples 2, 3 and 4 set to run on prompts, boxes or reference images. It is `${FILTER_TEXT_PROMPT-car}` now, substituting only when unset.
+- `docker-compose.yaml` hardcoded `FILTER_ENABLE_TEMPORAL_INTERVALS: "false"` as a literal, so neither `.env` nor the shell could turn temporal intervals on and the README's documented run produced plain detection. It reads from the environment now, and the README block names the variable, says the image tag comes from `SAM3_DETECTOR_VERSION` rather than `latest`, and points at `./results`, which is the volume compose actually mounts.
+- `docker-compose.yaml` defaulted `FILTER_TEXT_PROMPT` to the empty string, so a bare `docker compose up -d` in a clean checkout took the filter's no-prompt branch: it warned and emitted nothing, which reads as a broken pipeline rather than a missing setting. It now defaults to `car`, matching the bundled `./data/car.mp4`. `FILTER_TEXT_PROMPTS` was also absent from the `environment:` block, so setting it inline on the command line, the style the quickstart demonstrates, dropped it silently; it is declared now.
+- `docker-compose.yaml` required an untracked `.env`, so the bare `docker compose up` documented in `README.md` and `QUICKSTART.md` failed in a clean checkout before the reader reached the `cp .env.example .env` step. The env file is optional now (`required: false`); every value it can carry already has a default.
+
+- `README.md`: the Method 2 walk-through pointed at webvis on port `8001`; compose publishes `8002`, so the documented URL answered nothing.
+- `README.md`: the Method 2 environment table carried names and defaults the filter does not have. `FILTER_HALF_LIFE` is `FILTER_TEMPORAL_HALF_LIFE` and its default is unset (`None`) rather than `5.0`, and `FILTER_TEMPORAL_PRESENCE_THRESHOLD` is `0.5` rather than `0.4`. The same two wrong values appeared in three separate tables.
+- `README.md`: two Output Format blocks described the interval file as a JSON document wrapping the intervals with a `total_frames` count. It is ndjson, one interval per line, and `to_dict` (`temporal_intervals.py:51-59`) emits exactly five keys, none of them `total_frames`.
+- `README.md`: several blocks promised intervals written to `output/intervals.json` on routes that write nothing. Nothing writes on that path unless `temporal_streaming_mode` is set alongside `temporal_output_json_path`, and `finalize()` closes the streaming handle without a non-streaming dump, so a reader following those blocks got an empty directory and no error.
+
+### Added
+- `QUICKSTART.md`: an input-video section naming the bundled clip and two public sample videos, with a table mapping each clip to the prompt variable and value that actually yields its classes.
+
 ## v0.1.31 - 2026-08-20
 
 ### Changed
