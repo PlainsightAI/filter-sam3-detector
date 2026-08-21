@@ -13,6 +13,11 @@ SAM3 Detector filter release notes
 - `docker-compose.yaml` defaulted `FILTER_TEXT_PROMPT` to the empty string, so a bare `docker compose up -d` in a clean checkout took the filter's no-prompt branch: it warned and emitted nothing, which reads as a broken pipeline rather than a missing setting. It now defaults to `car`, matching the bundled `./data/car.mp4`. `FILTER_TEXT_PROMPTS` was also absent from the `environment:` block, so setting it inline on the command line, the style the quickstart demonstrates, dropped it silently; it is declared now.
 - `docker-compose.yaml` required an untracked `.env`, so the bare `docker compose up` documented in `README.md` and `QUICKSTART.md` failed in a clean checkout before the reader reached the `cp .env.example .env` step. The env file is optional now (`required: false`); every value it can carry already has a default.
 
+- `README.md`: the Method 2 walk-through pointed at webvis on port `8001`; compose publishes `8002`, so the documented URL answered nothing.
+- `README.md`: the Method 2 environment table carried names and defaults the filter does not have. `FILTER_HALF_LIFE` is `FILTER_TEMPORAL_HALF_LIFE` and its default is unset (`None`) rather than `5.0`, and `FILTER_TEMPORAL_PRESENCE_THRESHOLD` is `0.5` rather than `0.4`. The same two wrong values appeared in three separate tables.
+- `README.md`: two Output Format blocks described the interval file as a JSON document wrapping the intervals with a `total_frames` count. It is ndjson, one interval per line, and `to_dict` (`temporal_intervals.py:51-59`) emits exactly five keys, none of them `total_frames`.
+- `README.md`: several blocks promised intervals written to `output/intervals.json` on routes that write nothing. Nothing writes on that path unless `temporal_streaming_mode` is set alongside `temporal_output_json_path`, and `finalize()` closes the streaming handle without a non-streaming dump, so a reader following those blocks got an empty directory and no error.
+
 ### Added
 - `QUICKSTART.md`: an input-video section naming the bundled clip and two public sample videos, with a table mapping each clip to the prompt variable and value that actually yields its classes.
 
