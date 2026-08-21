@@ -223,7 +223,7 @@ docker compose up
 #   export VIDEO_PATH=$(pwd)/my_video.mp4
 #   FILTER_TEXT_PROMPT="person" docker compose up
 
-# 4. View results at http://localhost:8002 (webvis)
+# View results at http://localhost:8002 (webvis)
 # Detection output lands under ./results. Temporal intervals are off: turning them
 # on takes FILTER_ENABLE_TEMPORAL_INTERVALS=true, and persisting them takes two
 # more keys in .env. See "Persisting intervals" below.
@@ -258,7 +258,8 @@ video_in → sam3_detector (with integrated temporal intervals) → webvis
   Compose cannot parse, so every command here fails outright rather than degrading.
   Check with `docker compose version`.
 - CUDA-compatible GPU (sm_50+ including RTX 50-series/Blackwell)
-- HuggingFace account with access to gated models
+- HuggingFace account with access to gated models, only if you build from
+  source. The published image has the weights baked in and runs offline.
 
 **Environment Variables:**
 | Variable | Default | Description |
