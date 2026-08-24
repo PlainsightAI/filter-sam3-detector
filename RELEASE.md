@@ -3,6 +3,29 @@ SAM3 Detector filter release notes
 
 ## [Unreleased]
 
+### Changed: the model is pinned to a commit, in all three places that load it
+
+- `SAM3_REVISION` pins `facebook/sam3` to the tree this filter was validated and
+  built against. A bare repo id means "whatever that repo holds today": two
+  builds of one filter version can bake different weights, and an upstream repo
+  that changes reaches a running pipeline.
+- The pin has to be the same in three places or the build-time bake stops
+  working: the Dockerfile `snapshot_download`, the transformers video path, and
+  `download_ckpt_from_hf` in the vendored `sam3` package, which fetches its own
+  checkpoint. The image caches the snapshot for one revision, so a load asking
+  for another has to reach the hub — exactly what baking the weights avoids, and
+  what fails outright on a cluster with no egress. `tests/test_revision_pin.py`
+  asserts the three agree, including after a re-sync of the vendored package.
+- Overriding `model_id` now requires `revision`. We ship a pin for the model we
+  validated; for any other model the operator supplies the commit, because
+  defaulting to `main` there would hand back the moving reference the pin
+  removes.
+- `use_safetensors=True` on the transformers model load. Loading a pickle
+  checkpoint unpickles it, which runs code from the file on the inference host.
+  `facebook/sam3` publishes `model.safetensors`, so this changes nothing today.
+  The vendored image path reads `sam3.pt` through `torch.load(weights_only=True)`,
+  which is torch's restricted unpickler — that path is unchanged.
+
 ### Fixed
 - `docker-compose.yaml`: the default video mount pointed at `./data/sample-video.mp4`, which does not exist in the repo. It now points at the bundled `./data/car.mp4`, so `docker compose up` works without setting `VIDEO_PATH` first. `docker-compose.test.yaml` hard-mounted the same missing file and now uses the bundled clip too.
 - `README.md`: the documented flow was `cp your_video.mp4 data/sample-video.mp4` followed by `docker compose up`, which only worked because of that stale default. It now leads with the bundled clip, so the block runs as written, and shows `VIDEO_PATH` as the custom-video override, so a custom video is actually used instead of being silently ignored.

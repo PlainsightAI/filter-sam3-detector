@@ -38,6 +38,13 @@ class FilterSAM3DetectorConfigSchema(FilterConfigBase):
 
     # Base SAM3 configuration
     model_id: str = Field(default="facebook/sam3", description="Model ID")
+    revision: str = Field(
+        default="",
+        description=(
+            "Commit SHA of the model repository. Defaults to the revision this "
+            "filter was validated against; required when model_id is overridden."
+        ),
+    )
     device: str = Field(default="cuda", description="Compute device")
 
     # Prompt configuration
@@ -343,6 +350,41 @@ class FilterSAM3DetectorOutput(DetectionSet):
 __all__ = ["FilterSAM3DetectorConfig", "FilterSAM3Detector", "FilterSAM3DetectorOutput"]
 
 logger = logging.getLogger(__name__)
+
+# The model this filter ships for, and the commit it was validated and built
+# against. Must equal SAM3_REVISION in sam3/sam3/model_builder.py (the vendored
+# image path downloads its own checkpoint) and the revision the Dockerfile
+# bakes: the image caches one snapshot, and a load asking for a different
+# revision has to reach the hub. tests/test_revision_pin.py asserts they agree.
+DEFAULT_MODEL_ID = "facebook/sam3"
+SAM3_REVISION = "3c879f39826c281e95690f02c7821c4de09afae7"
+
+
+def resolve_revision(model_id: str, configured: str | None) -> str:
+    """Which commit of `model_id` to load.
+
+    A bare repo id means "whatever that repo holds today": the image bakes one
+    tree at build time and a later start could read another, and an upstream
+    repo that changes reaches a running pipeline. The default pin is the tree
+    this filter was validated and built against.
+
+    Overriding `model_id` means supplying the revision too. We cannot ship a pin
+    for a model we never validated, and defaulting to the hub's `main` there
+    would quietly hand back the moving reference the pin exists to remove — and
+    on an air-gapped node it would fail at resolution instead, since the image
+    caches only the baked snapshot.
+    """
+    configured = (configured or "").strip()
+    if model_id == DEFAULT_MODEL_ID:
+        return configured or SAM3_REVISION
+    if not configured:
+        raise ValueError(
+            f"model_id is set to {model_id!r} instead of {DEFAULT_MODEL_ID!r}, "
+            "so `revision` is required: a commit SHA is what makes the load "
+            "reproducible, and this filter only ships a pin for the model it "
+            "was validated with."
+        )
+    return configured
 logger.setLevel(logging.INFO)
 
 # Image file extensions for exemplars and path expansion (first-level directory listing)
@@ -875,6 +917,7 @@ class FilterSAM3Detector(Filter):
 
         # Store configuration (access as dict since FilterConfig is dict-like)
         self.model_id = config.get("model_id", "facebook/sam3")
+        self.revision = resolve_revision(self.model_id, config.get("revision"))
         self.text_prompt = config.get(
             "text_prompt"
         )  # Single prompt (backward compatible)
@@ -3759,11 +3802,18 @@ class FilterSAM3Detector(Filter):
 
             self.video_model = Sam3VideoModel.from_pretrained(
                 self.model_id,
+                revision=self.revision,
+                # Refuse a pickle checkpoint: loading one unpickles it, which
+                # runs code from the file on the inference host. facebook/sam3
+                # publishes model.safetensors, so this changes nothing today.
+                use_safetensors=True,
                 torch_dtype=model_dtype,
                 score_threshold_detection=self.confidence_threshold,
                 det_nms_thresh=self.nms_threshold if self.nms_enabled else 1.0,
             ).to(self.device)
-            self.video_processor = Sam3VideoProcessor.from_pretrained(self.model_id)
+            self.video_processor = Sam3VideoProcessor.from_pretrained(
+                self.model_id, revision=self.revision
+            )
 
             self.video_inference_session = self.video_processor.init_video_session(
                 inference_device=self.device,

@@ -637,12 +637,27 @@ def build_sam3_image_model(
     return model
 
 
+# Vendored-file change (Plainsight): pin the checkpoint to a commit.
+# Upstream downloads whatever `main` holds, which means two builds of the same
+# filter version can bake different weights, and a repo that changes upstream
+# reaches a running pipeline. It must stay equal to SAM3_REVISION in
+# filter_sam3_detector/filter.py and to the revision the Dockerfile bakes:
+# the image caches the snapshot for this revision only, so a load asking for a
+# different one has to reach the network, which is exactly what an air-gapped
+# deployment cannot do. tests/test_revision_pin.py asserts they agree.
+SAM3_REVISION = "3c879f39826c281e95690f02c7821c4de09afae7"
+
+
 def download_ckpt_from_hf():
     SAM3_MODEL_ID = "facebook/sam3"
     SAM3_CKPT_NAME = "sam3.pt"
     SAM3_CFG_NAME = "config.json"
-    _ = hf_hub_download(repo_id=SAM3_MODEL_ID, filename=SAM3_CFG_NAME)
-    checkpoint_path = hf_hub_download(repo_id=SAM3_MODEL_ID, filename=SAM3_CKPT_NAME)
+    _ = hf_hub_download(
+        repo_id=SAM3_MODEL_ID, filename=SAM3_CFG_NAME, revision=SAM3_REVISION
+    )
+    checkpoint_path = hf_hub_download(
+        repo_id=SAM3_MODEL_ID, filename=SAM3_CKPT_NAME, revision=SAM3_REVISION
+    )
     return checkpoint_path
 
 
