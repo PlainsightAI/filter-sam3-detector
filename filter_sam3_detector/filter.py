@@ -31,13 +31,22 @@ except Exception:
     Sam3VideoProcessor = None
 
 
+# The model this filter ships for, and the commit it was validated and built
+# against. Must equal SAM3_REVISION in sam3/sam3/model_builder.py (the vendored
+# image path downloads its own checkpoint) and the revision the Dockerfile
+# bakes: the image caches one snapshot, and a load asking for a different
+# revision has to reach the hub. tests/test_revision_pin.py asserts they agree.
+DEFAULT_MODEL_ID = "facebook/sam3"
+SAM3_REVISION = "3c879f39826c281e95690f02c7821c4de09afae7"
+
+
 class FilterSAM3DetectorConfigSchema(FilterConfigBase):
     """Declarative config schema for FilterSAM3Detector."""
 
     model_config = {"extra": "forbid"}
 
     # Base SAM3 configuration
-    model_id: str = Field(default="facebook/sam3", description="Model ID")
+    model_id: str = Field(default=DEFAULT_MODEL_ID, description="Model ID")
     revision: str = Field(
         default="",
         description=(
@@ -351,14 +360,6 @@ __all__ = ["FilterSAM3DetectorConfig", "FilterSAM3Detector", "FilterSAM3Detector
 
 logger = logging.getLogger(__name__)
 
-# The model this filter ships for, and the commit it was validated and built
-# against. Must equal SAM3_REVISION in sam3/sam3/model_builder.py (the vendored
-# image path downloads its own checkpoint) and the revision the Dockerfile
-# bakes: the image caches one snapshot, and a load asking for a different
-# revision has to reach the hub. tests/test_revision_pin.py asserts they agree.
-DEFAULT_MODEL_ID = "facebook/sam3"
-SAM3_REVISION = "3c879f39826c281e95690f02c7821c4de09afae7"
-
 
 def resolve_revision(model_id: str, configured: str | None) -> str:
     """Which commit of `model_id` to load.
@@ -545,7 +546,7 @@ class FilterSAM3Detector(Filter):
 
         # Set defaults if not present
         defaults = {
-            "model_id": "facebook/sam3",
+            "model_id": DEFAULT_MODEL_ID,
             "device": "cuda",
             "text_prompt": None,  # Single prompt (backward compatible)
             "text_prompts": None,  # Delimiter-separated prompts, e.g. "vehicle|||car,truck###animal|||cat, dogs"
@@ -916,7 +917,7 @@ class FilterSAM3Detector(Filter):
         self.jsonl_file = None
 
         # Store configuration (access as dict since FilterConfig is dict-like)
-        self.model_id = config.get("model_id", "facebook/sam3")
+        self.model_id = config.get("model_id", DEFAULT_MODEL_ID)
         self.revision = resolve_revision(self.model_id, config.get("revision"))
         self.text_prompt = config.get(
             "text_prompt"

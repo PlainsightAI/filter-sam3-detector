@@ -104,3 +104,35 @@ class TestResolveRevision(unittest.TestCase):
         from filter_sam3_detector.filter import resolve_revision
 
         self.assertEqual(resolve_revision("org/other-sam", "deadbeef"), "deadbeef")
+
+
+class TestDefaultModelIdIsNotRepeated(unittest.TestCase):
+    """One literal for the model id, three places that need it.
+
+    The schema default, the normalize_config defaults map and `setup()` all
+    have to agree with `resolve_revision`'s default-model branch: if one of them
+    drifts, the filter stops recognising its own default model and starts
+    demanding a `revision` for it. Raised by shingonoide in review — the pin
+    constants already had a test tying them together and this one did not.
+    """
+
+    def test_no_bare_model_id_literal_remains(self):
+        source = (
+            REPO_ROOT / "filter_sam3_detector" / "filter.py"
+        ).read_text()
+        occurrences = source.count('"facebook/sam3"')
+        self.assertEqual(
+            occurrences,
+            1,
+            "the model id should appear once, as DEFAULT_MODEL_ID; "
+            f"found {occurrences} literal occurrences",
+        )
+
+    def test_schema_default_is_the_constant(self):
+        from filter_sam3_detector.filter import (
+            DEFAULT_MODEL_ID,
+            FilterSAM3DetectorConfigSchema,
+        )
+
+        field = FilterSAM3DetectorConfigSchema.model_fields["model_id"]
+        self.assertEqual(field.default, DEFAULT_MODEL_ID)
