@@ -64,7 +64,13 @@ except Exception as e:
 if token:
     print("Caching SAM3 model weights...")
     snapshot_download(
-        repo_id="facebook/sam3", 
+        repo_id="facebook/sam3",
+        # Same commit the filter asks for at runtime (SAM3_REVISION in
+        # filter_sam3_detector/filter.py and sam3/sam3/model_builder.py). The
+        # bake and the load must name the same revision: the cache holds the
+        # snapshot for this one, and a load asking for another would have to
+        # reach the hub, which is what baking the weights exists to avoid.
+        revision="3c879f39826c281e95690f02c7821c4de09afae7",
         token=token
     )
     print("✓ SAM3 model weights baked into container")
