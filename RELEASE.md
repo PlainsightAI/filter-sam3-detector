@@ -3,6 +3,8 @@ SAM3 Detector filter release notes
 
 ## [Unreleased]
 
+## v0.1.32 - 2026-08-24
+
 ### Changed: the model is pinned to a commit, in all three places that load it
 
 - `SAM3_REVISION` pins `facebook/sam3` to the tree this filter was validated and
