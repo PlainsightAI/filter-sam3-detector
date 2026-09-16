@@ -16,10 +16,19 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import numpy as np
+import pytest
 import torch
 from PIL import Image
 
 from filter_sam3_detector.filter import FilterSAM3Detector
+
+# The mocked unit tests below drive filter.py's multi-output path, which lazily
+# imports sam3.model (box_ops et al.). sam3 is a gated package that is absent in
+# CI runs without repo secrets (e.g. Dependabot-triggered runs), so the import
+# raises and the assertions fail spuriously. Skip this module — and only this
+# module — when sam3.model can't be imported, so the rest of the suite still runs
+# and gates the PR. When sam3 is installed (human PRs) nothing is skipped.
+pytest.importorskip("sam3.model")
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
