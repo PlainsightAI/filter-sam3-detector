@@ -7,6 +7,7 @@ SAM3 Detector filter release notes
 
 - Bump the openfilter dependency to 1.5.0
 - Bump the openfilter dependency to 1.5.1
+- Bump the openfilter dependency to 1.5.2
 
 ## v0.1.33 - 2026-09-23
 
