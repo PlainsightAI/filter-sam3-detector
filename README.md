@@ -651,7 +651,7 @@ ERROR    No exemplar images could be loaded
 
 **Solutions**:
 - Ensure package is installed: `uv pip install -e .`
-- Check Python version (requires 3.10+)
+- Check Python version (requires 3.11+)
 - Verify all dependencies are installed
 - Reinstall: `uv pip install -e . --force-reinstall`
 

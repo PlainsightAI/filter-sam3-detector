@@ -6,7 +6,7 @@ Complete installation guide for filter-sam3-detector.
 
 ### Required
 
-- **Python**: 3.10, 3.11, or 3.12
+- **Python**: 3.11 or 3.12
 - **Package Manager**: `uv` (recommended) or `pip`
 
 ### Optional but Recommended
