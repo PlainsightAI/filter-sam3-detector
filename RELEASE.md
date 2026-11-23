@@ -11,6 +11,7 @@ SAM3 Detector filter release notes
 - **Breaking:** Drop support for Python 3.10; `requires-python` is now `>=3.11`. Pillow 13.0.0, the first release with fixes for several critical advisories, requires Python 3.11, so the 3.10 environment could not be secured. The CI test matrix now runs 3.11–3.14.
 - Bump the openfilter dependency to 1.5.3
 - Bump the openfilter dependency to 1.5.4
+- Update the `av` pin from `~=17.1.0` to `~=18.1.1` to match openfilter 1.5.4, which requires PyAV 18 on Python 3.11+
 
 ## v0.1.33 - 2026-09-23
 
