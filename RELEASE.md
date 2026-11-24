@@ -3,6 +3,8 @@ SAM3 Detector filter release notes
 
 ## [Unreleased]
 
+## v0.2.0 - 2026-11-24
+
 ### Changed
 
 - Bump the openfilter dependency to 1.5.0
@@ -12,6 +14,7 @@ SAM3 Detector filter release notes
 - Bump the openfilter dependency to 1.5.3
 - Bump the openfilter dependency to 1.5.4
 - Update the `av` pin from `~=17.1.0` to `~=18.1.1` to match openfilter 1.5.4, which requires PyAV 18 on Python 3.11+
+- Update the dev `black` (26.10.1) and `gitpython` (3.2.1) pins in `sam3/pyproject.toml`
 
 ## v0.1.33 - 2026-09-23
 
